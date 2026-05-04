@@ -158,6 +158,11 @@ class AmsBackendAd5xIfs : public AmsSubscriptionBackend {
     [[nodiscard]] std::vector<std::pair<std::string, std::string>>
     get_material_aliases() const override;
 
+    // Parse `[zmod_ifs] filament_<NAME>: <TEMP>` lines out of a user.cfg body.
+    // Returns the NAME tokens (filament type tags as written, e.g. "PLA+").
+    // Stateless + public so tests and external callers can drive it directly.
+    static std::vector<std::string> parse_user_cfg_filament_types(const std::string& body);
+
     // Result of parsing a GET_ZCOLOR SILENT=1 response. Public so tests can
     // construct instances via Ad5xIfsTestAccess.
     struct ZColorSlot {
@@ -189,6 +194,11 @@ class AmsBackendAd5xIfs : public AmsSubscriptionBackend {
     void parse_save_variables(const nlohmann::json& vars);
     void parse_port_sensor(int port_1based, bool detected);
     void parse_head_sensor(bool detected);
+    // One-shot fetch of /mod_data/user.cfg. Parses the [zmod_ifs] section for
+    // `filament_<NAME>: <TEMP>` entries — zmod's mechanism for user-defined
+    // material types beyond the AD5X firmware whitelist (e.g., PLA+, RPLA,
+    // HELIX). 404 → no-op (not a zmod printer or no user.cfg present).
+    void fetch_user_cfg_materials();
     void update_slot_from_state(int slot_index);
     // Layer any configured FilamentSlotOverride for `slot_index` over `slot`,
     // mutating `slot` in place. Override wins for every non-default field;
@@ -305,6 +315,21 @@ class AmsBackendAd5xIfs : public AmsSubscriptionBackend {
     std::string var_prefix_ = "less_waste";
     std::array<std::string, NUM_PORTS> colors_;    // Hex strings: "FF0000"
     std::array<std::string, NUM_PORTS> materials_; // Material names: "PLA"
+    // User-defined material types extending the firmware whitelist. Two
+    // sources, both surfaced via get_supported_materials():
+    //   - bambufy_custom_types in save_variables (when bambufy is/was active);
+    //     parse_save_variables() populates this regardless of has_ifs_vars_
+    //     because user-defined types are orthogonal to plugin activation.
+    //   - [zmod_ifs] filament_<NAME>: <TEMP> in /mod_data/user.cfg (zmod's
+    //     own mechanism); fetched once via fetch_user_cfg_materials() at
+    //     backend start.
+    // Guarded by its own mutex (NOT mutex_) so get_supported_materials() —
+    // called from normalize_material() inside set_slot_info(), which already
+    // holds mutex_ — doesn't deadlock. Both writers (parse_save_variables
+    // and fetch_user_cfg_materials) currently take mutex_ AND
+    // custom_types_mutex_; lock order is mutex_ → custom_types_mutex_.
+    mutable std::mutex custom_types_mutex_;
+    std::vector<std::string> custom_material_types_;
     std::array<int, TOOL_MAP_SIZE> tool_map_;      // tool_map_[tool] = port (1-4, 5=unmapped)
     std::array<bool, NUM_PORTS> port_presence_;    // Per-port filament sensor state
     int active_tool_ = -1;                         // Current tool (-1 = none)

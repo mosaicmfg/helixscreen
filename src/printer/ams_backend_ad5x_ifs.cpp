@@ -177,6 +177,10 @@ void AmsBackendAd5xIfs::on_started() {
             spdlog::info("{} Reading Adventurer5M.json + GET_ZCOLOR SILENT=1 for color truth",
                          backend_log_tag());
             read_adventurer_json();
+            // One-shot fetch of zmod's user-defined material types from
+            // /mod_data/user.cfg. Independent of the json/gcode pipelines —
+            // best-effort, 404 on non-zmod printers is silent.
+            fetch_user_cfg_materials();
             register_zcolor_listener();
             // notify_klippy_ready catches startup and FIRMWARE_RESTART; it's
             // the point at which zmod is initialised and GET_ZCOLOR returns
@@ -349,6 +353,33 @@ void AmsBackendAd5xIfs::parse_save_variables(const json& vars) {
         }
     }
 
+    // User-defined material types from bambufy_custom_types. Surfaced via
+    // get_supported_materials() so the edit modal's dropdown isn't restricted
+    // to the firmware whitelist (PLA, PLA-CF, SILK, TPU, ABS, PETG, PETG-CF) —
+    // PLA+, rPLA, PETG-Pro etc. round-trip cleanly through zmod's COLOR macro
+    // and don't get silently normalized to PLA on save (#904 root cause #2).
+    // Always read regardless of has_ifs_vars_: user-defined types are
+    // orthogonal to plugin activation.
+    if (vars.contains("bambufy_custom_types") && vars["bambufy_custom_types"].is_array()) {
+        std::vector<std::string> staged;
+        for (const auto& t : vars["bambufy_custom_types"]) {
+            if (t.is_string()) {
+                std::string name = t.get<std::string>();
+                if (!name.empty()) {
+                    staged.push_back(std::move(name));
+                }
+            }
+        }
+        size_t count = staged.size();
+        {
+            std::lock_guard<std::mutex> lock(custom_types_mutex_);
+            custom_material_types_ = std::move(staged);
+        }
+        if (count > 0) {
+            spdlog::debug("{} Loaded {} bambufy_custom_types entries", backend_log_tag(), count);
+        }
+    }
+
     const std::string p = var_prefix_;
 
     // NOTE on colors/types: <prefix>_colors and <prefix>_types live in the
@@ -374,8 +405,47 @@ void AmsBackendAd5xIfs::parse_save_variables(const json& vars) {
     // forever. The gate makes "macro present" load-bearing for trusting the
     // plugin's data, matching the contract has_ifs_vars_ already advertises.
     if (has_ifs_vars_) {
-        // Tool mapping: 16-element array, index=tool, value=port (1-4, 5=unmapped)
-        if (vars.contains(p + "_tools") && vars[p + "_tools"].is_array()) {
+        // Tool mapping: 16-element array, index=tool, value=port (1-4, 5=unmapped).
+        //
+        // Both-prefixes-conflict guard (#904): TMTYD's printer had bambufy_tools=
+        // [4,2,4,3,...] AND less_waste_tools=[2,1,3,4] left over from past plugin
+        // activations, with NEITHER plugin currently driving state (only nopoop
+        // active). Our prefix-detect picks bambufy first and applied [4,2,4,3,...]
+        // — putting T0 on port 4 and breaking every per-port T-badge in the UI.
+        //
+        // Rule: if both prefixes have _tools arrays AND they disagree, neither is
+        // authoritative. Fall back to the default 1:1 mapping (T0→port1, T1→port2,
+        // …) and skip current_tool / external reads too — those came from the same
+        // poisoned source.
+        const std::string other_p = (p == "bambufy") ? "less_waste" : "bambufy";
+        const bool have_self_tools =
+            vars.contains(p + "_tools") && vars[p + "_tools"].is_array();
+        const bool have_other_tools =
+            vars.contains(other_p + "_tools") && vars[other_p + "_tools"].is_array();
+        bool conflict = false;
+        if (have_self_tools && have_other_tools) {
+            conflict = vars[p + "_tools"] != vars[other_p + "_tools"];
+        }
+        if (conflict) {
+            spdlog::warn("{} Both bambufy_tools and less_waste_tools present and disagree "
+                         "— stale data from a deactivated plugin; falling back to default "
+                         "1:1 tool mapping",
+                         backend_log_tag());
+            tool_map_.fill(UNMAPPED_PORT);
+            for (int t = 0; t < NUM_PORTS; ++t) {
+                tool_map_[static_cast<size_t>(t)] = t + 1;
+            }
+            for (int i = 0; i < NUM_PORTS; ++i) {
+                int tool = find_first_tool_for_port(i + 1);
+                slots_.set_tool_mapping(i, tool);
+            }
+            for (int i = 0; i < NUM_PORTS; ++i) {
+                update_slot_from_state(i);
+            }
+            return;
+        }
+
+        if (have_self_tools) {
             const auto& tools = vars[p + "_tools"];
             for (size_t i = 0; i < std::min(tools.size(), static_cast<size_t>(TOOL_MAP_SIZE));
                  ++i) {
@@ -910,10 +980,44 @@ AmsError AmsBackendAd5xIfs::cancel() {
 // --- Configuration ---
 
 std::optional<std::vector<std::string>> AmsBackendAd5xIfs::get_supported_materials() const {
-    // Valid material types accepted by AD5X IFS firmware (ZMOD).
-    // Sending anything else causes firmware to reject with
+    // Stock AD5X firmware whitelist — sending anything outside it causes
     // "Invalid material type: X. Valid: PLA, PLA-CF, SILK, TPU, ABS, PETG, PETG-CF".
-    return std::vector<std::string>{"PLA", "PLA-CF", "SILK", "TPU", "ABS", "PETG", "PETG-CF"};
+    std::vector<std::string> result{"PLA", "PLA-CF", "SILK", "TPU", "ABS", "PETG", "PETG-CF"};
+
+    // Append user-defined types from bambufy_custom_types (save_variables) and
+    // [zmod_ifs] filament_<NAME> (mod_data/user.cfg). zmod's COLOR macro
+    // accepts these alongside the stock list, so they round-trip cleanly
+    // through CHANGE_ZCOLOR / Adventurer5M.json without firmware rejection.
+    // Including them here makes them appear in the edit modal dropdown AND
+    // makes normalize_material()'s case-insensitive exact-match return them
+    // unchanged on save (#904).
+    auto lower = [](const std::string& s) {
+        std::string out = s;
+        std::transform(out.begin(), out.end(), out.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        return out;
+    };
+    auto already_present = [&](const std::string& name) {
+        std::string n_lc = lower(name);
+        for (const auto& existing : result) {
+            if (lower(existing) == n_lc) {
+                return true;
+            }
+        }
+        return false;
+    };
+    {
+        // Use custom_types_mutex_ — NOT mutex_ — so callers that already hold
+        // mutex_ (e.g., normalize_material() invoked inside set_slot_info)
+        // don't deadlock.
+        std::lock_guard<std::mutex> lock(custom_types_mutex_);
+        for (const auto& name : custom_material_types_) {
+            if (!already_present(name)) {
+                result.push_back(name);
+            }
+        }
+    }
+    return result;
 }
 
 std::vector<std::pair<std::string, std::string>> AmsBackendAd5xIfs::get_material_aliases() const {
@@ -1501,6 +1605,110 @@ void AmsBackendAd5xIfs::detect_local_adventurer_json_path() {
 
     spdlog::debug("{} No local Adventurer5M.json candidate found; staying on Moonraker upload path",
                   backend_log_tag());
+}
+
+void AmsBackendAd5xIfs::fetch_user_cfg_materials() {
+    if (!api_)
+        return;
+
+    auto token = lifetime_.token();
+    api_->transfers().download_file(
+        "config", "mod_data/user.cfg",
+        [this, token](const std::string& content) {
+            if (token.expired())
+                return;
+            auto names = parse_user_cfg_filament_types(content);
+            if (names.empty()) {
+                spdlog::debug("{} user.cfg parsed: no [zmod_ifs] filament_* entries",
+                              backend_log_tag());
+                return;
+            }
+            // Append new names, preserving existing bambufy_custom_types order
+            // and de-duplicating case-insensitively.
+            auto lower = [](const std::string& s) {
+                std::string out = s;
+                std::transform(out.begin(), out.end(), out.begin(),
+                               [](unsigned char c) { return std::tolower(c); });
+                return out;
+            };
+            size_t total;
+            {
+                std::lock_guard<std::mutex> lock(custom_types_mutex_);
+                for (const auto& n : names) {
+                    std::string n_lc = lower(n);
+                    bool exists = false;
+                    for (const auto& existing : custom_material_types_) {
+                        if (lower(existing) == n_lc) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if (!exists) {
+                        custom_material_types_.push_back(n);
+                    }
+                }
+                total = custom_material_types_.size();
+            }
+            spdlog::info("{} user.cfg: loaded {} user-defined filament type(s); total custom types {}",
+                         backend_log_tag(), names.size(), total);
+        },
+        [this, token](const MoonrakerError& err) {
+            if (token.expired())
+                return;
+            if (err.type == MoonrakerErrorType::FILE_NOT_FOUND || err.code == 404) {
+                spdlog::debug("{} user.cfg not present (404) — no user-defined types to merge",
+                              backend_log_tag());
+            } else {
+                spdlog::debug("{} user.cfg fetch failed: {}", backend_log_tag(), err.message);
+            }
+        });
+}
+
+std::vector<std::string>
+AmsBackendAd5xIfs::parse_user_cfg_filament_types(const std::string& body) {
+    // zmod docs: https://wiki.zmod.link/AD5X/#7-add-custom-filament-types
+    //
+    //   [zmod_ifs]
+    //   filament_NEWTYPE: 300
+    //
+    // Section is Klipper-style INI. Comments start with '#' or ';'. Values
+    // are decimal temperatures we don't currently use — we only collect the
+    // NAME tokens (uppercased convention, but preserve user case as written).
+    // Any whitespace before the section header or key is tolerated; we don't
+    // try to fully reimplement Klipper's INI parser, just match the lines we
+    // care about within the [zmod_ifs] section.
+    std::vector<std::string> out;
+    std::istringstream is(body);
+    std::string line;
+    bool in_section = false;
+    static const std::regex section_re(R"(^\s*\[\s*([^\]\s]+)\s*\]\s*$)");
+    static const std::regex filament_re(R"(^\s*filament_([A-Za-z0-9_+\-]+)\s*[:=].*$)");
+    while (std::getline(is, line)) {
+        // Strip trailing CR for files saved with CRLF.
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        // Strip inline comments — Klipper accepts both '#' and ';'.
+        for (char ch : {'#', ';'}) {
+            auto pos = line.find(ch);
+            if (pos != std::string::npos) {
+                line.erase(pos);
+                break;
+            }
+        }
+        if (line.find_first_not_of(" \t") == std::string::npos) {
+            continue;
+        }
+        std::smatch m;
+        if (std::regex_match(line, m, section_re)) {
+            in_section = (m[1].str() == "zmod_ifs");
+            continue;
+        }
+        if (in_section && std::regex_match(line, m, filament_re)) {
+            out.push_back(m[1].str());
+        }
+    }
+    return out;
 }
 
 void AmsBackendAd5xIfs::read_adventurer_json() {

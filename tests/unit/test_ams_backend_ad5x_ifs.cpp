@@ -246,6 +246,17 @@ class Ad5xIfsTestAccess {
     static AmsError write_adventurer_json_local(AmsBackendAd5xIfs& b, int slot_index) {
         return b.write_adventurer_json_local(slot_index);
     }
+    // tool_map snapshot: copy out for comparison without holding mutex_.
+    static std::array<int, AmsBackendAd5xIfs::TOOL_MAP_SIZE> tool_map(const AmsBackendAd5xIfs& b) {
+        std::lock_guard<std::mutex> lock(b.mutex_);
+        return b.tool_map_;
+    }
+    // Custom-types snapshot. Test fixture inspects what bambufy_custom_types
+    // / user.cfg merging produced.
+    static std::vector<std::string> custom_material_types(const AmsBackendAd5xIfs& b) {
+        std::lock_guard<std::mutex> lock(b.custom_types_mutex_);
+        return b.custom_material_types_;
+    }
 };
 
 // Helper to build a full save_variables JSON payload
@@ -3402,4 +3413,182 @@ TEST_CASE("AD5X IFS write_adventurer_json_local atomic — leaves no .tmp on suc
     // The atomic-rename pattern uses <path>.tmp as the staging file. After a
     // successful write the temp must be gone (rename consumes it).
     CHECK_FALSE(std::filesystem::exists(tmp.path.string() + ".tmp"));
+}
+
+// ==========================================================================
+// #904: stale-plugin-data fallback + user-defined material types
+// ==========================================================================
+
+// TMTYD's printer in #904 had bambufy_tools=[4,2,4,3,...] AND
+// less_waste_tools=[2,1,3,4] left over from past plugin activations, with
+// neither plugin currently driving state. Without the fallback, our prefix
+// detection picks bambufy first and applies [4,2,4,3,...] — putting T0 on
+// port 4 and breaking every per-port T-badge in the UI. The fallback rule:
+// when both prefixes have _tools arrays AND they disagree, neither is
+// authoritative; revert to the default 1:1 mapping.
+TEST_CASE("AD5X IFS #904 both prefixes conflict falls back to 1:1 tool map",
+          "[ams][ad5x_ifs][issue_904]") {
+    AmsBackendAd5xIfs backend(nullptr, nullptr);
+    Ad5xIfsTestAccess::set_ifs_macro_confirmed_missing(backend, false);
+
+    // TMTYD's exact data: bambufy_tools and less_waste_tools both non-default
+    // and disagreeing.
+    json vars = json{
+        {"bambufy_tools", json::array({4, 2, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4})},
+        {"bambufy_current_tool", -1},
+        {"less_waste_tools", json::array({2, 1, 3, 4})},
+        {"less_waste_current_tool", -1},
+    };
+
+    Ad5xIfsTestAccess::parse_vars(backend, vars);
+
+    auto map = Ad5xIfsTestAccess::tool_map(backend);
+    // Default 1:1 mapping — T0→port1, T1→port2, T2→port3, T3→port4, then
+    // UNMAPPED_PORT for the remaining slots.
+    CHECK(map[0] == 1);
+    CHECK(map[1] == 2);
+    CHECK(map[2] == 3);
+    CHECK(map[3] == 4);
+    for (size_t i = 4; i < map.size(); ++i) {
+        CHECK(map[i] == AmsBackendAd5xIfs::UNMAPPED_PORT);
+    }
+
+    // Per-port T-badge: slot 3 (port 4) must show T3, NOT T0. Pre-fix this
+    // was T0 because bambufy_tools[0]=4 made find_first_tool_for_port(4)=0.
+    auto info3 = backend.get_slot_info(3);
+    CHECK(info3.mapped_tool == 3);
+}
+
+// Single-prefix users still get their map applied (no false-positive
+// fallback for users with a legitimately active plugin).
+TEST_CASE("AD5X IFS #904 single-prefix non-default tools is honored",
+          "[ams][ad5x_ifs][issue_904]") {
+    AmsBackendAd5xIfs backend(nullptr, nullptr);
+    Ad5xIfsTestAccess::set_ifs_macro_confirmed_missing(backend, false);
+
+    // Only bambufy_tools, with a custom mapping.
+    json vars = json{
+        {"bambufy_tools", json::array({3, 2, 1, 0, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5})},
+        {"bambufy_current_tool", -1},
+    };
+
+    Ad5xIfsTestAccess::parse_vars(backend, vars);
+    auto map = Ad5xIfsTestAccess::tool_map(backend);
+    CHECK(map[0] == 3);
+    CHECK(map[1] == 2);
+    CHECK(map[2] == 1);
+    CHECK(map[3] == 0);
+}
+
+// Both-prefixes-but-equal: no conflict, apply the map normally. (Edge case:
+// a user with bambufy active whose less_waste_tools happens to match.)
+TEST_CASE("AD5X IFS #904 both prefixes agree — no fallback",
+          "[ams][ad5x_ifs][issue_904]") {
+    AmsBackendAd5xIfs backend(nullptr, nullptr);
+    Ad5xIfsTestAccess::set_ifs_macro_confirmed_missing(backend, false);
+
+    auto same = json::array({2, 1, 4, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5});
+    json vars = json{
+        {"bambufy_tools", same},
+        {"less_waste_tools", same},
+    };
+
+    Ad5xIfsTestAccess::parse_vars(backend, vars);
+    auto map = Ad5xIfsTestAccess::tool_map(backend);
+    CHECK(map[0] == 2);
+    CHECK(map[1] == 1);
+    CHECK(map[2] == 4);
+    CHECK(map[3] == 3);
+}
+
+// Custom material types from bambufy_custom_types must surface in
+// get_supported_materials() so the edit modal dropdown isn't restricted to
+// the firmware whitelist (#904 root cause #2: PLA+ stomped to PLA on save).
+TEST_CASE("AD5X IFS #904 bambufy_custom_types merged into supported materials",
+          "[ams][ad5x_ifs][issue_904]") {
+    AmsBackendAd5xIfs backend(nullptr, nullptr);
+
+    json vars = json{
+        {"bambufy_custom_types", json::array({"PLA+", "rPLA", "PETG-Pro", "PLA-CF"})},
+    };
+    Ad5xIfsTestAccess::parse_vars(backend, vars);
+
+    auto custom = Ad5xIfsTestAccess::custom_material_types(backend);
+    REQUIRE(custom.size() == 4);
+    CHECK(custom[0] == "PLA+");
+    CHECK(custom[2] == "PETG-Pro");
+
+    auto supported = backend.get_supported_materials();
+    REQUIRE(supported.has_value());
+    auto contains = [&](const std::string& s) {
+        return std::find(supported->begin(), supported->end(), s) != supported->end();
+    };
+    // Firmware whitelist still present.
+    CHECK(contains("PLA"));
+    CHECK(contains("PETG-CF"));
+    // User-defined types appended.
+    CHECK(contains("PLA+"));
+    CHECK(contains("rPLA"));
+    CHECK(contains("PETG-Pro"));
+    // PLA-CF was already in the whitelist — no duplicate (case-insensitive
+    // dedup).
+    auto count = std::count(supported->begin(), supported->end(), "PLA-CF");
+    CHECK(count == 1);
+
+    // Round-trip via normalize_material: the user-defined type must come
+    // back unchanged (this is what stops the PLA+ → PLA stomp on save).
+    CHECK(backend.normalize_material("PLA+") == "PLA+");
+    CHECK(backend.normalize_material("pla+") == "PLA+"); // case-insensitive
+}
+
+// /mod_data/user.cfg parsing — the [zmod_ifs] filament_<NAME>: <TEMP>
+// directive is zmod's official mechanism for user-defined material types
+// (https://wiki.zmod.link/AD5X/#7-add-custom-filament-types). Out-of-section
+// matches must NOT be picked up.
+TEST_CASE("AD5X IFS #904 user.cfg [zmod_ifs] filament_* parser",
+          "[ams][ad5x_ifs][issue_904]") {
+    SECTION("standard wiki example") {
+        const std::string body =
+            "[zmod_ifs]\n"
+            "filament_NEWTYPE: 300\n";
+        auto names = AmsBackendAd5xIfs::parse_user_cfg_filament_types(body);
+        REQUIRE(names.size() == 1);
+        CHECK(names[0] == "NEWTYPE");
+    }
+
+    SECTION("multiple entries with comments and other sections") {
+        const std::string body =
+            "# global header\n"
+            "[gcode_macro FOO]\n"
+            "filament_IGNORED: 999  ; not in zmod_ifs\n"
+            "\n"
+            "[zmod_ifs]\n"
+            "filament_PLA+: 220   # inline comment\n"
+            "filament_RPLA: 215\n"
+            "filament_HELIX: 240 ; semicolon comment\n"
+            "other_setting: 42\n";
+        auto names = AmsBackendAd5xIfs::parse_user_cfg_filament_types(body);
+        REQUIRE(names.size() == 3);
+        CHECK(names[0] == "PLA+");
+        CHECK(names[1] == "RPLA");
+        CHECK(names[2] == "HELIX");
+    }
+
+    SECTION("CRLF line endings (zmod files saved on Windows)") {
+        const std::string body = "[zmod_ifs]\r\nfilament_FOO: 200\r\n";
+        auto names = AmsBackendAd5xIfs::parse_user_cfg_filament_types(body);
+        REQUIRE(names.size() == 1);
+        CHECK(names[0] == "FOO");
+    }
+
+    SECTION("empty body") {
+        auto names = AmsBackendAd5xIfs::parse_user_cfg_filament_types("");
+        CHECK(names.empty());
+    }
+
+    SECTION("section without filament_ entries") {
+        const std::string body = "[zmod_ifs]\nallowed_tool_count: 4\n";
+        auto names = AmsBackendAd5xIfs::parse_user_cfg_filament_types(body);
+        CHECK(names.empty());
+    }
 }
