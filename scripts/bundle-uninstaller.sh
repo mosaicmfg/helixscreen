@@ -70,8 +70,9 @@ PREVIOUS_UIS="guppyscreen GuppyScreen featherscreen FeatherScreen klipperscreen 
 
 HEADER
 
-    # Include each module (only those needed for uninstall)
-    for module in common.sh platform.sh permissions.sh requirements.sh forgex.sh moonraker.sh uninstall.sh; do
+    # Include each module (only those needed for uninstall).
+    # service.sh provides stop_service, called by uninstall.sh's clean_old_installation.
+    for module in common.sh platform.sh permissions.sh requirements.sh forgex.sh service.sh moonraker.sh uninstall.sh; do
         module_path="$LIB_DIR/$module"
         if [ ! -f "$module_path" ]; then
             echo "ERROR: Module not found: $module_path" >&2

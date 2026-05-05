@@ -2333,6 +2333,22 @@ define release-clean-assets
 	@find $(1)/assets -name 'mdi-icon-metadata.json.gz' -delete 2>/dev/null || true
 endef
 
+# PII / runtime-state files that must NEVER ship in a release tarball.
+# Personal config (settings.json, helixconfig*.json) is handled per-target
+# because some targets ship a curated default. This list is for things that
+# get auto-generated at runtime and have no business in a public release.
+# Keep in sync with DEPLOY_RUNTIME_EXCLUDES (~ line 1388).
+define release-strip-pii
+	@rm -f $(1)/config/telemetry_device.json \
+	       $(1)/config/telemetry_queue.json \
+	       $(1)/config/tool_spools.json \
+	       $(1)/config/crash_report.txt \
+	       $(1)/config/crash_history.json \
+	       $(1)/config/feedback_queue.json \
+	       $(1)/config/.helix-screen.lock \
+	       2>/dev/null || true
+endef
+
 .PHONY: release-pi release-pi32 release-ad5m release-k1 release-ad5x release-k1-dynamic release-k2 release-snapmaker-u1 release-x86 release-all release-clean pi-fbdev-docker pi32-fbdev-docker pi-all-docker pi32-all-docker x86-fbdev-docker x86-all-docker
 
 # Package Pi release
@@ -2347,10 +2363,12 @@ release-pi: | build/pi/bin/helix-screen build/pi/bin/helix-splash build/pi-fbdev
 	@cp -r ui_xml config $(RELEASE_DIR)/helixscreen/
 	@# Remove any personal config — release ships template only (installer copies it on first run)
 	@rm -f $(RELEASE_DIR)/helixscreen/config/settings.json $(RELEASE_DIR)/helixscreen/config/settings-test.json $(RELEASE_DIR)/helixscreen/config/helixconfig.json $(RELEASE_DIR)/helixscreen/config/helixconfig-test.json
+	$(call release-strip-pii,$(RELEASE_DIR)/helixscreen)
 	@cp scripts/$(INSTALLER_FILENAME) $(RELEASE_DIR)/helixscreen/
 	@chmod +x $(RELEASE_DIR)/helixscreen/$(INSTALLER_FILENAME)
 	@mkdir -p $(RELEASE_DIR)/helixscreen/scripts
 	@cp scripts/uninstall.sh $(RELEASE_DIR)/helixscreen/scripts/
+	@cp -r scripts/kiauh $(RELEASE_DIR)/helixscreen/scripts/
 	@mkdir -p $(RELEASE_DIR)/helixscreen/assets
 	@for asset in $(RELEASE_ASSETS); do \
 		if [ -d "$$asset" ]; then cp -r "$$asset" $(RELEASE_DIR)/helixscreen/assets/; fi; \
@@ -2386,10 +2404,12 @@ release-pi32: | build/pi32/bin/helix-screen build/pi32/bin/helix-splash build/pi
 	@cp -r ui_xml config $(RELEASE_DIR)/helixscreen/
 	@# Remove any personal config — release ships template only (installer copies it on first run)
 	@rm -f $(RELEASE_DIR)/helixscreen/config/settings.json $(RELEASE_DIR)/helixscreen/config/settings-test.json $(RELEASE_DIR)/helixscreen/config/helixconfig.json $(RELEASE_DIR)/helixscreen/config/helixconfig-test.json
+	$(call release-strip-pii,$(RELEASE_DIR)/helixscreen)
 	@cp scripts/$(INSTALLER_FILENAME) $(RELEASE_DIR)/helixscreen/
 	@chmod +x $(RELEASE_DIR)/helixscreen/$(INSTALLER_FILENAME)
 	@mkdir -p $(RELEASE_DIR)/helixscreen/scripts
 	@cp scripts/uninstall.sh $(RELEASE_DIR)/helixscreen/scripts/
+	@cp -r scripts/kiauh $(RELEASE_DIR)/helixscreen/scripts/
 	@mkdir -p $(RELEASE_DIR)/helixscreen/assets
 	@for asset in $(RELEASE_ASSETS); do \
 		if [ -d "$$asset" ]; then cp -r "$$asset" $(RELEASE_DIR)/helixscreen/assets/; fi; \
@@ -2423,6 +2443,7 @@ release-ad5m: | build/ad5m/bin/helix-screen build/ad5m/bin/helix-splash
 	@if [ -f build/ad5m/bin/helix-watchdog ]; then cp build/ad5m/bin/helix-watchdog $(RELEASE_DIR)/helixscreen/bin/; fi
 	@cp scripts/helix-launcher.sh $(RELEASE_DIR)/helixscreen/bin/
 	@cp -r ui_xml config $(RELEASE_DIR)/helixscreen/
+	$(call release-strip-pii,$(RELEASE_DIR)/helixscreen)
 	@# Copy AD5M Pro default config as config/settings.json (skips wizard on first run)
 	@cp assets/config/presets/ad5m.json $(RELEASE_DIR)/helixscreen/config/settings.json
 	@echo "  $(DIM)Included pre-configured config/settings.json for AD5M Pro$(RESET)"
@@ -2430,6 +2451,7 @@ release-ad5m: | build/ad5m/bin/helix-screen build/ad5m/bin/helix-splash
 	@chmod +x $(RELEASE_DIR)/helixscreen/$(INSTALLER_FILENAME)
 	@mkdir -p $(RELEASE_DIR)/helixscreen/scripts
 	@cp scripts/uninstall.sh $(RELEASE_DIR)/helixscreen/scripts/
+	@cp -r scripts/kiauh $(RELEASE_DIR)/helixscreen/scripts/
 	@mkdir -p $(RELEASE_DIR)/helixscreen/assets
 	@for asset in $(RELEASE_ASSETS); do \
 		if [ -d "$$asset" ]; then cp -r "$$asset" $(RELEASE_DIR)/helixscreen/assets/; fi; \
@@ -2469,12 +2491,14 @@ release-ad5x: | build/ad5x/bin/helix-screen build/ad5x/bin/helix-splash
 	@cp -r ui_xml config $(RELEASE_DIR)/helixscreen/
 	@# Install AD5X preset as default config (skips hardware wizard on first run)
 	@rm -f $(RELEASE_DIR)/helixscreen/config/settings-test.json $(RELEASE_DIR)/helixscreen/config/helixconfig.json $(RELEASE_DIR)/helixscreen/config/helixconfig-test.json
+	$(call release-strip-pii,$(RELEASE_DIR)/helixscreen)
 	@cp assets/config/presets/ad5x.json $(RELEASE_DIR)/helixscreen/config/settings.json
 	@echo "  $(DIM)Included pre-configured config/settings.json for AD5X$(RESET)"
 	@cp scripts/$(INSTALLER_FILENAME) $(RELEASE_DIR)/helixscreen/
 	@chmod +x $(RELEASE_DIR)/helixscreen/$(INSTALLER_FILENAME)
 	@mkdir -p $(RELEASE_DIR)/helixscreen/scripts
 	@cp scripts/uninstall.sh $(RELEASE_DIR)/helixscreen/scripts/
+	@cp -r scripts/kiauh $(RELEASE_DIR)/helixscreen/scripts/
 	@mkdir -p $(RELEASE_DIR)/helixscreen/assets
 	@for asset in $(RELEASE_ASSETS); do \
 		if [ -d "$$asset" ]; then cp -r "$$asset" $(RELEASE_DIR)/helixscreen/assets/; fi; \
@@ -2514,12 +2538,14 @@ release-cc1: | build/cc1/bin/helix-screen build/cc1/bin/helix-splash
 	@cp -r ui_xml config $(RELEASE_DIR)/helixscreen/
 	@# Install CC1 preset as default config (skips hardware wizard on first run)
 	@rm -f $(RELEASE_DIR)/helixscreen/config/settings-test.json $(RELEASE_DIR)/helixscreen/config/helixconfig.json $(RELEASE_DIR)/helixscreen/config/helixconfig-test.json
+	$(call release-strip-pii,$(RELEASE_DIR)/helixscreen)
 	@cp assets/config/presets/cc1.json $(RELEASE_DIR)/helixscreen/config/settings.json
 	@echo "  $(DIM)Included pre-configured config/settings.json for CC1$(RESET)"
 	@cp scripts/$(INSTALLER_FILENAME) $(RELEASE_DIR)/helixscreen/
 	@chmod +x $(RELEASE_DIR)/helixscreen/$(INSTALLER_FILENAME)
 	@mkdir -p $(RELEASE_DIR)/helixscreen/scripts
 	@cp scripts/uninstall.sh $(RELEASE_DIR)/helixscreen/scripts/
+	@cp -r scripts/kiauh $(RELEASE_DIR)/helixscreen/scripts/
 	@mkdir -p $(RELEASE_DIR)/helixscreen/assets
 	@for asset in $(RELEASE_ASSETS); do \
 		if [ -d "$$asset" ]; then cp -r "$$asset" $(RELEASE_DIR)/helixscreen/assets/; fi; \
@@ -2559,12 +2585,14 @@ release-k1: | build/mips/bin/helix-screen build/mips/bin/helix-splash
 	@cp -r ui_xml config $(RELEASE_DIR)/helixscreen/
 	@# Install K1 preset as default config (skips hardware wizard on first run)
 	@rm -f $(RELEASE_DIR)/helixscreen/config/settings-test.json $(RELEASE_DIR)/helixscreen/config/helixconfig.json $(RELEASE_DIR)/helixscreen/config/helixconfig-test.json
+	$(call release-strip-pii,$(RELEASE_DIR)/helixscreen)
 	@cp assets/config/presets/k1.json $(RELEASE_DIR)/helixscreen/config/settings.json
 	@echo "  $(DIM)Included pre-configured config/settings.json for K1$(RESET)"
 	@cp scripts/$(INSTALLER_FILENAME) $(RELEASE_DIR)/helixscreen/
 	@chmod +x $(RELEASE_DIR)/helixscreen/$(INSTALLER_FILENAME)
 	@mkdir -p $(RELEASE_DIR)/helixscreen/scripts
 	@cp scripts/uninstall.sh $(RELEASE_DIR)/helixscreen/scripts/
+	@cp -r scripts/kiauh $(RELEASE_DIR)/helixscreen/scripts/
 	@mkdir -p $(RELEASE_DIR)/helixscreen/assets
 	@for asset in $(RELEASE_ASSETS); do \
 		if [ -d "$$asset" ]; then cp -r "$$asset" $(RELEASE_DIR)/helixscreen/assets/; fi; \
@@ -2604,10 +2632,12 @@ release-k1-dynamic: | build/k1-dynamic/bin/helix-screen build/k1-dynamic/bin/hel
 	@cp -r ui_xml config $(RELEASE_DIR)/helixscreen/
 	@# Remove any personal config — release ships template only (installer copies it on first run)
 	@rm -f $(RELEASE_DIR)/helixscreen/config/settings.json $(RELEASE_DIR)/helixscreen/config/settings-test.json $(RELEASE_DIR)/helixscreen/config/helixconfig.json $(RELEASE_DIR)/helixscreen/config/helixconfig-test.json
+	$(call release-strip-pii,$(RELEASE_DIR)/helixscreen)
 	@cp scripts/$(INSTALLER_FILENAME) $(RELEASE_DIR)/helixscreen/
 	@chmod +x $(RELEASE_DIR)/helixscreen/$(INSTALLER_FILENAME)
 	@mkdir -p $(RELEASE_DIR)/helixscreen/scripts
 	@cp scripts/uninstall.sh $(RELEASE_DIR)/helixscreen/scripts/
+	@cp -r scripts/kiauh $(RELEASE_DIR)/helixscreen/scripts/
 	@mkdir -p $(RELEASE_DIR)/helixscreen/assets
 	@for asset in $(RELEASE_ASSETS); do \
 		if [ -d "$$asset" ]; then cp -r "$$asset" $(RELEASE_DIR)/helixscreen/assets/; fi; \
@@ -2640,12 +2670,14 @@ release-k2: | build/k2/bin/helix-screen build/k2/bin/helix-splash
 	@cp -r ui_xml config $(RELEASE_DIR)/helixscreen/
 	@# Install K2 preset as default config (skips hardware wizard on first run)
 	@rm -f $(RELEASE_DIR)/helixscreen/config/settings-test.json $(RELEASE_DIR)/helixscreen/config/helixconfig.json $(RELEASE_DIR)/helixscreen/config/helixconfig-test.json
+	$(call release-strip-pii,$(RELEASE_DIR)/helixscreen)
 	@cp assets/config/presets/k2.json $(RELEASE_DIR)/helixscreen/config/settings.json
 	@echo "  $(DIM)Included pre-configured config/settings.json for K2$(RESET)"
 	@cp scripts/$(INSTALLER_FILENAME) $(RELEASE_DIR)/helixscreen/
 	@chmod +x $(RELEASE_DIR)/helixscreen/$(INSTALLER_FILENAME)
 	@mkdir -p $(RELEASE_DIR)/helixscreen/scripts
 	@cp scripts/uninstall.sh $(RELEASE_DIR)/helixscreen/scripts/
+	@cp -r scripts/kiauh $(RELEASE_DIR)/helixscreen/scripts/
 	@mkdir -p $(RELEASE_DIR)/helixscreen/assets
 	@for asset in $(RELEASE_ASSETS); do \
 		if [ -d "$$asset" ]; then cp -r "$$asset" $(RELEASE_DIR)/helixscreen/assets/; fi; \
@@ -2678,12 +2710,14 @@ release-snapmaker-u1: | build/snapmaker-u1/bin/helix-screen
 	@cp -r ui_xml config $(RELEASE_DIR)/helixscreen/
 	@# Install Snapmaker U1 preset as default config (skips hardware wizard on first run)
 	@rm -f $(RELEASE_DIR)/helixscreen/config/settings-test.json $(RELEASE_DIR)/helixscreen/config/helixconfig.json $(RELEASE_DIR)/helixscreen/config/helixconfig-test.json
+	$(call release-strip-pii,$(RELEASE_DIR)/helixscreen)
 	@cp assets/config/presets/snapmaker-u1.json $(RELEASE_DIR)/helixscreen/config/settings.json
 	@echo "  $(DIM)Included pre-configured config/settings.json for Snapmaker U1$(RESET)"
 	@cp scripts/$(INSTALLER_FILENAME) $(RELEASE_DIR)/helixscreen/ 2>/dev/null || true
 	@chmod +x $(RELEASE_DIR)/helixscreen/$(INSTALLER_FILENAME) 2>/dev/null || true
 	@mkdir -p $(RELEASE_DIR)/helixscreen/scripts
 	@cp scripts/uninstall.sh $(RELEASE_DIR)/helixscreen/scripts/ 2>/dev/null || true
+	@cp -r scripts/kiauh $(RELEASE_DIR)/helixscreen/scripts/ 2>/dev/null || true
 	@cp scripts/snapmaker-u1-setup-autostart.sh $(RELEASE_DIR)/helixscreen/scripts/ 2>/dev/null || true
 	@mkdir -p $(RELEASE_DIR)/helixscreen/assets
 	@for asset in $(RELEASE_ASSETS); do \
@@ -2716,10 +2750,12 @@ release-x86: | build/x86/bin/helix-screen build/x86/bin/helix-splash build/x86-f
 	@cp -r ui_xml config $(RELEASE_DIR)/helixscreen/
 	@# Remove any personal config — release ships template only (installer copies it on first run)
 	@rm -f $(RELEASE_DIR)/helixscreen/config/settings.json $(RELEASE_DIR)/helixscreen/config/settings-test.json $(RELEASE_DIR)/helixscreen/config/helixconfig.json $(RELEASE_DIR)/helixscreen/config/helixconfig-test.json
+	$(call release-strip-pii,$(RELEASE_DIR)/helixscreen)
 	@cp scripts/$(INSTALLER_FILENAME) $(RELEASE_DIR)/helixscreen/
 	@chmod +x $(RELEASE_DIR)/helixscreen/$(INSTALLER_FILENAME)
 	@mkdir -p $(RELEASE_DIR)/helixscreen/scripts
 	@cp scripts/uninstall.sh $(RELEASE_DIR)/helixscreen/scripts/
+	@cp -r scripts/kiauh $(RELEASE_DIR)/helixscreen/scripts/
 	@mkdir -p $(RELEASE_DIR)/helixscreen/assets
 	@for asset in $(RELEASE_ASSETS); do \
 		if [ -d "$$asset" ]; then cp -r "$$asset" $(RELEASE_DIR)/helixscreen/assets/; fi; \
@@ -2753,8 +2789,9 @@ release-clean:
 	@rm -rf $(RELEASE_DIR)
 	@echo "$(GREEN)✓ Release directory cleaned$(RESET)"
 
-# Aliases for package-* (matches scripts/package.sh naming)
-# These trigger the full build + package workflow
+# Aliases for package-* — trigger the full build + package workflow.
+# The legacy scripts/package.sh wrapper was deleted; these targets are now
+# the single entry point for building release artifacts.
 .PHONY: package-ad5m package-cc1 package-pi package-pi32 package-k1 package-ad5x package-k1-dynamic package-k2 package-snapmaker-u1 package-x86 package-all package-clean
 package-ad5m: ad5m-docker gen-images-ad5m gen-splash-3d-ad5m gen-printer-images release-ad5m
 package-cc1: cc1-docker gen-images gen-printer-images release-cc1

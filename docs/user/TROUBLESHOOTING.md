@@ -288,7 +288,7 @@ HelixScreen needs permission (via polkit rules) to manage WiFi through NetworkMa
 
 **Re-run the installer** (recommended — installs correct polkit rules):
 ```bash
-curl -fsSL https://install.helixscreen.org | bash
+curl -fsSL https://releases.helixscreen.org/install.sh | bash
 ```
 
 **Verify polkit rules are installed:**

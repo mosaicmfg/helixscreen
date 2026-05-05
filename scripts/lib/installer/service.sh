@@ -154,6 +154,8 @@ install_service_snapmaker_u1() {
     else
         log_error "Snapmaker U1 autostart script not found at ${INSTALL_DIR}/scripts/snapmaker-u1-setup-autostart.sh"
         log_error "The release package may be incomplete."
+        log_error "Recovery: re-run the installer to download a fresh copy:"
+        log_error "  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
         exit 1
     fi
 }
@@ -180,6 +182,8 @@ install_service_systemd() {
     if [ ! -f "$service_src" ]; then
         log_error "Service file not found: $service_src"
         log_error "The release package may be incomplete."
+        log_error "Recovery: re-run the installer to download a fresh copy:"
+        log_error "  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
         exit 1
     fi
 
@@ -349,6 +353,8 @@ install_service_sysv() {
     if [ ! -f "$init_src" ]; then
         log_error "Init script not found: $init_src"
         log_error "The release package may be incomplete."
+        log_error "Recovery: re-run the installer to download a fresh copy:"
+        log_error "  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
         exit 1
     fi
 
@@ -401,6 +407,8 @@ start_service_snapmaker_u1() {
     if [ ! -x "$init_src" ]; then
         log_error "Init script not found or not executable: $init_src"
         log_error "The release package may be incomplete."
+        log_error "Recovery: re-run the installer to download a fresh copy:"
+        log_error "  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
         exit 1
     fi
 

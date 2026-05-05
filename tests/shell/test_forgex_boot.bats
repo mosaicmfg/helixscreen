@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Tests for ForgeX boot sequence coordination:
-# - install-dev.sh applies all three screen.sh patches (not just backlight)
+# - lib/installer/main.sh applies all three screen.sh patches (not just backlight)
 # - helixscreen.init calls platform_wait_for_boot_complete with skip mechanism
 # - hooks-ad5m-forgex.sh implements platform_wait_for_boot_complete
 # - Bundled install.sh stays in sync with modular installer
@@ -16,16 +16,18 @@ setup() {
 
 # --- install-dev.sh must apply all ForgeX patches ---
 
-@test "install-dev.sh calls patch_forgex_screen_sh" {
-    grep -q 'patch_forgex_screen_sh' "$WORKTREE_ROOT/scripts/install-dev.sh"
+# Orchestration lives in lib/installer/main.sh now (sourced by both
+# install-dev.sh and the bundled install.sh).
+@test "main.sh calls patch_forgex_screen_sh" {
+    grep -q 'patch_forgex_screen_sh' "$WORKTREE_ROOT/scripts/lib/installer/main.sh"
 }
 
-@test "install-dev.sh calls patch_forgex_screen_drawing" {
-    grep -q 'patch_forgex_screen_drawing' "$WORKTREE_ROOT/scripts/install-dev.sh"
+@test "main.sh calls patch_forgex_screen_drawing" {
+    grep -q 'patch_forgex_screen_drawing' "$WORKTREE_ROOT/scripts/lib/installer/main.sh"
 }
 
-@test "install-dev.sh calls install_forgex_logged_wrapper" {
-    grep -q 'install_forgex_logged_wrapper' "$WORKTREE_ROOT/scripts/install-dev.sh"
+@test "main.sh calls install_forgex_logged_wrapper" {
+    grep -q 'install_forgex_logged_wrapper' "$WORKTREE_ROOT/scripts/lib/installer/main.sh"
 }
 
 # --- Bundled install.sh parity ---
@@ -36,10 +38,11 @@ setup() {
     grep -q 'install_forgex_logged_wrapper' "$WORKTREE_ROOT/scripts/install.sh"
 }
 
-@test "bundle-installer.sh calls all three ForgeX patches" {
-    grep -q 'patch_forgex_screen_sh' "$WORKTREE_ROOT/scripts/bundle-installer.sh"
-    grep -q 'patch_forgex_screen_drawing' "$WORKTREE_ROOT/scripts/bundle-installer.sh"
-    grep -q 'install_forgex_logged_wrapper' "$WORKTREE_ROOT/scripts/bundle-installer.sh"
+@test "bundle-installer.sh sources main.sh which holds ForgeX patches" {
+    grep -q 'main\.sh' "$WORKTREE_ROOT/scripts/bundle-installer.sh"
+    grep -q 'patch_forgex_screen_sh' "$WORKTREE_ROOT/scripts/lib/installer/main.sh"
+    grep -q 'patch_forgex_screen_drawing' "$WORKTREE_ROOT/scripts/lib/installer/main.sh"
+    grep -q 'install_forgex_logged_wrapper' "$WORKTREE_ROOT/scripts/lib/installer/main.sh"
 }
 
 # --- helixscreen.init boot complete hook ---

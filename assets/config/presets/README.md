@@ -4,7 +4,7 @@ Platform-specific default configurations for known-hardware builds.
 
 ## How Presets Work
 
-For supported platforms (like AD5M), the preset is baked into the release package as `settings.json` by `scripts/package.sh` using convention-based lookup: if `config/presets/<PLATFORM_TARGET>.json` exists, it's used automatically.
+For supported platforms (like AD5M and Snapmaker U1), the preset is baked into the release package as `config/settings.json` by the matching `release-<platform>` target in `mk/cross.mk` (see the `cp assets/config/presets/<platform>.json` line). Presets are not auto-discovered — adding a new one requires editing the relevant release target.
 
 - **Fresh installs**: Preset is used, abbreviated wizard runs (language + telemetry only)
 - **Upgrades**: Existing `settings.json` is preserved (backup/restore in installer)
@@ -52,4 +52,4 @@ What's NOT in presets:
 7. Remove sensitive data (API keys)
 8. Save as `config/presets/<platform>.json`
 
-The preset is automatically picked up by `scripts/package.sh` when the filename matches `PLATFORM_TARGET`.
+9. Wire it up: in `mk/cross.mk`, in the matching `release-<platform>` target, add a `cp assets/config/presets/<platform>.json $(RELEASE_DIR)/helixscreen/config/settings.json` line right after the `cp -r ui_xml config` block. Mirror the pattern used by `release-ad5m`.

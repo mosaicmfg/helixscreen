@@ -224,7 +224,7 @@ if [[ ! -f "$TARBALL_PATH" ]]; then
     echo ""
     echo "  Expected: $TARBALL_PATH"
     echo "  Either run without --no-build, or build manually:"
-    echo "    scripts/package.sh ${PLATFORM} --version $VERSION"
+    echo "    make release-${PLATFORM}"
     exit 1
 fi
 

@@ -85,6 +85,18 @@ setup() {
     ! grep -q "^old$" "$kiauh_ext/helixscreen/__init__.py"
 }
 
+@test "install_kiauh_extension installs fresh when kiauh_mode is empty (default-on)" {
+    local kiauh_ext="$BATS_TEST_TMPDIR/fakehome/kiauh/kiauh/extensions"
+    mkdir -p "$kiauh_ext"
+
+    HOME="$BATS_TEST_TMPDIR/fakehome" run install_kiauh_extension ""
+    [ "$status" -eq 0 ]
+    # No prompt, no opt-out — extension should be installed
+    [ -f "$kiauh_ext/helixscreen/__init__.py" ]
+    [ -f "$kiauh_ext/helixscreen/helixscreen_extension.py" ]
+    [ -f "$kiauh_ext/helixscreen/metadata.json" ]
+}
+
 @test "--kiauh yes forces install without prompt" {
     local kiauh_ext="$BATS_TEST_TMPDIR/fakehome/kiauh/kiauh/extensions"
     mkdir -p "$kiauh_ext"

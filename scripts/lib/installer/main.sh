@@ -1,0 +1,308 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Module: main
+# Top-level installer orchestration: argument parsing, platform detection,
+# preflight, download, install, post-install. Single source of truth shared
+# by install-dev.sh and the bundled install.sh.
+#
+# Reads: every other lib/installer module
+# Writes: nothing; orchestrates the install flow
+
+# Source guard
+[ -n "${_HELIX_MAIN_SOURCED:-}" ] && return 0
+_HELIX_MAIN_SOURCED=1
+
+# Set up error trap (ERR is bash-specific, skip on POSIX shells like dash/ash)
+# shellcheck disable=SC3047
+trap 'error_handler $LINENO' ERR 2>/dev/null || true
+
+# Print usage
+usage() {
+    echo "HelixScreen Installer"
+    echo ""
+    echo "Usage: $0 [options]"
+    echo ""
+    echo "Options:"
+    echo "  --update       Update existing installation (preserves config)"
+    echo "  --uninstall    Remove HelixScreen"
+    echo "  --clean        Clean install: remove old installation completely,"
+    echo "                 including config and caches (asks for confirmation)"
+    echo "  --version VER  Install specific version (default: latest)"
+    echo "  --local FILE   Install from local archive (.zip or .tar.gz, skip download)"
+    echo "  --kiauh no     Skip KIAUH extension registration (default: install if KIAUH detected)"
+    echo "  --help         Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0                    # Fresh install, latest version"
+    echo "  $0 --update           # Update existing installation"
+    echo "  $0 --clean            # Remove old install completely, then install"
+    echo "  $0 --version v1.1.0   # Install specific version"
+    echo "  $0 --local /tmp/helixscreen-ad5m.tar.gz  # Install from local file"
+}
+
+# Configure platform-specific settings before stopping competing UIs
+# (ForgeX display mode, stock UI disable, screen.sh patching)
+configure_platform() {
+    case "${AD5M_FIRMWARE:-}" in
+        forge_x)
+            configure_forgex_display || true
+            disable_stock_firmware_ui || true
+            patch_forgex_screen_sh || true
+            patch_forgex_screen_drawing || true
+            install_forgex_logged_wrapper || true
+            ;;
+        klipper_mod)
+            # Klipper Mod-specific install-time configuration (if any)
+            ;;
+    esac
+}
+
+# Deploy platform-specific hooks for the init script
+# Must be called after extract_release (hooks are in the release package)
+install_platform_hooks() {
+    local platform_hook=""
+    case "${AD5M_FIRMWARE:-}" in
+        forge_x)     platform_hook="ad5m-forgex" ;;
+        klipper_mod) platform_hook="ad5m-kmod" ;;
+    esac
+
+    # Platform hooks (pi32 shares Pi hooks)
+    case "$platform" in
+        pi|pi32)       platform_hook="pi" ;;
+        k1)            platform_hook="k1" ;;
+        k2)            platform_hook="k2" ;;
+        snapmaker-u1)  platform_hook="snapmaker-u1" ;;
+    esac
+
+    if [ -n "$platform_hook" ]; then
+        deploy_platform_hooks "$INSTALL_DIR" "$platform_hook"
+    fi
+}
+
+# Main installation flow
+main() {
+    update_mode=false
+    uninstall_mode=false
+    clean_mode=false
+    version=""
+    local_tarball=""
+    kiauh_mode=""
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --update)
+                update_mode=true
+                shift
+                ;;
+            --uninstall)
+                uninstall_mode=true
+                shift
+                ;;
+            --clean)
+                clean_mode=true
+                shift
+                ;;
+            --version)
+                if [ -z "${2:-}" ]; then
+                    log_error "--version requires a version argument"
+                    exit 1
+                fi
+                version="$2"
+                shift 2
+                ;;
+            --local)
+                if [ -z "${2:-}" ]; then
+                    log_error "--local requires a file path argument"
+                    exit 1
+                fi
+                local_tarball="$2"
+                shift 2
+                ;;
+            --kiauh)
+                if [ -z "${2:-}" ]; then
+                    log_error "--kiauh requires yes|no"
+                    exit 1
+                fi
+                kiauh_mode="$2"
+                shift 2
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                usage
+                exit 1
+                ;;
+        esac
+    done
+
+    printf '\n'
+    printf '%b\n' "${BOLD}========================================${NC}"
+    printf '%b\n' "${BOLD}       HelixScreen Installer${NC}"
+    printf '%b\n' "${BOLD}========================================${NC}"
+    printf '\n'
+
+    # Detect platform
+    platform=$(detect_platform)
+    log_info "Detected platform: ${BOLD}${platform}${NC}"
+
+    # AD5X: refuse to run outside the ZMOD chroot — applies to fresh install,
+    # --update, --uninstall, and --local. Inside the chroot the check is a no-op.
+    if [ "$platform" = "ad5x" ]; then
+        ad5x_check_chroot_context
+    fi
+
+    if [ "$platform" = "unsupported" ]; then
+        log_error "Unsupported platform: $(uname -m)"
+        log_error "HelixScreen supports:"
+        log_error "  - Raspberry Pi (aarch64/armv7l)"
+        log_error "  - FlashForge Adventurer 5M (armv7l)"
+        log_error "  - Creality K1 series with Simple AF"
+        log_error "  - Creality K2 series (K2/K2 Pro/K2 Plus)"
+        log_error "  - x86_64 Debian/Ubuntu (x86_64)"
+        exit 1
+    fi
+
+    # For AD5M/K1, detect firmware variant and set appropriate paths
+    local firmware=""
+    if [ "$platform" = "ad5m" ]; then
+        AD5M_FIRMWARE=$(detect_ad5m_firmware)
+        firmware="$AD5M_FIRMWARE"
+    elif [ "$platform" = "k1" ]; then
+        K1_FIRMWARE=$(detect_k1_firmware)
+        firmware="$K1_FIRMWARE"
+    fi
+    set_install_paths "$platform" "$firmware"
+
+    # Check permissions
+    check_permissions "$platform"
+
+    # Handle uninstall (doesn't need all checks)
+    if [ "$uninstall_mode" = true ]; then
+        uninstall "$platform"
+        exit 0
+    fi
+
+    # Pre-flight checks
+    log_info "Running pre-flight checks..."
+    check_requirements
+    install_runtime_deps "$platform"
+    check_disk_space "$platform"
+    detect_init_system
+    check_klipper_ecosystem "$platform"
+
+    # Get version (skip if using local archive)
+    if [ -n "$local_tarball" ]; then
+        # Validate local file exists
+        if [ ! -f "$local_tarball" ]; then
+            log_error "Local archive not found: $local_tarball"
+            exit 1
+        fi
+        # Extract version from filename if possible. Only the tar.gz layout
+        # carries a version in the name (helixscreen-<plat>-v1.2.3.tar.gz).
+        # The unversioned helixscreen-<plat>.zip gets "local" as a placeholder.
+        version=$(echo "$local_tarball" | sed -n 's/.*helixscreen-[^-]*-\(v[0-9.]*\)\.tar\.gz/\1/p')
+        if [ -z "$version" ]; then
+            version="local"
+        fi
+        log_info "Installing from local file: ${BOLD}${local_tarball}${NC}"
+    else
+        if [ -z "$version" ]; then
+            version=$(get_latest_version "$platform")
+        fi
+    fi
+    log_info "Target version: ${BOLD}${version}${NC}"
+
+    # Configure platform-specific settings before stopping UIs
+    configure_platform
+
+    # Stop competing UIs
+    stop_competing_uis
+
+    # Clean old installation if requested
+    if [ "$clean_mode" = true ]; then
+        clean_old_installation "$platform"
+    fi
+
+    # Download/stage the release archive BEFORE stopping the service.
+    # Stopping helixscreen first can disrupt the network on some platforms
+    # (e.g. Snapmaker U1 where platform_post_stop restarts the stock GUI which
+    # owns wpa_supplicant and drops WiFi/SSH mid-update). Staging first also
+    # means a failed download leaves the running service untouched.
+    if [ -n "$local_tarball" ]; then
+        use_local_tarball "$local_tarball"
+    else
+        download_release "$version" "$platform"
+    fi
+
+    if [ "$update_mode" = true ]; then
+        if [ ! -d "$INSTALL_DIR" ]; then
+            log_warn "No existing installation found. Performing fresh install."
+        fi
+        stop_service "$platform"
+    fi
+
+    extract_release "$platform"
+    fix_install_ownership
+    install_service "$platform"
+    install_platform_hooks
+
+    # Install KIAUH extension if KIAUH is detected
+    install_kiauh_extension "$kiauh_mode" || true
+
+    # K1: ensure SSH (dropbear) is running — recovers from #535 where disabling
+    # S99start_app also killed SSH. Runs on both fresh install and self-update.
+    if [ "$platform" = "k1" ]; then
+        ensure_k1_ssh
+    fi
+
+    # Verify all shared library dependencies are satisfied before starting
+    verify_binary_deps "$platform"
+
+    # Create platform cache directory
+    case "$platform" in
+        ad5m)
+            $SUDO mkdir -p /data/helixscreen/cache
+            ;;
+        k1)
+            $SUDO mkdir -p /usr/data/helixscreen/cache
+            ;;
+    esac
+
+    # Symlink config into printer_data (Pi/Klipper only - enables web UI editing)
+    setup_config_symlink
+
+    # Configure Moonraker update_manager (Pi only - enables web UI updates)
+    configure_moonraker_updates "$platform"
+
+    # Install platform-specific deep-recovery shell_command (K2 etc.) — no-op
+    # on platforms where firmware_restart is sufficient.
+    configure_moonraker_recovery "$platform"
+
+    # Fix known Klipper config issues (AD5M screw_thread, etc.)
+    fix_ad5m_klipper_config || true
+
+    # Start service
+    start_service "$platform"
+    cleanup_old_install
+
+    # Cleanup on success
+    cleanup_on_success
+
+    printf '\n'
+    printf '%b\n' "${GREEN}${BOLD}========================================${NC}"
+    printf '%b\n' "${GREEN}${BOLD}    Installation Complete!${NC}"
+    printf '%b\n' "${GREEN}${BOLD}========================================${NC}"
+    printf '\n'
+    echo "HelixScreen ${version} installed to ${INSTALL_DIR}"
+    echo ""
+    print_post_install_commands
+    echo ""
+
+    if [ "$platform" = "ad5m" ] || [ "$platform" = "k1" ] || [ "$platform" = "k2" ]; then
+        echo "Note: You may need to reboot for the display to update."
+    fi
+}

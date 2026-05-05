@@ -1146,11 +1146,11 @@ install_permission_rules() {
     if _has_no_new_privs; then
         if command -v nmcli >/dev/null 2>&1 && ! _polkit_rule_exists; then
             log_warn "NetworkManager polkit rule is MISSING — Wi-Fi will not work as non-root."
-            log_warn "Fix by re-running the installer:  curl -fsSL https://install.helixscreen.org | bash"
+            log_warn "Fix by re-running the installer:  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
         elif _permission_rules_need_repair "$helix_user"; then
             log_warn "Permission rules need repair (pkla/polkit file has un-substituted template)."
             log_warn "Wi-Fi may not work. Fix with:  sudo sed -i 's|@@HELIX_USER@@|${helix_user}|g' /etc/polkit-1/localauthority/50-local.d/helixscreen-network.pkla"
-            log_warn "Or re-run the installer:  curl -fsSL https://install.helixscreen.org | bash"
+            log_warn "Or re-run the installer:  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
         else
             log_info "Skipping permission rules (NoNewPrivileges; already installed)"
         fi
@@ -3163,7 +3163,7 @@ extract_release() {
                 log_error "Cannot write to ${INSTALL_DIR} (read-only under ProtectSystem)."
                 log_error "The systemd service file needs updating to allow self-updates."
                 log_error "Fix: re-run the installer once with:"
-                log_error "  curl -fsSL https://install.helixscreen.org | bash"
+                log_error "  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
                 rm -rf "$extract_dir"
                 exit 1
             fi
@@ -3203,7 +3203,7 @@ extract_release() {
 
                 if [ "$_inplace_failed" = true ]; then
                     log_error "In-place update failed. Install may be in a broken state."
-                    log_error "Fix: re-run the installer: curl -fsSL https://install.helixscreen.org | bash"
+                    log_error "Fix: re-run the installer: curl -fsSL https://releases.helixscreen.org/install.sh | bash"
                     rm -rf "$extract_dir"
                     exit 1
                 fi
@@ -3594,6 +3594,8 @@ install_service_snapmaker_u1() {
     else
         log_error "Snapmaker U1 autostart script not found at ${INSTALL_DIR}/scripts/snapmaker-u1-setup-autostart.sh"
         log_error "The release package may be incomplete."
+        log_error "Recovery: re-run the installer to download a fresh copy:"
+        log_error "  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
         exit 1
     fi
 }
@@ -3620,6 +3622,8 @@ install_service_systemd() {
     if [ ! -f "$service_src" ]; then
         log_error "Service file not found: $service_src"
         log_error "The release package may be incomplete."
+        log_error "Recovery: re-run the installer to download a fresh copy:"
+        log_error "  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
         exit 1
     fi
 
@@ -3789,6 +3793,8 @@ install_service_sysv() {
     if [ ! -f "$init_src" ]; then
         log_error "Init script not found: $init_src"
         log_error "The release package may be incomplete."
+        log_error "Recovery: re-run the installer to download a fresh copy:"
+        log_error "  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
         exit 1
     fi
 
@@ -3841,6 +3847,8 @@ start_service_snapmaker_u1() {
     if [ ! -x "$init_src" ]; then
         log_error "Init script not found or not executable: $init_src"
         log_error "The release package may be incomplete."
+        log_error "Recovery: re-run the installer to download a fresh copy:"
+        log_error "  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
         exit 1
     fi
 
@@ -4385,6 +4393,196 @@ remove_update_manager_section() {
 }
 
 # ============================================
+# Module: recovery.sh
+# ============================================
+
+#
+#
+# Platforms that don't need this (stock Klipper / Bambu / RatOS Pi) get nothing:
+# the recovery service falls back to `printer.firmware_restart` automatically.
+# Re-source guard
+
+# Snippet body for Creality K2 series (K2 Plus / K2 Pro / K2 Max).
+#
+# K2 runs Klipper as two host-side processes: `klippy.py` and `klipper_mcu`
+# (a separate daemon serving as the rpi virtual MCU for the RS-485 bridge to
+# the CFS unit). When the CFS unit raises an error severe enough to shut down
+# its MCU side, FIRMWARE_RESTART alone can't recover — Klipper reconnects, sees
+# rpi MCU still locked, and re-halts with `key298`.
+#
+# Recovery is: bounce the klipper_mcu daemon first, then klipper.
+helix_recover_snippet_k2() {
+    cat <<'EOF'
+
+[shell_command helix_recover]
+# HelixScreen deep-recovery (managed). See:
+# https://github.com/prestonbrown/helixscreen/blob/main/scripts/lib/installer/recovery.sh
+command: sh -c "/etc/init.d/klipper_mcu restart 2>&1; sleep 2; /etc/init.d/klipper restart 2>&1"
+timeout: 30
+verbose: True
+EOF
+}
+
+# Probe the running Moonraker to see if its `shell_command` component is
+# loaded. The component ships with mainline Moonraker and is auto-loaded when
+# *any* `[shell_command]` block is present — but stripped/forked builds may
+# omit it (e.g. some vendor-locked firmwares). We treat absence as "this
+# platform can't host helix_recover" rather than blindly writing a section
+# Moonraker would warn about on every restart.
+#
+# Heuristic: GET /server/info, look for "shell_command" in components[].
+# Returns 0 (true) if the component is present, 1 if absent, 2 if probe failed
+# (treat as "unknown — proceed" so an offline install doesn't block).
+moonraker_has_shell_command_component() {
+    # Resolve moonraker URL — defaults to localhost; respects HELIX_MOONRAKER_URL.
+    local url="${HELIX_MOONRAKER_URL:-http://127.0.0.1:7125}"
+
+    # Prefer curl, fall back to wget. K2's busybox wget can't do HTTPS but our
+    # endpoint is HTTP-only, so it's fine here.
+    local body
+    if command -v curl >/dev/null 2>&1; then
+        body=$(curl -sf --max-time 3 "$url/server/info" 2>/dev/null) || return 2
+    elif command -v wget >/dev/null 2>&1; then
+        body=$(wget -qO- --timeout=3 "$url/server/info" 2>/dev/null) || return 2
+    else
+        return 2
+    fi
+
+    # Substring match against the JSON. We don't have jq on every target, and
+    # parsing JSON in pure POSIX shell is more pain than it's worth here.
+    case "$body" in
+        *'"shell_command"'*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# True iff the given moonraker.conf already has our marker block.
+has_recovery_section() {
+    local conf="$1"
+    [ -f "$conf" ] && grep -q '^\[shell_command helix_recover\]' "$conf" 2>/dev/null
+}
+
+# Return the snippet body for the detected platform, or empty when this
+# platform doesn't need a custom recovery shell_command (firmware_restart is
+# sufficient).
+helix_recover_snippet_for_platform() {
+    local platform="$1"
+    case "$platform" in
+        k2)   helix_recover_snippet_k2 ;;
+        # k1c)  helix_recover_snippet_k1c ;;     # TBD
+        # ad5m) helix_recover_snippet_ad5m ;;    # TBD
+        # ad5x) helix_recover_snippet_ad5x ;;    # TBD
+        # cc1)  helix_recover_snippet_cc1 ;;     # TBD
+        *)    : ;; # nothing — frontend falls back to firmware_restart
+    esac
+}
+
+# Install or update the helix_recover shell_command in moonraker.conf for the
+# detected platform. Idempotent: re-running on an already-configured host is a
+# no-op apart from a debug log line. Non-K2-style platforms with no snippet
+# silently skip.
+install_recovery_section() {
+    local conf="$1"
+    local platform="$2"
+    local fs="${3:-}"   # `sudo` prefix if needed, "" otherwise — match moonraker.sh idiom
+
+    [ -z "$conf" ] && return 1
+    [ -z "$platform" ] && return 1
+
+    local snippet
+    snippet=$(helix_recover_snippet_for_platform "$platform")
+    if [ -z "$snippet" ]; then
+        log_info "No deep-recovery shell_command needed for platform: $platform"
+        return 0
+    fi
+
+    if has_recovery_section "$conf"; then
+        log_info "[shell_command helix_recover] already in $conf — skipping"
+        return 0
+    fi
+
+    log_info "Adding [shell_command helix_recover] to $conf for platform: $platform"
+    printf '%s\n' "$snippet" | $fs tee -a "$conf" >/dev/null
+    log_success "Added [shell_command helix_recover] block"
+}
+
+# Remove our managed block on uninstall. Strips from `[shell_command helix_recover]`
+# down to (but not including) the next `[section]` or EOF.
+remove_recovery_section() {
+    local conf="$1"
+    local fs="${2:-}"
+
+    [ -f "$conf" ] || return 0
+    has_recovery_section "$conf" || return 0
+
+    log_info "Removing [shell_command helix_recover] from $conf"
+    local tmp
+    tmp=$(mktemp)
+    awk '
+        /^\[shell_command helix_recover\]/ { skip=1; next }
+        skip && /^\[/ { skip=0 }
+        !skip { print }
+    ' "$conf" > "$tmp"
+    $fs cp "$tmp" "$conf"
+    rm -f "$tmp"
+    log_success "Removed [shell_command helix_recover] block"
+}
+
+# High-level installer entry point — drop-in companion to
+# configure_moonraker_updates() in moonraker.sh. Call from main install flow
+# AFTER configure_moonraker_updates so the conf already exists.
+configure_moonraker_recovery() {
+    local platform="$1"
+
+    # Don't probe further if this platform has no snippet — keeps logs quiet
+    # for stock Klipper / Bambu / RatOS Pi etc.
+    local snippet
+    snippet=$(helix_recover_snippet_for_platform "$platform")
+    [ -z "$snippet" ] && return 0
+
+    log_info "Configuring Moonraker deep-recovery shell_command..."
+
+    # Skip the install entirely if Moonraker doesn't support shell_command on
+    # this host. The frontend already falls back to firmware_restart in that
+    # case, so we just don't pollute the conf with an unusable section.
+    if moonraker_has_shell_command_component; then
+        : # supported
+    else
+        local probe_status=$?
+        if [ "$probe_status" = "1" ]; then
+            log_warn "Moonraker on this host has no 'shell_command' component — skipping helix_recover install"
+            log_warn "Frontend will fall back to FIRMWARE_RESTART for recovery"
+            return 0
+        fi
+        # status 2 = couldn't reach moonraker (offline install, fresh image,
+        # blocked port). Proceed and let moonraker warn-or-not at next start.
+        log_info "Could not reach Moonraker at \${HELIX_MOONRAKER_URL:-http://127.0.0.1:7125}/server/info — installing snippet anyway"
+    fi
+
+    local conf
+    conf=$(find_moonraker_conf)
+    if [ -z "$conf" ]; then
+        log_warn "Could not find moonraker.conf — skipping helix_recover install"
+        log_warn "To enable Deep Recovery, manually add to your moonraker.conf:"
+        echo ""
+        printf '%s\n' "$snippet"
+        echo ""
+        return 0
+    fi
+
+    local fs
+    fs=$(file_sudo "$conf")
+    install_recovery_section "$conf" "$platform" "$fs"
+
+    # Restart moonraker so the new shell_command is registered. Match the
+    # pattern in configure_moonraker_updates(): only restart when we actually
+    # changed the conf — install_recovery_section is idempotent and a no-op
+    # on re-runs, but we can't tell from here, so always nudge moonraker.
+    # Cheap on K2 (~3s); skipped during dry-runs by the caller.
+    restart_moonraker 2>/dev/null || true
+}
+
+# ============================================
 # Module: kiauh.sh
 # ============================================
 
@@ -4414,7 +4612,12 @@ detect_kiauh_dir() {
 }
 
 # Install KIAUH extension for HelixScreen
-# Args: $1 = kiauh_mode ("yes", "no", or "" for interactive)
+# Args: $1 = kiauh_mode ("yes", "no", or "" for default-install)
+#
+# Default behavior: if KIAUH is detected, install the extension automatically.
+# Pass --kiauh no to opt out. The interactive prompt was removed because it
+# was easy to miss in the curl|sh output stream and read-from-/dev/tty is
+# unreliable across SSH/sudo contexts.
 install_kiauh_extension() {
     local kiauh_mode="${1:-}"
     local kiauh_ext_dir
@@ -4427,6 +4630,11 @@ install_kiauh_extension() {
         return 0
     fi
 
+    if [ "$kiauh_mode" = "no" ]; then
+        log_info "KIAUH detected at $kiauh_ext_dir — skipping extension (--kiauh no)"
+        return 0
+    fi
+
     local target_dir="$kiauh_ext_dir/helixscreen"
     local is_update=false
 
@@ -4436,32 +4644,14 @@ install_kiauh_extension() {
 
     # Check source files exist
     if [ ! -f "$src_dir/__init__.py" ] || [ ! -f "$src_dir/helixscreen_extension.py" ] || [ ! -f "$src_dir/metadata.json" ]; then
-        log_warn "KIAUH extension source files not found in release package"
+        log_warn "KIAUH extension source files not found at $src_dir"
+        log_warn "  Release tarball is missing scripts/kiauh/. To register manually:"
+        log_warn "    mkdir -p ~/kiauh/kiauh/extensions/helixscreen"
+        log_warn "    cd ~/kiauh/kiauh/extensions/helixscreen"
+        log_warn "    for f in __init__.py helixscreen_extension.py metadata.json; do"
+        log_warn "      curl -sLO https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/kiauh/helixscreen/\$f"
+        log_warn "    done"
         return 0
-    fi
-
-    # For new installs, handle interactive/forced modes
-    if [ "$is_update" = false ]; then
-        case "$kiauh_mode" in
-            yes)
-                log_info "Installing KIAUH extension (--kiauh yes)..."
-                ;;
-            no)
-                log_info "Skipping KIAUH extension (--kiauh no)"
-                return 0
-                ;;
-            *)
-                # Interactive mode
-                printf "KIAUH detected. Install HelixScreen extension for KIAUH? [Y/n] "
-                read -r reply </dev/tty 2>/dev/null || reply="y"
-                case "$reply" in
-                    [Nn]*)
-                        log_info "Skipping KIAUH extension"
-                        return 0
-                        ;;
-                esac
-                ;;
-        esac
     fi
 
     # Copy extension files
@@ -4471,9 +4661,10 @@ install_kiauh_extension() {
     cp "$src_dir/metadata.json" "$target_dir/"
 
     if [ "$is_update" = true ]; then
-        log_info "Updated KIAUH extension in $target_dir"
+        log_success "KIAUH extension updated at $target_dir (restart KIAUH to pick it up)"
     else
-        log_success "Installed KIAUH extension to $target_dir"
+        log_success "KIAUH extension installed at $target_dir"
+        log_info "  → Restart KIAUH (~/kiauh/kiauh.sh) and open the Extensions menu to use it"
     fi
 }
 
@@ -4815,9 +5006,11 @@ clean_old_installation() {
 }
 
 # ============================================
-# Main orchestration
+# Module: main.sh
 # ============================================
 
+#
+# Source guard
 # Set up error trap (ERR is bash-specific, skip on POSIX shells like dash/ash)
 # shellcheck disable=SC3047
 trap 'error_handler $LINENO' ERR 2>/dev/null || true
@@ -4834,8 +5027,8 @@ usage() {
     echo "  --clean        Clean install: remove old installation completely,"
     echo "                 including config and caches (asks for confirmation)"
     echo "  --version VER  Install specific version (default: latest)"
-    echo "  --local FILE   Install from local tarball (skip download)"
-    echo "  --kiauh yes|no Install KIAUH extension without prompting (default: ask if detected)"
+    echo "  --local FILE   Install from local archive (.zip or .tar.gz, skip download)"
+    echo "  --kiauh no     Skip KIAUH extension registration (default: install if KIAUH detected)"
     echo "  --help         Show this help message"
     echo ""
     echo "Examples:"
@@ -4849,7 +5042,7 @@ usage() {
 # Configure platform-specific settings before stopping competing UIs
 # (ForgeX display mode, stock UI disable, screen.sh patching)
 configure_platform() {
-    case "$AD5M_FIRMWARE" in
+    case "${AD5M_FIRMWARE:-}" in
         forge_x)
             configure_forgex_display || true
             disable_stock_firmware_ui || true
@@ -4867,7 +5060,7 @@ configure_platform() {
 # Must be called after extract_release (hooks are in the release package)
 install_platform_hooks() {
     local platform_hook=""
-    case "$AD5M_FIRMWARE" in
+    case "${AD5M_FIRMWARE:-}" in
         forge_x)     platform_hook="ad5m-forgex" ;;
         klipper_mod) platform_hook="ad5m-kmod" ;;
     esac
@@ -5000,14 +5193,16 @@ main() {
     detect_init_system
     check_klipper_ecosystem "$platform"
 
-    # Get version (skip if using local tarball)
+    # Get version (skip if using local archive)
     if [ -n "$local_tarball" ]; then
         # Validate local file exists
         if [ ! -f "$local_tarball" ]; then
-            log_error "Local tarball not found: $local_tarball"
+            log_error "Local archive not found: $local_tarball"
             exit 1
         fi
-        # Extract version from filename if possible (helixscreen-platform-v1.2.3.tar.gz)
+        # Extract version from filename if possible. Only the tar.gz layout
+        # carries a version in the name (helixscreen-<plat>-v1.2.3.tar.gz).
+        # The unversioned helixscreen-<plat>.zip gets "local" as a placeholder.
         version=$(echo "$local_tarball" | sed -n 's/.*helixscreen-[^-]*-\(v[0-9.]*\)\.tar\.gz/\1/p')
         if [ -z "$version" ]; then
             version="local"
@@ -5081,6 +5276,10 @@ main() {
 
     # Configure Moonraker update_manager (Pi only - enables web UI updates)
     configure_moonraker_updates "$platform"
+
+    # Install platform-specific deep-recovery shell_command (K2 etc.) — no-op
+    # on platforms where firmware_restart is sufficient.
+    configure_moonraker_recovery "$platform"
 
     # Fix known Klipper config issues (AD5M screw_thread, etc.)
     fix_ad5m_klipper_config || true

@@ -792,7 +792,7 @@ extract_release() {
                 log_error "Cannot write to ${INSTALL_DIR} (read-only under ProtectSystem)."
                 log_error "The systemd service file needs updating to allow self-updates."
                 log_error "Fix: re-run the installer once with:"
-                log_error "  curl -fsSL https://install.helixscreen.org | bash"
+                log_error "  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
                 rm -rf "$extract_dir"
                 exit 1
             fi
@@ -832,7 +832,7 @@ extract_release() {
 
                 if [ "$_inplace_failed" = true ]; then
                     log_error "In-place update failed. Install may be in a broken state."
-                    log_error "Fix: re-run the installer: curl -fsSL https://install.helixscreen.org | bash"
+                    log_error "Fix: re-run the installer: curl -fsSL https://releases.helixscreen.org/install.sh | bash"
                     rm -rf "$extract_dir"
                     exit 1
                 fi
