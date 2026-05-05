@@ -54,6 +54,27 @@ inline bool contains(const std::string& haystack, const char* needle) {
     return haystack.find(needle) != std::string::npos;
 }
 
+/// Map the rich `PrintPhase` to the coarser `PrintStartPhase` enum the
+/// existing `preparing_overlay` UI was built around. FILAMENT_LOAD has no
+/// dedicated legacy enum value — INITIALIZING is the closest non-terminal
+/// neighbor and the message string carries the "Loading Filament" detail.
+PrintStartPhase to_legacy_phase(PrintPhase phase) {
+    switch (phase) {
+        case PrintPhase::IDLE:          return PrintStartPhase::IDLE;
+        case PrintPhase::PREPARING:     return PrintStartPhase::INITIALIZING;
+        case PrintPhase::BED_MESH:      return PrintStartPhase::BED_MESH;
+        case PrintPhase::HEATING:       return PrintStartPhase::HEATING_NOZZLE;
+        case PrintPhase::FILAMENT_LOAD: return PrintStartPhase::INITIALIZING;
+        case PrintPhase::PURGE:         return PrintStartPhase::PURGING;
+        case PrintPhase::PRINTING:      return PrintStartPhase::COMPLETE;
+        case PrintPhase::PAUSED:
+        case PrintPhase::COMPLETE:
+        case PrintPhase::ERROR:
+        case PrintPhase::CANCELLED:     return PrintStartPhase::IDLE;
+    }
+    return PrintStartPhase::IDLE;
+}
+
 /// Pre-print phases form a monotonic ordering. Once advanced to HEATING
 /// (or beyond), late-arriving BED_MESH probe lines shouldn't drag us back —
 /// the K2 emits `[PROBE_STEP_INFO]` and `[WHY_DEBUG]target_temp` interleaved
@@ -229,6 +250,7 @@ void PrintPhaseTracker::reset() {
             lv_subject_copy_string(&print_phase_detail_, "");
             lv_subject_set_int(&print_phase_progress_, -1);
             lv_subject_set_int(&print_phase_eta_seconds_, -1);
+            publish_legacy_print_start_state();
         }
     });
 }
@@ -248,6 +270,31 @@ void PrintPhaseTracker::set_phase(PrintPhase phase) {
     lv_subject_copy_string(&print_phase_detail_, "");
     lv_subject_set_int(&print_phase_progress_, -1);
     lv_subject_set_int(&print_phase_eta_seconds_, -1);
+
+    publish_legacy_print_start_state();
+}
+
+void PrintPhaseTracker::publish_legacy_print_start_state() {
+    if (!subjects_initialized_) return;
+
+    PrintStartPhase legacy = to_legacy_phase(current_phase_);
+
+    // Compose "Phase Label — detail" so the existing preparing_overlay's
+    // single message line carries both. detail may be empty (e.g. right
+    // after a phase transition before the next progress tick).
+    char message[128];
+    const char* label = phase_label(current_phase_);
+    const char* detail = lv_subject_get_string(&print_phase_detail_);
+    if (detail && detail[0] != '\0') {
+        std::snprintf(message, sizeof(message), "%s — %s", label, detail);
+    } else {
+        std::snprintf(message, sizeof(message), "%s", label);
+    }
+
+    int per_mille = lv_subject_get_int(&print_phase_progress_);
+    int progress_pct = per_mille >= 0 ? per_mille / 10 : 0;
+
+    get_printer_state().set_print_start_state(legacy, message, progress_pct);
 }
 
 void PrintPhaseTracker::on_print_job_state(int state_enum) {
@@ -384,6 +431,7 @@ bool PrintPhaseTracker::try_match_probe_step(const std::string& line) {
         int eta = static_cast<int>((total - mesh_probes_seen_) * mesh_seconds_per_probe_);
         lv_subject_set_int(&print_phase_eta_seconds_, eta);
     }
+    publish_legacy_print_start_state();
     return true;
 }
 
@@ -425,6 +473,7 @@ bool PrintPhaseTracker::try_match_g29_time(const std::string& line) {
         if (current_phase_ == PrintPhase::BED_MESH) {
             lv_subject_set_int(&print_phase_progress_, 1000);
             lv_subject_set_int(&print_phase_eta_seconds_, 0);
+            publish_legacy_print_start_state();
         }
     }
     // Don't force a phase here — let the next observed signal (heating, box,
@@ -483,6 +532,7 @@ bool PrintPhaseTracker::try_match_purge_percent(const std::string& line) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%d%%", per_mille / 10);
     lv_subject_copy_string(&print_phase_detail_, buf);
+    publish_legacy_print_start_state();
     return true;
 }
 

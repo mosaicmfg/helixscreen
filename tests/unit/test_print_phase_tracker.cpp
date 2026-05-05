@@ -2,17 +2,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "../test_helpers/print_phase_tracker_test_access.h"
+#include "../test_helpers/printer_state_test_access.h"
 #include "../test_helpers/update_queue_test_access.h"
 #include "../ui_test_utils.h"
+#include "app_globals.h"
 #include "print_phase_tracker.h"
+#include "printer_state.h"
 
 #include "../catch_amalgamated.hpp"
+
+#include <cstring>
 
 using namespace helix;
 
 namespace {
 
 void flush() {
+    // Drain twice: tracker callbacks call into PrinterState::set_print_start_state
+    // which itself enqueues a deferred update — those land in the queue while we
+    // were draining. One extra pass picks them up. Idempotent on empty queues.
+    helix::ui::UpdateQueueTestAccess::drain(helix::ui::UpdateQueue::instance());
     helix::ui::UpdateQueueTestAccess::drain(helix::ui::UpdateQueue::instance());
 }
 
@@ -199,4 +208,109 @@ TEST_CASE("PrintPhaseTracker: reset clears transient state",
     REQUIRE(lv_subject_get_int(t.get_phase_progress_subject()) == -1);
 
     t.deinit_subjects();
+}
+
+// ============================================================================
+// Legacy print_start_phase mirror — drives existing preparing_overlay UI.
+// ============================================================================
+
+namespace {
+
+/// Mirror tests need both PrinterState and PrintPhaseTracker initialized.
+/// PrinterState's `set_print_start_state` drops non-IDLE updates when
+/// `print_active_ == 0` UNLESS the current phase is IDLE (treated as new
+/// print start). For mirror tests we either rely on the IDLE→non-IDLE
+/// transition path or set print_active_ via update_from_status.
+struct MirrorEnv {
+    PrinterState& state;
+    PrintPhaseTracker& tracker;
+
+    MirrorEnv()
+        : state(get_printer_state()), tracker(PrintPhaseTracker::instance()) {
+        lv_init_safe();
+        PrinterStateTestAccess::reset(state);
+        state.init_subjects(false);
+        tracker.deinit_subjects();
+        tracker.init_subjects(false);
+    }
+
+    ~MirrorEnv() {
+        tracker.deinit_subjects();
+        PrinterStateTestAccess::reset(state);
+    }
+
+    void mark_printing_active() {
+        nlohmann::json status = {{"print_stats", {{"state", "printing"}}}};
+        state.update_from_status(status);
+        flush();
+    }
+};
+
+} // namespace
+
+TEST_CASE("PrintPhaseTracker mirror: BED_MESH writes legacy phase + progress",
+          "[print_phase_tracker][mirror]") {
+    MirrorEnv env;
+    // Once the tracker emits the first non-IDLE mirror, subsequent updates
+    // require print_active_=1 to bypass PrinterState's stale-update guard.
+    env.mark_printing_active();
+
+    feed(env.tracker, "Mesh X,Y: 5,5"); // total = 25
+    for (int i = 0; i < 5; ++i) {
+        feed(env.tracker,
+             "// [PROBE_STEP_INFO]step_bst_indx=" + std::to_string(i));
+    }
+
+    REQUIRE(lv_subject_get_int(env.state.get_print_start_phase_subject()) ==
+            static_cast<int>(PrintStartPhase::BED_MESH));
+    // 5/25 = 200 per_mille = 20 percent
+    REQUIRE(lv_subject_get_int(env.state.get_print_start_progress_subject()) == 20);
+
+    const char* msg = lv_subject_get_string(env.state.get_print_start_message_subject());
+    REQUIRE(msg != nullptr);
+    REQUIRE(std::string(msg).find("5 / 25") != std::string::npos);
+}
+
+TEST_CASE("PrintPhaseTracker mirror: PURGE percent writes legacy PURGING",
+          "[print_phase_tracker][mirror]") {
+    MirrorEnv env;
+    env.mark_printing_active();
+
+    feed(env.tracker, "// num: 0, velocity: 575.000000, percent 0.500000");
+
+    REQUIRE(lv_subject_get_int(env.state.get_print_start_phase_subject()) ==
+            static_cast<int>(PrintStartPhase::PURGING));
+    REQUIRE(lv_subject_get_int(env.state.get_print_start_progress_subject()) == 50);
+}
+
+TEST_CASE("PrintPhaseTracker mirror: FILAMENT_LOAD maps to INITIALIZING + label",
+          "[print_phase_tracker][mirror]") {
+    MirrorEnv env;
+    env.mark_printing_active();
+
+    feed(env.tracker, "// [box] cut sensor detected");
+
+    // No dedicated PrintStartPhase value for filament load — INITIALIZING is
+    // the closest non-terminal neighbor; the message carries the human label.
+    REQUIRE(lv_subject_get_int(env.state.get_print_start_phase_subject()) ==
+            static_cast<int>(PrintStartPhase::INITIALIZING));
+    const char* msg = lv_subject_get_string(env.state.get_print_start_message_subject());
+    REQUIRE(msg != nullptr);
+    REQUIRE(std::string(msg).find("Loading Filament") != std::string::npos);
+}
+
+TEST_CASE("PrintPhaseTracker mirror: reset returns legacy phase to IDLE",
+          "[print_phase_tracker][mirror]") {
+    MirrorEnv env;
+
+    feed(env.tracker, "Mesh X,Y: 5,5");
+    feed(env.tracker, "// [PROBE_STEP_INFO]step_bst_indx=0");
+    REQUIRE(lv_subject_get_int(env.state.get_print_start_phase_subject()) ==
+            static_cast<int>(PrintStartPhase::BED_MESH));
+
+    env.tracker.reset();
+    flush();
+
+    REQUIRE(lv_subject_get_int(env.state.get_print_start_phase_subject()) ==
+            static_cast<int>(PrintStartPhase::IDLE));
 }

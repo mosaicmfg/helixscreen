@@ -144,6 +144,15 @@ class PrintPhaseTracker {
     bool try_match_purge_percent(const std::string& line);
     bool try_match_heating_hint(const std::string& line);
 
+    /// Mirror current phase/detail/progress into PrinterState's legacy
+    /// `print_start_*` subjects so the existing `preparing_overlay` UI in
+    /// `print_status_panel.xml` shows the K2-rich progression. Called after
+    /// every phase transition or progress mutation. PrintStartCollector also
+    /// writes to those subjects on universal printers; on K2 the tracker's
+    /// signals fire more often and dominate. See plan in
+    /// `.claude/scratchpad/2026-05-05-pre-print-phase2-and-cfs-rev-eng.md`.
+    void publish_legacy_print_start_state();
+
     // ---- State (UI-thread members) ------------------------------------------
     //
     // All mutated only on the UI thread (post queue_update). No locking needed.
