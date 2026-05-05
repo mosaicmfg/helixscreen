@@ -313,6 +313,14 @@ void MoonrakerDiscoverySequence::continue_discovery_objects(uint64_t seq) {
                         spdlog::debug("[Moonraker Client] Server components: {}",
                                       json(components).dump());
 
+                        // Clear component-derived capability flags before scanning so
+                        // switching to a printer that no longer has Spoolman/Timelapse
+                        // installed correctly hides the corresponding UI rows. The flags
+                        // get re-set below if the components are detected (and, for
+                        // Spoolman, after its status RPC confirms connectivity).
+                        get_printer_state().set_spoolman_available(false);
+                        get_printer_state().set_timelapse_available(false);
+
                         // Check for Spoolman component and verify connection
                         bool has_spoolman_component =
                             std::find(components.begin(), components.end(), "spoolman") !=
