@@ -581,11 +581,9 @@ void FanStackWidget::bind_carousel_fans() {
         size_t page_idx = carousel_pages_.size();
         carousel_pages_.push_back(cp);
 
-        // Wire in-place arc control for controllable fans. The arc lives inside
-        // the page but its CLICKED/VALUE_CHANGED events do not bubble (LVGL
+        // In-place arc control: the arc's VALUE_CHANGED does not bubble (LVGL
         // default), so dragging the knob adjusts speed without also triggering
-        // the page's overlay-open handler. We pass page_idx as user data so the
-        // handler can locate its CarouselPage entry.
+        // the page-level overlay-open handler.
         if (entry.is_controllable && cp.arc && !entry.object_name.empty()) {
             lv_obj_set_user_data(cp.arc, this);
             lv_obj_add_event_cb(cp.arc, on_carousel_arc_value_changed, LV_EVENT_VALUE_CHANGED,
@@ -603,14 +601,12 @@ void FanStackWidget::bind_carousel_fans() {
                 return;
             auto& cp = carousel_pages_[page_idx];
 
-            // Suppress observer updates briefly after a user drag/tap so the
-            // optimistic local value isn't overwritten by stale telemetry while
-            // the Moonraker round-trip resolves. Mirrors FanDial's pattern.
+            // Don't let stale telemetry overwrite the user's optimistic value
+            // during the Moonraker round-trip (mirrors FanDial).
             constexpr uint32_t kPostInputSuppressionMs = 400;
             if (cp.last_user_input_ms != 0 &&
-                (lv_tick_get() - cp.last_user_input_ms) < kPostInputSuppressionMs) {
+                (lv_tick_get() - cp.last_user_input_ms) < kPostInputSuppressionMs)
                 return;
-            }
 
             if (cp.arc) {
                 cp.syncing = true;
@@ -749,11 +745,11 @@ void FanStackWidget::on_carousel_arc_value_changed(lv_event_t* e) {
     if (cp.syncing)
         return;
 
+    self->record_interaction();
     cp.last_user_input_ms = lv_tick_get();
     int speed = lv_arc_get_value(arc);
 
-    // Reflect the new speed locally before the Moonraker echo arrives so the
-    // label, icon spin, and any sibling consumers update immediately.
+    // Optimistic local reflection before the Moonraker echo arrives.
     if (cp.speed_label) {
         char buf[8];
         lv_label_set_text(cp.speed_label,
@@ -766,6 +762,8 @@ void FanStackWidget::on_carousel_arc_value_changed(lv_event_t* e) {
 }
 
 void FanStackWidget::send_carousel_fan_speed(const std::string& object_name, int speed_percent) {
+    if (object_name.empty())
+        return;
     auto* api = get_moonraker_api();
     if (!api) {
         spdlog::warn("[FanStackWidget] Cannot send fan speed - no API connection");
@@ -775,8 +773,8 @@ void FanStackWidget::send_carousel_fan_speed(const std::string& object_name, int
 
     spdlog::trace("[FanStackWidget] Setting carousel fan '{}' to {}%", object_name, speed_percent);
 
-    // Optimistic update: mirror FanControlOverlay::send_fan_speed so PrinterState
-    // reflects the new speed immediately without waiting for the round-trip.
+    // Optimistic PrinterState update so sibling consumers refresh immediately;
+    // mirrors FanControlOverlay::send_fan_speed.
     printer_state_.update_fan_speed(object_name, static_cast<double>(speed_percent) / 100.0);
 
     api->set_fan_speed(

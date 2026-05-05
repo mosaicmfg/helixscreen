@@ -68,15 +68,37 @@ TempGraphOverlay& get_global_temp_graph_overlay() {
 // Visibility snapshot (consumed by home graph card "follow" mode)
 // ─────────────────────────────────────────────────────────────────────────────
 
-static std::optional<std::vector<std::string>> s_visibility_snapshot;
+namespace {
+struct VisibilitySnapshot {
+    std::string printer_name; ///< Tagged so a printer switch invalidates the snapshot.
+    std::vector<std::string> klipper_names;
+};
+std::optional<VisibilitySnapshot> s_visibility_snapshot;
 
-const std::optional<std::vector<std::string>>& get_temp_graph_visibility_snapshot() {
-    return s_visibility_snapshot;
+std::string current_printer_name() {
+    auto* subj = ::get_printer_state().get_active_printer_name_subject();
+    if (!subj)
+        return {};
+    const char* s = lv_subject_get_string(subj);
+    return s ? std::string(s) : std::string();
+}
+} // namespace
+
+std::optional<std::vector<std::string>> get_temp_graph_visibility_snapshot() {
+    if (!s_visibility_snapshot)
+        return std::nullopt;
+    if (s_visibility_snapshot->printer_name != current_printer_name())
+        return std::nullopt;
+    return s_visibility_snapshot->klipper_names;
 }
 
 namespace helix::test_access {
 void set_temp_graph_visibility_snapshot(std::optional<std::vector<std::string>> snapshot) {
-    s_visibility_snapshot = std::move(snapshot);
+    if (snapshot) {
+        s_visibility_snapshot = VisibilitySnapshot{current_printer_name(), std::move(*snapshot)};
+    } else {
+        s_visibility_snapshot.reset();
+    }
 }
 } // namespace helix::test_access
 
@@ -375,7 +397,7 @@ void TempGraphOverlay::publish_visibility_snapshot() const {
             visible.push_back(s.klipper_name);
         }
     }
-    s_visibility_snapshot = std::move(visible);
+    s_visibility_snapshot = VisibilitySnapshot{current_printer_name(), std::move(visible)};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

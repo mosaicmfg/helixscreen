@@ -50,7 +50,7 @@ class TempGraphWidget : public PanelWidget {
 
   private:
     void build_default_config();
-    std::vector<TempGraphSeriesSpec> build_series_from_config();
+    std::vector<TempGraphSeriesSpec> build_series_from_config() const;
 
     /// Stable signature of the visibility set most recently applied to the
     /// controller. Used by on_activate() to detect when the overlay snapshot

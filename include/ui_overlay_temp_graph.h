@@ -159,15 +159,20 @@ TempGraphOverlay& get_global_temp_graph_overlay();
 /**
  * @brief Snapshot of klipper sensor names last visible on the full-screen overlay.
  *
- * `nullopt` until the overlay opens once. Updated whenever the overlay applies
- * default visibility or the user toggles a chip. Consumed by widgets that opt
- * into "follow the user's graph selection" mode.
+ * `nullopt` until the overlay opens once OR when the active printer differs
+ * from the printer the snapshot was captured against. Updated whenever the
+ * overlay applies default visibility or the user toggles a chip. Consumed by
+ * widgets that opt into "follow the user's graph selection" mode.
+ *
+ * The printer-name guard prevents a snapshot from one printer's sensor set
+ * from leaking into a different printer's home graph card after a switch.
  */
-const std::optional<std::vector<std::string>>& get_temp_graph_visibility_snapshot();
+std::optional<std::vector<std::string>> get_temp_graph_visibility_snapshot();
 
 namespace helix::test_access {
 /// Test-only seeder for the visibility snapshot. Production code never calls this;
 /// it exists so widget tests can drive the follow-mode code path without spinning
-/// up a fully-wired overlay.
+/// up a fully-wired overlay. Seeds against the current active printer name so
+/// the snapshot reads back as set.
 void set_temp_graph_visibility_snapshot(std::optional<std::vector<std::string>> snapshot);
 } // namespace helix::test_access

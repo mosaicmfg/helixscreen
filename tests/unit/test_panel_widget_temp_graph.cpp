@@ -439,7 +439,7 @@ TEST_CASE("TempGraphWidget: two instances have independent configs",
 }
 
 // ============================================================================
-// Follow-overlay mode (#? home graph card "follow my graph selection")
+// Follow-overlay mode (home graph card "follow my graph selection")
 // ============================================================================
 
 namespace {
@@ -450,10 +450,19 @@ auto names_of = [](const std::vector<TempGraphSeriesSpec>& specs) {
         out.push_back(s.klipper_name);
     return out;
 };
+
+// RAII guard so a failing REQUIRE in the middle of a test still resets the
+// process-static snapshot. Without this, a later test sees stale state.
+struct VisibilitySnapshotResetGuard {
+    ~VisibilitySnapshotResetGuard() {
+        helix::test_access::set_temp_graph_visibility_snapshot(std::nullopt);
+    }
+};
 } // namespace
 
 TEST_CASE("TempGraphWidget: follow_overlay off uses configured enabled flags",
           "[temp_graph][panel_widget][follow]") {
+    VisibilitySnapshotResetGuard reset_guard;
     helix::test_access::set_temp_graph_visibility_snapshot(
         std::vector<std::string>{"chamber"}); // overlay snapshot says "only chamber"
 
@@ -474,12 +483,11 @@ TEST_CASE("TempGraphWidget: follow_overlay off uses configured enabled flags",
     REQUIRE(std::find(names.begin(), names.end(), "extruder") != names.end());
     REQUIRE(std::find(names.begin(), names.end(), "heater_bed") != names.end());
     REQUIRE(std::find(names.begin(), names.end(), "chamber") == names.end());
-
-    helix::test_access::set_temp_graph_visibility_snapshot(std::nullopt);
 }
 
 TEST_CASE("TempGraphWidget: follow_overlay on uses snapshot membership",
           "[temp_graph][panel_widget][follow]") {
+    VisibilitySnapshotResetGuard reset_guard;
     helix::test_access::set_temp_graph_visibility_snapshot(
         std::vector<std::string>{"chamber", "heater_bed"}); // overlay shows bed + chamber only
 
@@ -500,12 +508,11 @@ TEST_CASE("TempGraphWidget: follow_overlay on uses snapshot membership",
     REQUIRE(std::find(names.begin(), names.end(), "extruder") == names.end()); // dropped
     REQUIRE(std::find(names.begin(), names.end(), "heater_bed") != names.end());
     REQUIRE(std::find(names.begin(), names.end(), "chamber") != names.end()); // added
-
-    helix::test_access::set_temp_graph_visibility_snapshot(std::nullopt);
 }
 
 TEST_CASE("TempGraphWidget: follow_overlay on with no snapshot falls back to config flags",
           "[temp_graph][panel_widget][follow]") {
+    VisibilitySnapshotResetGuard reset_guard;
     helix::test_access::set_temp_graph_visibility_snapshot(std::nullopt);
 
     TempGraphWidget w("test_follow_no_snapshot");

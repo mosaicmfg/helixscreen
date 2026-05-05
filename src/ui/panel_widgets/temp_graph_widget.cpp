@@ -7,6 +7,7 @@
 
 #include "app_globals.h"
 #include "helix-xml/src/xml/lv_xml.h"
+#include "lvgl/src/others/translation/lv_translation.h"
 #include "panel_widget_registry.h"
 #include "printer_state.h"
 #include "temperature_sensor_manager.h"
@@ -115,17 +116,13 @@ void TempGraphWidget::on_size_changed(int colspan, int rowspan, int /*width_px*/
 }
 
 void TempGraphWidget::on_activate() {
-    // In follow-overlay mode, the home panel re-activates whenever the user
-    // navigates back from the full-screen graph. If the overlay's visibility
-    // snapshot has drifted from what we currently render, rebuild the
-    // controller to match.
-    if (!follow_overlay_ || !widget_obj_ || !parent_screen_) {
+    // Follow mode: rebuild if the overlay's visibility snapshot drifted while
+    // the user was on the full-screen graph.
+    if (!follow_overlay_ || !widget_obj_ || !parent_screen_)
         return;
-    }
-    const std::string snapshot_sig = current_visibility_signature();
-    if (snapshot_sig == applied_visibility_signature_) {
+    if (current_visibility_signature() == applied_visibility_signature_)
         return;
-    }
+
     auto* saved_widget = widget_obj_;
     auto* saved_parent = parent_screen_;
     detach();
@@ -189,16 +186,14 @@ uint32_t TempGraphWidget::features_for_size(int colspan, int rowspan) {
 // Series config builder
 // ============================================================================
 
-std::vector<TempGraphSeriesSpec> TempGraphWidget::build_series_from_config() {
+std::vector<TempGraphSeriesSpec> TempGraphWidget::build_series_from_config() const {
     std::vector<TempGraphSeriesSpec> specs;
     if (!config_.contains("sensors"))
         return specs;
 
-    // Resolve membership predicate. In follow mode (with a snapshot present),
-    // the per-sensor `enabled` flag is overridden by the overlay's last
-    // visibility set. Until the overlay is opened the snapshot is empty, so
-    // we fall back to the configured `enabled` flags.
-    const auto& snapshot = get_temp_graph_visibility_snapshot();
+    // Follow mode overrides per-sensor `enabled` with the overlay's last
+    // visibility set; falls back to config flags until the overlay is opened.
+    auto snapshot = get_temp_graph_visibility_snapshot();
     const bool use_snapshot = follow_overlay_ && snapshot.has_value();
 
     int color_idx = 0;
@@ -236,21 +231,18 @@ std::vector<TempGraphSeriesSpec> TempGraphWidget::build_series_from_config() {
 }
 
 std::string TempGraphWidget::current_visibility_signature() const {
-    // Encode the resolved enabled-set for stable comparison.
-    const auto& snapshot = get_temp_graph_visibility_snapshot();
-    const bool use_snapshot = follow_overlay_ && snapshot.has_value();
-
+    // Compute from the same data path that produces the series so a signature
+    // change implies a real render delta — using the raw snapshot here would
+    // flag drift even when names absent from this card's config get filtered
+    // back out by build_series_from_config().
+    auto specs = build_series_from_config();
     std::vector<std::string> names;
-    if (use_snapshot) {
-        names = *snapshot;
-    } else if (config_.contains("sensors")) {
-        for (const auto& entry : config_["sensors"]) {
-            if (entry.contains("name") && entry.value("enabled", true)) {
-                names.push_back(entry["name"].get<std::string>());
-            }
-        }
+    names.reserve(specs.size());
+    for (const auto& s : specs) {
+        names.push_back(s.klipper_name);
     }
     std::sort(names.begin(), names.end());
+
     std::string sig;
     for (const auto& n : names) {
         sig += n;
@@ -388,13 +380,10 @@ TempGraphWidget::TempGraphConfigModal::sensor_display_name(const std::string& kl
 
 void TempGraphWidget::TempGraphConfigModal::populate_follow_toggle() {
     lv_obj_t* list = find_widget("sensor_list");
-    if (!list) {
+    if (!list)
         return;
-    }
 
-    bool follow = config_.value("follow_overlay", false);
-
-    // Build the row at the top of the sensor list: [label] [spacer] [switch]
+    // Row: [title + hint stacked] [switch]
     lv_obj_t* row = lv_obj_create(list);
     lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
@@ -402,7 +391,6 @@ void TempGraphWidget::TempGraphConfigModal::populate_follow_toggle() {
     lv_obj_set_style_pad_ver(row, 6, 0);
     lv_obj_set_style_pad_gap(row, 12, 0);
 
-    // Two-line label: title + helper text
     lv_obj_t* col = lv_obj_create(row);
     lv_obj_set_size(col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
@@ -413,11 +401,11 @@ void TempGraphWidget::TempGraphConfigModal::populate_follow_toggle() {
     lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* title = lv_label_create(col);
-    lv_label_set_text(title, "Follow graph screen");
+    lv_label_set_text(title, lv_tr("Follow graph screen"));
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
 
     lv_obj_t* hint = lv_label_create(col);
-    lv_label_set_text(hint, "Show whatever curves you last had visible on the full graph.");
+    lv_label_set_text(hint, lv_tr("Show whatever curves you last had visible on the full graph."));
     lv_obj_set_style_text_color(hint, theme_manager_get_color("text_muted"), 0);
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(hint, LV_PCT(100));
@@ -425,9 +413,8 @@ void TempGraphWidget::TempGraphConfigModal::populate_follow_toggle() {
     // Toggle switch
     lv_obj_t* sw = lv_switch_create(row);
     lv_obj_set_size(sw, 44, 24);
-    if (follow) {
+    if (config_.value("follow_overlay", false))
         lv_obj_add_state(sw, LV_STATE_CHECKED);
-    }
     follow_switch_ = sw;
 }
 
