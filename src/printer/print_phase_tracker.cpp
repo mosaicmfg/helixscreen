@@ -54,6 +54,32 @@ inline bool contains(const std::string& haystack, const char* needle) {
     return haystack.find(needle) != std::string::npos;
 }
 
+/// Pre-print phases form a monotonic ordering. Once advanced to HEATING
+/// (or beyond), late-arriving BED_MESH probe lines shouldn't drag us back —
+/// the K2 emits `[PROBE_STEP_INFO]` and `[WHY_DEBUG]target_temp` interleaved
+/// while bed heat ramps during mesh, which oscillated phases on real
+/// hardware (BED_MESH → HEATING → BED_MESH → HEATING for 90 s).
+///
+/// Terminal phases (PAUSED/COMPLETE/ERROR/CANCELLED) get -1 so any forward
+/// match against them is rejected; print_state observer drives those.
+int pre_print_ordinal(PrintPhase phase) {
+    switch (phase) {
+        case PrintPhase::IDLE:          return 0;
+        case PrintPhase::PREPARING:     return 1;
+        case PrintPhase::BED_MESH:      return 2;
+        case PrintPhase::HEATING:       return 3;
+        case PrintPhase::FILAMENT_LOAD: return 4;
+        case PrintPhase::PURGE:         return 5;
+        case PrintPhase::PRINTING:      return 6;
+        // Terminal / non-linear states — no forward-progress comparison applies
+        case PrintPhase::PAUSED:
+        case PrintPhase::COMPLETE:
+        case PrintPhase::ERROR:
+        case PrintPhase::CANCELLED:     return -1;
+    }
+    return -1;
+}
+
 } // namespace
 
 const char* print_phase_to_string(PrintPhase phase) {
@@ -331,12 +357,19 @@ bool PrintPhaseTracker::try_match_mesh_size(const std::string& line) {
 
 // ----- [K2/CFS] per-probe progress ------------------------------------------
 // "// [PROBE_STEP_INFO]step_bst_indx=0 step_bst_time=12 …"
+//
+// Forward-only: probe lines that arrive AFTER we've already advanced to
+// HEATING (e.g. PRTOUCH lifts during heating, or any post-mesh probe) are
+// progress data only, not a backward phase signal.
 bool PrintPhaseTracker::try_match_probe_step(const std::string& line) {
     if (!contains(line, "[PROBE_STEP_INFO]")) return false;
 
-    if (current_phase_ != PrintPhase::BED_MESH) {
+    if (pre_print_ordinal(current_phase_) < pre_print_ordinal(PrintPhase::BED_MESH)) {
         set_phase(PrintPhase::BED_MESH);
         mesh_active_ = true;
+    } else if (current_phase_ != PrintPhase::BED_MESH) {
+        // Past BED_MESH — ignore for phase, don't update progress either.
+        return true;
     }
     mesh_probes_seen_ += 1;
     int total = mesh_probes_total_ > 0 ? mesh_probes_total_ : kDefaultMeshProbes;
@@ -355,11 +388,12 @@ bool PrintPhaseTracker::try_match_probe_step(const std::string& line) {
 }
 
 // ----- [K2/CFS] mesh begin bookend ------------------------------------------
-// "// [DEBUG]multi_probe_begin" — fires once before the probe stream.
+// "// [DEBUG]multi_probe_begin" — fires once before the probe stream, but
+// can also fire during mid/post-mesh micro-probes. Forward-only.
 bool PrintPhaseTracker::try_match_mesh_begin(const std::string& line) {
     if (!contains(line, "[DEBUG]multi_probe_begin")) return false;
 
-    if (current_phase_ != PrintPhase::BED_MESH) {
+    if (pre_print_ordinal(current_phase_) < pre_print_ordinal(PrintPhase::BED_MESH)) {
         set_phase(PrintPhase::BED_MESH);
         mesh_active_ = true;
         mesh_probes_seen_ = 0;
@@ -409,9 +443,7 @@ bool PrintPhaseTracker::try_match_filament_load(const std::string& line) {
                  contains(line, "LOAD_MATERIAL");
     if (!match) return false;
 
-    if (current_phase_ != PrintPhase::FILAMENT_LOAD &&
-        current_phase_ != PrintPhase::PURGE &&
-        current_phase_ != PrintPhase::PRINTING) {
+    if (pre_print_ordinal(current_phase_) < pre_print_ordinal(PrintPhase::FILAMENT_LOAD)) {
         set_phase(PrintPhase::FILAMENT_LOAD);
     }
     return true;
@@ -442,7 +474,7 @@ bool PrintPhaseTracker::try_match_purge_percent(const std::string& line) {
                                    : static_cast<int>(frac * 10.0f + 0.5f);
     per_mille = std::max(0, std::min(1000, per_mille));
 
-    if (current_phase_ != PrintPhase::PURGE && current_phase_ != PrintPhase::PRINTING) {
+    if (pre_print_ordinal(current_phase_) < pre_print_ordinal(PrintPhase::PURGE)) {
         set_phase(PrintPhase::PURGE);
     }
     purge_percent_ = per_mille / 10;
@@ -464,8 +496,7 @@ bool PrintPhaseTracker::try_match_purge_percent(const std::string& line) {
 bool PrintPhaseTracker::try_match_heating_hint(const std::string& line) {
     if (!contains(line, "[WHY_DEBUG]") || !contains(line, "target_temp:")) return false;
 
-    if (current_phase_ == PrintPhase::PREPARING ||
-        current_phase_ == PrintPhase::BED_MESH) {
+    if (pre_print_ordinal(current_phase_) < pre_print_ordinal(PrintPhase::HEATING)) {
         set_phase(PrintPhase::HEATING);
     }
     return true;

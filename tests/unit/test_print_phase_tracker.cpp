@@ -152,6 +152,34 @@ TEST_CASE("PrintPhaseTracker: irrelevant lines do not change phase",
     t.deinit_subjects();
 }
 
+TEST_CASE("PrintPhaseTracker: probe step after HEATING does not regress phase",
+          "[print_phase_tracker]") {
+    lv_init_safe();
+    auto& t = PrintPhaseTracker::instance();
+    t.deinit_subjects();
+    t.init_subjects(false);
+
+    // Real K2 sequence: bed heat overlaps with mesh probing — both
+    // [PROBE_STEP_INFO] and [WHY_DEBUG]target_temp lines interleave.
+    // Without forward-only enforcement, the tracker oscillates BED_MESH
+    // ↔ HEATING for a minute or two until mesh actually finishes.
+    feed(t, "// [PROBE_STEP_INFO]step_bst_indx=0 ...");
+    REQUIRE(PrintPhaseTrackerTestAccess::current_phase(t) == PrintPhase::BED_MESH);
+
+    feed(t, "// [WHY_DEBUG]get_z_now_comp now_comp:0.05 target_temp:220.00");
+    REQUIRE(PrintPhaseTrackerTestAccess::current_phase(t) == PrintPhase::HEATING);
+
+    // Late probe line: must NOT drag us back to BED_MESH.
+    feed(t, "// [PROBE_STEP_INFO]step_bst_indx=1 ...");
+    REQUIRE(PrintPhaseTrackerTestAccess::current_phase(t) == PrintPhase::HEATING);
+
+    // Same for the multi_probe_begin bookend.
+    feed(t, "// [DEBUG]multi_probe_begin");
+    REQUIRE(PrintPhaseTrackerTestAccess::current_phase(t) == PrintPhase::HEATING);
+
+    t.deinit_subjects();
+}
+
 TEST_CASE("PrintPhaseTracker: reset clears transient state",
           "[print_phase_tracker]") {
     lv_init_safe();
