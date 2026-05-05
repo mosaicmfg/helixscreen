@@ -118,6 +118,12 @@ struct CfsErrorEntry {
 };
 
 static const std::unordered_map<std::string, CfsErrorEntry> CFS_ERROR_TABLE = {
+    // Klipper-internal errors (not CFS-specific) that we frequently surface to
+    // users. Despite living in the CFS table for now, these are general — the
+    // table predates the broader use case. TODO: rename to KlipperErrorTable.
+    {"key298", {"MCU bridge daemon is shut down", "Tap Firmware Restart to recover — on K2 this also bounces the rpi MCU bridge", AmsAlertLevel::SYSTEM}},
+    {"key585", {"Move out of range", "The requested position is outside the printer's bounds", AmsAlertLevel::SYSTEM}},
+
     {"key831", {"Lost connection to CFS unit", "Check the RS-485 cable between printer and CFS", AmsAlertLevel::SYSTEM}},
     {"key834", {"Invalid parameters sent to CFS", "This may indicate a firmware bug — try restarting", AmsAlertLevel::SYSTEM}},
     {"key835", {"Filament jammed at CFS connector", "Open the CFS lid, check the PTFE tube connection for the stuck slot", AmsAlertLevel::SLOT}},
@@ -148,6 +154,14 @@ static const std::unordered_map<std::string, CfsErrorEntry> CFS_ERROR_TABLE = {
     {"key864", {"Extrude error — buffer not full", "Filament didn't fill buffer tube during load", AmsAlertLevel::SLOT}},
     {"key865", {"Retract error — failed to exit connector", "Filament stuck in connector during unload", AmsAlertLevel::SLOT}},
 };
+
+std::optional<std::pair<const char*, const char*>>
+CfsErrorDecoder::lookup_message(const std::string& key_code) {
+    auto it = CFS_ERROR_TABLE.find(key_code);
+    if (it == CFS_ERROR_TABLE.end())
+        return std::nullopt;
+    return std::make_pair(it->second.message, it->second.hint);
+}
 
 std::optional<AmsAlert> CfsErrorDecoder::decode(const std::string& key_code,
                                                  int unit_index, int slot_index)

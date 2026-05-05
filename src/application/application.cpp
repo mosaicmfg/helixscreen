@@ -32,7 +32,9 @@
 #include "keyboard_shortcuts.h"
 #include "layout_manager.h"
 #include "led/led_controller.h"
+#include "ams_backend_cfs.h"
 #include "moonraker_manager.h"
+#include "printer_recovery_service.h"
 #include "panel_factory.h"
 #include "pending_startup_warnings.h"
 #include "post_op_cooldown_manager.h"
@@ -2770,30 +2772,49 @@ void Application::init_action_prompt() {
     // Register global handler to surface Klipper gcode errors as toasts.
     // Klipper errors come through notify_gcode_response with "!!" or "Error:" prefix.
     // Multiple handlers per method are supported (unique handler names).
+    //
+    // [L072] We capture `api` by value into the lambda — the callback fires
+    // from the WebSocket thread for the lifetime of the client. `api` outlives
+    // every toast/recovery action this handler can spawn.
+    MoonrakerAPI* api_for_errors = api;
     client->register_method_callback(
-        "notify_gcode_response", "gcode_error_notifier", [](const nlohmann::json& msg) {
+        "notify_gcode_response", "gcode_error_notifier",
+        [api_for_errors](const nlohmann::json& msg) {
             if (!msg.contains("params") || !msg["params"].is_array() || msg["params"].empty()) {
                 return;
             }
 
-            // Some Klipper builds (e.g. K1C) send errors as JSON objects:
-            //   !! {"code":"key585","msg":"Move out of range: ...","values":[...]}
-            // Extract the "msg" field for human-readable display.
-            auto extract_json_msg = [](std::string& text) {
-                if (!text.empty() && text[0] == '{') {
-                    try {
-                        auto j = nlohmann::json::parse(text);
-                        if (j.contains("msg") && j["msg"].is_string()) {
-                            text = j["msg"].get<std::string>();
+            // Some Klipper builds (e.g. K1C, K2 with CFS) send errors as JSON
+            // objects:
+            //   !! {"code":"key851","msg":"retrude error, ...","values":[...]}
+            // Prefer a friendly translation of the code over the raw msg —
+            // Creality's `msg` strings are debug log text, not user-facing.
+            // Falls back to msg when the code is unknown. Stashes the parsed
+            // code into `out_code` so callers can offer code-specific actions
+            // (e.g. one-tap deep recovery on key298 MCU-shutdown).
+            auto extract_json_msg = [](std::string& text, std::string& out_code) {
+                out_code.clear();
+                if (text.empty() || text[0] != '{') return;
+                try {
+                    auto j = nlohmann::json::parse(text);
+                    if (j.contains("code") && j["code"].is_string()) {
+                        out_code = j["code"].get<std::string>();
+                        if (auto friendly =
+                                helix::printer::CfsErrorDecoder::lookup_message(out_code)) {
+                            text = std::string(friendly->first) + ". " + friendly->second;
+                            return;
                         }
-                    } catch (...) {
-                        // Not valid JSON, use as-is
                     }
+                    if (j.contains("msg") && j["msg"].is_string()) {
+                        text = j["msg"].get<std::string>();
+                    }
+                } catch (...) {
+                    // Not valid JSON, use as-is
                 }
             };
 
-            auto clean_for_toast = [&extract_json_msg](std::string& text) {
-                extract_json_msg(text);
+            auto clean_for_toast = [&extract_json_msg](std::string& text, std::string& out_code) {
+                extract_json_msg(text, out_code);
 
                 // Friendly messages for common error patterns
                 if (text.find("Must home axis") != std::string::npos ||
@@ -2813,7 +2834,7 @@ void Application::init_action_prompt() {
                 }
             };
 
-            auto process_line = [&clean_for_toast](const std::string& line) {
+            auto process_line = [&clean_for_toast, api_for_errors](const std::string& line) {
                 if (line.empty()) {
                     return;
                 }
@@ -2823,8 +2844,39 @@ void Application::init_action_prompt() {
                     // Strip "!! " prefix for cleaner display
                     std::string clean =
                         (line.size() > 3 && line[2] == ' ') ? line.substr(3) : line.substr(2);
-                    clean_for_toast(clean);
-                    spdlog::error("[GcodeError] Emergency: {}", clean);
+                    std::string code;
+                    clean_for_toast(clean, code);
+                    spdlog::error("[GcodeError] Emergency: {} (code={})", clean,
+                                  code.empty() ? "-" : code);
+
+                    // Specific codes that warrant a one-tap deep-recovery action.
+                    // key298: rpi MCU bridge daemon shut down — the canonical
+                    // K2 case where firmware_restart alone can't recover.
+                    if (code == "key298" && api_for_errors) {
+                        ToastManager::instance().show_with_action(
+                            ToastSeverity::ERROR, clean.c_str(), lv_tr("Recover"),
+                            [](void* ud) {
+                                auto* api = static_cast<MoonrakerAPI*>(ud);
+                                if (!api) return;
+                                spdlog::info("[GcodeError] User tapped Recover for key298");
+                                helix::PrinterRecoveryService recovery(api);
+                                recovery.recover(
+                                    []() {
+                                        spdlog::info("[Recovery] Auto-recovery initiated");
+                                    },
+                                    [](const MoonrakerError& err) {
+                                        spdlog::error("[Recovery] Auto-recovery failed: {}",
+                                                      err.message);
+                                        ToastManager::instance().show(
+                                            ToastSeverity::ERROR,
+                                            ("Recovery failed: " + err.user_message()).c_str(),
+                                            6000);
+                                    });
+                            },
+                            api_for_errors, /*duration_ms=*/15000);
+                        return;
+                    }
+
                     ui_notification_error("Klipper Error", clean.c_str(), false);
                     return;
                 }
@@ -2842,7 +2894,8 @@ void Application::init_action_prompt() {
                         } else if (line.size() > 6 && line[5] == ':') {
                             clean = line.substr(6);
                         }
-                        clean_for_toast(clean);
+                        std::string code;
+                        clean_for_toast(clean, code);
                         spdlog::error("[GcodeError] {}", clean);
                         ui_notification_error(nullptr, clean.c_str(), false);
                         return;

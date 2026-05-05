@@ -64,6 +64,13 @@ class CfsErrorDecoder {
     /// Decode a CFS error code. Returns nullopt for unknown codes.
     static std::optional<AmsAlert> decode(const std::string& key_code,
                                           int unit_index, int slot_index);
+
+    /// Look up just the message+hint for a code, without slot/unit context.
+    /// Used by the global gcode-error toast handler to translate raw Klipper
+    /// `!! {"code":"key***","msg":"..."}` lines into friendly text.
+    /// Returns {message, hint} or nullopt for unknown codes.
+    static std::optional<std::pair<const char*, const char*>>
+        lookup_message(const std::string& key_code);
 };
 
 /// CFS (Creality Filament System) backend — K2 series printers with RS-485 CFS units
