@@ -590,13 +590,24 @@ void PrintStartCollector::on_gcode_response(const json& msg) {
     // emit a separate BED_MESH_CALIBRATE command line before probing starts.
     {
         bool in_mesh = false;
+        bool in_leveling = false;
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
             in_mesh = (current_phase_ == PrintStartPhase::BED_MESH);
+            // QGL and Z_TILT also fire "probe at X,Y is z=Z" lines via Klipper's
+            // shared probe routine. Voron 2.4 QGL probes 4 corner pads with
+            // `samples: 3` = 12 probe lines back-to-back, well over the
+            // pre-mesh entry threshold. Without this guard the collector
+            // would enter BED_MESH on the third QGL probe and count corner
+            // pads against the bed_mesh probe total, throwing the displayed
+            // "X / Y" count off by the number of leveling probes.
+            in_leveling = (current_phase_ == PrintStartPhase::QGL ||
+                           current_phase_ == PrintStartPhase::Z_TILT);
         }
 
-        bool is_probe_line =
-            !in_mesh && (helix::parse_probe_progress(line) || helix::is_probe_result_line(line));
+        bool is_probe_line = !in_mesh && !in_leveling &&
+                             (helix::parse_probe_progress(line) ||
+                              helix::is_probe_result_line(line));
 
         // If we see a probe line but aren't in BED_MESH yet, buffer probes
         // before entering the phase. Some printers (e.g. AD5M Klipper mod)
@@ -952,6 +963,14 @@ void PrintStartCollector::update_phase(PrintStartPhase phase, const char* messag
             return;
         entering_mesh =
             (phase == PrintStartPhase::BED_MESH && current_phase_ != PrintStartPhase::BED_MESH);
+        // Entering a leveling phase clears the pre-mesh probe buffer — any
+        // stray probe lines that arrived before the QGL/Z_TILT regex hit
+        // (rare, but possible if firmware emits a probe before the macro
+        // echo) shouldn't carry into the eventual BED_MESH count.
+        if ((phase == PrintStartPhase::QGL || phase == PrintStartPhase::Z_TILT) &&
+            current_phase_ != phase) {
+            pre_mesh_probe_count_ = 0;
+        }
         current_phase_ = phase;
         detected_phases_.insert(phase); // Track for progress calculation
 
@@ -1005,6 +1024,10 @@ void PrintStartCollector::update_phase(PrintStartPhase phase, const std::string&
             return;
         entering_mesh =
             (phase == PrintStartPhase::BED_MESH && current_phase_ != PrintStartPhase::BED_MESH);
+        if ((phase == PrintStartPhase::QGL || phase == PrintStartPhase::Z_TILT) &&
+            current_phase_ != phase) {
+            pre_mesh_probe_count_ = 0;
+        }
         current_phase_ = phase;
         detected_phases_.insert(phase);
 

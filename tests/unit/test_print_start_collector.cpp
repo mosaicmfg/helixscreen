@@ -2006,3 +2006,95 @@ TEST_CASE_METHOD(PrintStartCollectorSequentialFixture,
     send_gcode_response("// probe at 190.000,8.000 is z=-0.580000");
     REQUIRE(get_current_phase() != PrintStartPhase::PURGING);
 }
+
+// ============================================================================
+// QGL / bed-mesh conflation regression — Voron 2.4 PRINT_START runs
+// QUAD_GANTRY_LEVEL before BED_MESH_CALIBRATE. QGL probes 4 pads with
+// `samples: 3` (default) = 12 `probe at X,Y is z=Z` lines. The collector
+// previously entered BED_MESH on the 3rd probe line and counted QGL pads
+// against the bed_mesh probe total, throwing the "X/Y" count off.
+// ============================================================================
+
+namespace {
+class VoronCollectorFixture : public PrintStartCollectorHeaterFixture {
+  public:
+    /// Send a "// probe at X,Y is z=Z" line through the gcode-response path.
+    /// Same plumbing as PrintStartCollectorSequentialFixture::send_gcode_response,
+    /// duplicated here because the Heater fixture doesn't expose it.
+    void feed_gcode(const std::string& line) {
+        nlohmann::json msg = {{"method", "notify_gcode_response"}, {"params", {line}}};
+        client().dispatch_method_callback("notify_gcode_response", msg);
+        drain_async_updates();
+    }
+};
+} // namespace
+
+TEST_CASE_METHOD(VoronCollectorFixture,
+                 "Voron QGL probes do not trigger BED_MESH (12-line corner burst)",
+                 "[print][collector][voron][bed_mesh]") {
+    collector().start();
+    drain_async_updates();
+
+    // Klipper emits "QUAD_GANTRY_LEVEL" + "quad_gantry_level: ..." during QGL.
+    // The profile's QGL regex matches and sets phase=QGL.
+    feed_gcode("QUAD_GANTRY_LEVEL");
+    REQUIRE(get_current_phase() == PrintStartPhase::QGL);
+
+    // Real Voron QGL output: 4 corner pads × 3 samples = 12 probe lines.
+    // Each pad position repeated 3x; 4 unique (x,y).
+    const char* qgl_probe_lines[] = {
+        "// probe at 30.000,30.000 is z=-0.580000",
+        "// probe at 30.000,30.000 is z=-0.582500",
+        "// probe at 30.000,30.000 is z=-0.580000",
+        "// probe at 270.000,30.000 is z=-0.532500",
+        "// probe at 270.000,30.000 is z=-0.532500",
+        "// probe at 270.000,30.000 is z=-0.532500",
+        "// probe at 270.000,270.000 is z=-0.495000",
+        "// probe at 270.000,270.000 is z=-0.490000",
+        "// probe at 270.000,270.000 is z=-0.490000",
+        "// probe at 30.000,270.000 is z=-0.557500",
+        "// probe at 30.000,270.000 is z=-0.555000",
+        "// probe at 30.000,270.000 is z=-0.555000",
+    };
+    for (const char* line : qgl_probe_lines) {
+        feed_gcode(line);
+    }
+
+    // Must remain in QGL — these probes are corner pads, not bed mesh points.
+    REQUIRE(get_current_phase() == PrintStartPhase::QGL);
+}
+
+TEST_CASE_METHOD(VoronCollectorFixture,
+                 "BED_MESH_CALIBRATE after QGL enters BED_MESH cleanly",
+                 "[print][collector][voron][bed_mesh]") {
+    collector().start();
+    drain_async_updates();
+
+    // Pre-print sequence: QGL (with probes) → BED_MESH_CALIBRATE → mesh probes.
+    feed_gcode("QUAD_GANTRY_LEVEL");
+    feed_gcode("// probe at 30.000,30.000 is z=-0.580000");
+    feed_gcode("// probe at 30.000,30.000 is z=-0.582500");
+    feed_gcode("// probe at 30.000,30.000 is z=-0.580000");
+    feed_gcode("// probe at 270.000,30.000 is z=-0.532500");
+    feed_gcode("// probe at 270.000,30.000 is z=-0.532500");
+    feed_gcode("// probe at 270.000,30.000 is z=-0.532500");
+    REQUIRE(get_current_phase() == PrintStartPhase::QGL);
+
+    // Now BED_MESH_CALIBRATE — collector regex matches, transitions to BED_MESH.
+    feed_gcode("BED_MESH_CALIBRATE");
+    REQUIRE(get_current_phase() == PrintStartPhase::BED_MESH);
+
+    // First mesh probe should be the FIRST mesh point — the QGL probes that
+    // came before should not be carried into the mesh count.
+    feed_gcode("// probe at 50.000,50.000 is z=-0.500000");
+    feed_gcode("// probe at 100.000,50.000 is z=-0.510000");
+    feed_gcode("// probe at 150.000,50.000 is z=-0.515000");
+
+    // Message format is "Bed Mesh (N/total)" or "Bed Mesh (N)" — assert
+    // that the count reflects the 3 mesh probes, NOT 3 + 4 QGL pads = 7.
+    std::string msg = get_current_message();
+    INFO("Current message: " << msg);
+    // Count should be 3 (the mesh probes), not 7 (QGL pads + mesh probes)
+    REQUIRE(msg.find("(3") != std::string::npos);
+    REQUIRE(msg.find("(7") == std::string::npos);
+}
