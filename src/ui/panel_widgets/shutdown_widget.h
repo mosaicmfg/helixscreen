@@ -8,8 +8,6 @@
 
 #include "panel_widget.h"
 
-#include <memory>
-
 class MoonrakerAPI;
 
 namespace helix {
@@ -41,14 +39,20 @@ class ShutdownWidget : public PanelWidget {
     helix::AsyncLifetimeGuard lifetime_;
 
     void handle_click();
-    void execute_printer_shutdown();
-    void execute_printer_reboot();
-    void execute_screen_shutdown();
-    void execute_screen_reboot();
-    void execute_both_shutdown();
-    void execute_both_reboot();
 };
 
 void register_shutdown_widget();
+
+/// Configure @p modal with single-/dual-scope callbacks for @p api (matching
+/// the home-panel widget's behavior — including local-fallback when Moonraker
+/// is disconnected) and show it as a child of @p parent_screen.
+///
+/// Caller owns @p modal and @p lifetime; both must outlive the modal. The
+/// lifetime guard is required for the "shutdown both" / "reboot both" flows
+/// that defer the local SystemPower call until the printer-side ack.
+void show_shutdown_dialog(MoonrakerAPI* api,
+                          ShutdownModal& modal,
+                          AsyncLifetimeGuard& lifetime,
+                          lv_obj_t* parent_screen);
 
 } // namespace helix

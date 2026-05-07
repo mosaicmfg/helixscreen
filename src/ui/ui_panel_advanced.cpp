@@ -13,6 +13,8 @@
 #include "ui_panel_spoolman.h"
 #include "ui_toast_manager.h"
 
+#include "panel_widgets/shutdown_widget.h"
+
 #include "app_globals.h"
 #include "config.h"
 #include "lvgl/src/others/translation/lv_translation.h"
@@ -74,6 +76,7 @@ void AdvancedPanel::init_subjects() {
         {"on_pid_tuning_clicked", on_pid_tuning_clicked},
         {"on_timelapse_videos_clicked", on_timelapse_videos_clicked},
         {"on_timelapse_setup_clicked", on_timelapse_setup_clicked},
+        {"on_advanced_power_clicked", on_advanced_power_clicked},
     });
 
     // Note: Input shaping uses on_input_shaper_row_clicked registered by InputShaperPanel
@@ -230,6 +233,20 @@ void AdvancedPanel::on_timelapse_videos_clicked(lv_event_t* /*e*/) {
 
 void AdvancedPanel::on_timelapse_setup_clicked(lv_event_t* /*e*/) {
     get_global_advanced_panel().handle_timelapse_setup_clicked();
+}
+
+void AdvancedPanel::on_advanced_power_clicked(lv_event_t* /*e*/) {
+    get_global_advanced_panel().handle_power_clicked();
+}
+
+// ============================================================================
+// POWER HANDLER — shares the same dialog the home-panel power widget uses
+// ============================================================================
+
+void AdvancedPanel::handle_power_clicked() {
+    spdlog::debug("[{}] Power row clicked — opening shutdown dialog", get_name());
+    helix::show_shutdown_dialog(api_, shutdown_modal_, shutdown_lifetime_,
+                                lv_screen_active());
 }
 
 // ============================================================================

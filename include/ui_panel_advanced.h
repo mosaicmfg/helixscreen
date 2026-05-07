@@ -6,7 +6,9 @@
 #include "ui_panel_base.h"
 #include "ui_panel_history_dashboard.h"
 #include "ui_plugin_install_modal.h"
+#include "ui_shutdown_modal.h"
 
+#include "async_lifetime_guard.h"
 #include "helix_plugin_installer.h"
 
 /**
@@ -106,6 +108,11 @@ class AdvancedPanel : public PanelBase {
     void handle_helix_plugin_uninstall_clicked();
     void handle_phase_tracking_changed(bool enabled);
 
+    // Both POWER rows (Shutdown, Reboot) open the same shared dialog — the
+    // dialog itself presents shutdown vs. reboot buttons and, on dual-host
+    // setups, the printer/screen/both scope. Single handler reflects that.
+    void handle_power_clicked();
+
     //
     // === Static Event Callbacks (registered via lv_xml_register_event_cb) ===
     //
@@ -121,6 +128,7 @@ class AdvancedPanel : public PanelBase {
     static void on_helix_plugin_install_clicked(lv_event_t* e);
     static void on_helix_plugin_uninstall_clicked(lv_event_t* e);
     static void on_phase_tracking_changed(lv_event_t* e);
+    static void on_advanced_power_clicked(lv_event_t* e);
 
     //
     // === HelixPrint Plugin Support ===
@@ -128,6 +136,16 @@ class AdvancedPanel : public PanelBase {
 
     helix::HelixPluginInstaller plugin_installer_;
     PluginInstallModal plugin_install_modal_;
+
+    //
+    // === Shared Power Dialog ===
+    //
+    // Reuses the same modal the home-panel power widget shows. The lifetime
+    // guard is required by the "Both" flow (defers screen-side SystemPower
+    // call until the printer-side ack lands on the WS background thread).
+
+    ShutdownModal shutdown_modal_;
+    helix::AsyncLifetimeGuard shutdown_lifetime_;
 
     //
     // === Cached Overlay Panels ===

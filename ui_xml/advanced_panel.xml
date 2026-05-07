@@ -197,6 +197,26 @@
                           description_tag="Adjusts individual characteristics of your heaters for optimal control">
         <event_cb trigger="clicked" callback="on_pid_tuning_clicked"/>
       </setting_action_row>
+      <!-- ================================================================== -->
+      <!-- POWER SECTION -->
+      <!-- ================================================================== -->
+      <!-- Both rows open the same dialog the home-panel power widget uses,
+           which handles single-/dual-host scope and confirms the action. -->
+      <setting_section_header title="POWER" title_tag="POWER" icon="power"/>
+      <!-- Shutdown / Reboot — both rows open the same dialog (which presents
+           both actions plus, on dual-host, the printer/screen/both scope). -->
+      <setting_action_row name="row_shutdown"
+                          label="Shutdown" label_tag="Shutdown" icon="power"
+                          description="Power off the printer or screen"
+                          description_tag="Power off the printer or screen">
+        <event_cb trigger="clicked" callback="on_advanced_power_clicked"/>
+      </setting_action_row>
+      <setting_action_row name="row_reboot"
+                          label="Reboot" label_tag="Reboot" icon="restart"
+                          description="Restart the printer or screen"
+                          description_tag="Restart the printer or screen">
+        <event_cb trigger="clicked" callback="on_advanced_power_clicked"/>
+      </setting_action_row>
       <!-- Bottom padding for scroll -->
       <lv_obj width="100%" height="#space_xl" scrollable="false"/>
     </lv_obj>

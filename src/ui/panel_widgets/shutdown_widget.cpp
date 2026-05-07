@@ -20,6 +20,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cstring>
+#include <memory>
 
 namespace helix {
 
@@ -51,7 +52,7 @@ void verify_host_down_timer_cb(lv_timer_t* timer) {
     }
 
     const char* action = ctx->is_reboot ? "reboot" : "shutdown";
-    spdlog::warn("[ShutdownWidget] Host still reachable {}s after {} — {} silently failed",
+    spdlog::warn("[ShutdownDialog] Host still reachable {}s after {} — {} silently failed",
                  kVerificationWindowMs / 1000, action, action);
 
     const char* msg = ctx->is_reboot
@@ -66,7 +67,7 @@ void schedule_host_down_verification(MoonrakerAPI* api, bool is_reboot) {
     if (!api) {
         return;
     }
-    helix::ui::queue_update("ShutdownWidget::verify",
+    helix::ui::queue_update("ShutdownDialog::verify",
                             [api, is_reboot]() {
                                 auto* ctx = new VerifyCtx{api, is_reboot};
                                 lv_timer_create(verify_host_down_timer_cb,
@@ -96,6 +97,120 @@ ShutdownModal* find_shutdown_modal(lv_event_t* e) {
         obj = lv_obj_get_parent(obj);
     }
     return nullptr;
+}
+
+// ---- Action helpers -------------------------------------------------------
+//
+// Free functions so any caller of show_shutdown_dialog() (home-panel widget,
+// AdvancedPanel power rows) gets the same printer/screen/both behavior —
+// including the dual-host async ordering for "both shutdown" / "both reboot",
+// where the local SystemPower call is deferred until the printer-side ack.
+
+void execute_printer_shutdown(MoonrakerAPI* api) {
+    if (!api) return;
+    spdlog::info("[ShutdownDialog] Executing machine shutdown");
+    api->machine_shutdown(
+        [api]() {
+            spdlog::info("[ShutdownDialog] Machine shutdown command sent successfully");
+            schedule_host_down_verification(api, /*is_reboot=*/false);
+        },
+        [](const MoonrakerError& err) {
+            spdlog::error("[ShutdownDialog] Machine shutdown failed: {}", err.message);
+            ToastManager::instance().show(ToastSeverity::ERROR,
+                                          lv_tr("Shutdown failed"), 6000);
+        });
+}
+
+void execute_printer_reboot(MoonrakerAPI* api) {
+    if (!api) return;
+    spdlog::info("[ShutdownDialog] Executing machine reboot");
+    api->machine_reboot(
+        [api]() {
+            spdlog::info("[ShutdownDialog] Machine reboot command sent successfully");
+            schedule_host_down_verification(api, /*is_reboot=*/true);
+        },
+        [](const MoonrakerError& err) {
+            spdlog::error("[ShutdownDialog] Machine reboot failed: {}", err.message);
+            ToastManager::instance().show(ToastSeverity::ERROR,
+                                          lv_tr("Reboot failed"), 6000);
+        });
+}
+
+void execute_screen_shutdown() {
+    spdlog::info("[ShutdownDialog] Executing local screen shutdown");
+    if (auto* rc = get_runtime_config(); rc && rc->test_mode) {
+        spdlog::warn("[ShutdownDialog] TEST MODE: skipping SystemPower::shutdown_local() — "
+                     "would have powered off the dev host");
+        ToastManager::instance().show(ToastSeverity::INFO,
+                                      "TEST: would shut down screen", 4000);
+        return;
+    }
+    if (!helix::SystemPower::shutdown_local()) {
+        ToastManager::instance().show(ToastSeverity::ERROR,
+                                      lv_tr("Screen shutdown failed"), 6000);
+    }
+}
+
+void execute_screen_reboot() {
+    spdlog::info("[ShutdownDialog] Executing local screen reboot");
+    if (auto* rc = get_runtime_config(); rc && rc->test_mode) {
+        spdlog::warn("[ShutdownDialog] TEST MODE: skipping SystemPower::reboot_local() — "
+                     "would have rebooted the dev host");
+        ToastManager::instance().show(ToastSeverity::INFO,
+                                      "TEST: would reboot screen", 4000);
+        return;
+    }
+    if (!helix::SystemPower::reboot_local()) {
+        ToastManager::instance().show(ToastSeverity::ERROR,
+                                      lv_tr("Screen reboot failed"), 6000);
+    }
+}
+
+// "Both" flows wait for the Moonraker ack before invoking SystemPower locally
+// — otherwise the local kernel can SIGTERM us before libhv flushes the queued
+// WS frame, leaving the printer up. Fire screen on both success AND error:
+// the user said "Both", so we power down the screen even if the printer side
+// reported a failure.
+void execute_both_shutdown(MoonrakerAPI* api, AsyncLifetimeGuard& lifetime) {
+    if (!api) return;
+    spdlog::info("[ShutdownDialog] Executing both shutdown — printer first, screen on ack");
+    auto tok = lifetime.token();
+    api->machine_shutdown(
+        [tok, api]() {
+            spdlog::info("[ShutdownDialog] Printer shutdown ack'd — now shutting down screen");
+            schedule_host_down_verification(api, /*is_reboot=*/false);
+            if (tok.expired()) return;
+            tok.defer([]() { execute_screen_shutdown(); });
+        },
+        [tok](const MoonrakerError& err) {
+            spdlog::error("[ShutdownDialog] Printer shutdown failed: {} — proceeding with screen anyway",
+                          err.message);
+            ToastManager::instance().show(ToastSeverity::ERROR,
+                                          lv_tr("Shutdown failed"), 6000);
+            if (tok.expired()) return;
+            tok.defer([]() { execute_screen_shutdown(); });
+        });
+}
+
+void execute_both_reboot(MoonrakerAPI* api, AsyncLifetimeGuard& lifetime) {
+    if (!api) return;
+    spdlog::info("[ShutdownDialog] Executing both reboot — printer first, screen on ack");
+    auto tok = lifetime.token();
+    api->machine_reboot(
+        [tok, api]() {
+            spdlog::info("[ShutdownDialog] Printer reboot ack'd — now rebooting screen");
+            schedule_host_down_verification(api, /*is_reboot=*/true);
+            if (tok.expired()) return;
+            tok.defer([]() { execute_screen_reboot(); });
+        },
+        [tok](const MoonrakerError& err) {
+            spdlog::error("[ShutdownDialog] Printer reboot failed: {} — proceeding with screen anyway",
+                          err.message);
+            ToastManager::instance().show(ToastSeverity::ERROR,
+                                          lv_tr("Reboot failed"), 6000);
+            if (tok.expired()) return;
+            tok.defer([]() { execute_screen_reboot(); });
+        });
 }
 
 // Single-scope mode uses these directly (XML modal_button_row callbacks
@@ -193,9 +308,15 @@ void ShutdownWidget::detach() {
 
 void ShutdownWidget::handle_click() {
     spdlog::info("[ShutdownWidget] Shutdown button clicked");
+    show_shutdown_dialog(api_, shutdown_modal_, lifetime_, lv_screen_active());
+}
 
-    if (!api_) {
-        spdlog::warn("[ShutdownWidget] No API available");
+void show_shutdown_dialog(MoonrakerAPI* api,
+                          ShutdownModal& modal,
+                          AsyncLifetimeGuard& lifetime,
+                          lv_obj_t* parent_screen) {
+    if (!api) {
+        spdlog::warn("[ShutdownDialog] No API available");
         return;
     }
 
@@ -210,137 +331,27 @@ void ShutdownWidget::handle_click() {
         // failed to boot, or the user runs SonicPad as a screen-only with the
         // local Moonraker disabled), fall back to SystemPower so the user
         // isn't forced to use the hardware switch.
-        if (api_->is_connected()) {
-            shutdown_modal_.set_single_callbacks(
-                [this]() { execute_printer_shutdown(); },
-                [this]() { execute_printer_reboot(); });
+        if (api->is_connected()) {
+            modal.set_single_callbacks(
+                [api]() { execute_printer_shutdown(api); },
+                [api]() { execute_printer_reboot(api); });
         } else {
-            spdlog::info("[ShutdownWidget] Moonraker not connected — using local SystemPower fallback");
-            shutdown_modal_.set_single_callbacks(
-                [this]() { execute_screen_shutdown(); },
-                [this]() { execute_screen_reboot(); });
+            spdlog::info("[ShutdownDialog] Moonraker not connected — using local SystemPower fallback");
+            modal.set_single_callbacks(
+                []() { execute_screen_shutdown(); },
+                []() { execute_screen_reboot(); });
         }
     } else {
-        shutdown_modal_.set_dual_callbacks(
-            [this]() { execute_both_shutdown(); },
-            [this]() { execute_both_reboot(); },
-            [this]() { execute_printer_shutdown(); },
-            [this]() { execute_printer_reboot(); },
-            [this]() { execute_screen_shutdown(); },
-            [this]() { execute_screen_reboot(); });
+        modal.set_dual_callbacks(
+            [api, &lifetime]() { execute_both_shutdown(api, lifetime); },
+            [api, &lifetime]() { execute_both_reboot(api, lifetime); },
+            [api]() { execute_printer_shutdown(api); },
+            [api]() { execute_printer_reboot(api); },
+            []() { execute_screen_shutdown(); },
+            []() { execute_screen_reboot(); });
     }
 
-    shutdown_modal_.show(lv_screen_active());
-}
-
-void ShutdownWidget::execute_printer_shutdown() {
-    spdlog::info("[ShutdownWidget] Executing machine shutdown");
-
-    MoonrakerAPI* api = api_;
-    api_->machine_shutdown(
-        [api]() {
-            spdlog::info("[ShutdownWidget] Machine shutdown command sent successfully");
-            schedule_host_down_verification(api, /*is_reboot=*/false);
-        },
-        [](const MoonrakerError& err) {
-            spdlog::error("[ShutdownWidget] Machine shutdown failed: {}", err.message);
-            ToastManager::instance().show(ToastSeverity::ERROR,
-                                          lv_tr("Shutdown failed"), 6000);
-        });
-}
-
-void ShutdownWidget::execute_printer_reboot() {
-    spdlog::info("[ShutdownWidget] Executing machine reboot");
-
-    MoonrakerAPI* api = api_;
-    api_->machine_reboot(
-        [api]() {
-            spdlog::info("[ShutdownWidget] Machine reboot command sent successfully");
-            schedule_host_down_verification(api, /*is_reboot=*/true);
-        },
-        [](const MoonrakerError& err) {
-            spdlog::error("[ShutdownWidget] Machine reboot failed: {}", err.message);
-            ToastManager::instance().show(ToastSeverity::ERROR,
-                                          lv_tr("Reboot failed"), 6000);
-        });
-}
-
-void ShutdownWidget::execute_screen_shutdown() {
-    spdlog::info("[ShutdownWidget] Executing local screen shutdown");
-    if (auto* rc = get_runtime_config(); rc && rc->test_mode) {
-        spdlog::warn("[ShutdownWidget] TEST MODE: skipping SystemPower::shutdown_local() — "
-                     "would have powered off the dev host");
-        ToastManager::instance().show(ToastSeverity::INFO,
-                                      "TEST: would shut down screen", 4000);
-        return;
-    }
-    if (!helix::SystemPower::shutdown_local()) {
-        ToastManager::instance().show(ToastSeverity::ERROR,
-                                      lv_tr("Screen shutdown failed"), 6000);
-    }
-}
-
-void ShutdownWidget::execute_screen_reboot() {
-    spdlog::info("[ShutdownWidget] Executing local screen reboot");
-    if (auto* rc = get_runtime_config(); rc && rc->test_mode) {
-        spdlog::warn("[ShutdownWidget] TEST MODE: skipping SystemPower::reboot_local() — "
-                     "would have rebooted the dev host");
-        ToastManager::instance().show(ToastSeverity::INFO,
-                                      "TEST: would reboot screen", 4000);
-        return;
-    }
-    if (!helix::SystemPower::reboot_local()) {
-        ToastManager::instance().show(ToastSeverity::ERROR,
-                                      lv_tr("Screen reboot failed"), 6000);
-    }
-}
-
-void ShutdownWidget::execute_both_shutdown() {
-    spdlog::info("[ShutdownWidget] Executing both shutdown — printer first, screen on ack");
-    // Wait for the Moonraker call's ack (fires on the WS background thread)
-    // before invoking SystemPower::shutdown_local on the local kernel —
-    // otherwise the local kernel can SIGTERM us before libhv flushes the
-    // queued WS frame, leaving the printer up. Fire screen on both success
-    // AND error: the user said "Both", so we power down the screen even if
-    // the printer side reported a failure.
-    auto tok = lifetime_.token();
-    MoonrakerAPI* api = api_;
-    api_->machine_shutdown(
-        [this, tok, api]() {
-            spdlog::info("[ShutdownWidget] Printer shutdown ack'd — now shutting down screen");
-            schedule_host_down_verification(api, /*is_reboot=*/false);
-            if (tok.expired()) return;
-            tok.defer([this]() { execute_screen_shutdown(); });
-        },
-        [this, tok](const MoonrakerError& err) {
-            spdlog::error("[ShutdownWidget] Printer shutdown failed: {} — proceeding with screen anyway",
-                          err.message);
-            ToastManager::instance().show(ToastSeverity::ERROR,
-                                          lv_tr("Shutdown failed"), 6000);
-            if (tok.expired()) return;
-            tok.defer([this]() { execute_screen_shutdown(); });
-        });
-}
-
-void ShutdownWidget::execute_both_reboot() {
-    spdlog::info("[ShutdownWidget] Executing both reboot — printer first, screen on ack");
-    auto tok = lifetime_.token();
-    MoonrakerAPI* api = api_;
-    api_->machine_reboot(
-        [this, tok, api]() {
-            spdlog::info("[ShutdownWidget] Printer reboot ack'd — now rebooting screen");
-            schedule_host_down_verification(api, /*is_reboot=*/true);
-            if (tok.expired()) return;
-            tok.defer([this]() { execute_screen_reboot(); });
-        },
-        [this, tok](const MoonrakerError& err) {
-            spdlog::error("[ShutdownWidget] Printer reboot failed: {} — proceeding with screen anyway",
-                          err.message);
-            ToastManager::instance().show(ToastSeverity::ERROR,
-                                          lv_tr("Reboot failed"), 6000);
-            if (tok.expired()) return;
-            tok.defer([this]() { execute_screen_reboot(); });
-        });
+    modal.show(parent_screen);
 }
 
 void ShutdownWidget::shutdown_clicked_cb(lv_event_t* e) {
