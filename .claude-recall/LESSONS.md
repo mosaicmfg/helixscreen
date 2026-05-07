@@ -66,7 +66,7 @@
 
 ### [L051] [*----|*----] LVGL timer lifetime safety
 - **Uses**: 1 | **Velocity**: 0.125 | **Learned**: 2026-01-08 | **Last**: 2026-03-28 | **Category**: gotcha | **Type**: constraint
-> `lv_timer_create` with `this`/object as user_data needs an alive_guard wrapper. Check the guard before dereferencing — the object can be destroyed during the timer delay.
+> `lv_timer_create` cb fires after the owning object may be destroyed. Don't pass raw `this` as user_data. Use `AsyncLifetimeGuard::token()` (CLAUDE.md § Threading): capture `tok` in the timer cb, call `tok.defer([this](){ ... })` so the body only runs if `this` is still alive. Older `alive_guard` / `weak_ptr<bool>` patterns are deprecated.
 
 ### [L052] [***--|****-] Tag thread/network tests as [slow] to prevent hangs
 - **Uses**: 25 | **Velocity**: 2 | **Learned**: 2026-01-09 | **Last**: 2026-04-18 | **Category**: gotcha | **Type**: constraint
@@ -164,7 +164,7 @@
 
 ### [L075] [*----|*----] Validate lv_obj before accessing children
 - **Uses**: 1 | **Velocity**: 0.0625 | **Learned**: 2026-02-22 | **Last**: 2026-02-22 | **Category**: gotcha | **Type**: constraint
-> Before `lv_obj_find_by_name()` / `lv_obj_get_child()` / `lv_obj_get_child_count()` on a cached pointer: null-check + alive guard. NOT `lv_obj_is_valid()` (O(n), stack-overflows on Pi — see [L076]). Use `safe_delete_obj()` to null pointers post-delete. Async cbs: alive guard for panel destruction.
+> Before `lv_obj_find_by_name()` / `lv_obj_get_child()` / `lv_obj_get_child_count()` on a cached pointer: null-check + `AsyncLifetimeGuard` token check. NOT `lv_obj_is_valid()` (O(n), stack-overflows on Pi — see [L076]). Use `safe_delete_obj()` to null pointers post-delete. For async cbs detecting panel destruction: capture `tok = lifetime_.token()` and gate with `tok.defer(...)` (CLAUDE.md § Threading); older `weak_ptr<bool>` alive-guard pattern is deprecated.
 
 ### [L076] [***--|***--] NEVER use lv_obj_is_valid() in hot paths or async guards
 - **Uses**: 13 | **Velocity**: 1.375 | **Learned**: 2026-02-22 | **Last**: 2026-04-27 | **Category**: gotcha
