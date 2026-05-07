@@ -61,13 +61,35 @@ setup() {
     local kiauh_ext="$BATS_TEST_TMPDIR/fakehome/kiauh/kiauh/extensions"
     mkdir -p "$kiauh_ext"
 
-    HOME="$BATS_TEST_TMPDIR/fakehome" run install_kiauh_extension "yes"
+    HOME="$BATS_TEST_TMPDIR/fakehome" run install_kiauh_extension ""
     [ "$status" -eq 0 ]
 
     # Verify all 3 files were copied
     [ -f "$kiauh_ext/helixscreen/__init__.py" ]
     [ -f "$kiauh_ext/helixscreen/helixscreen_extension.py" ]
     [ -f "$kiauh_ext/helixscreen/metadata.json" ]
+}
+
+@test "install_kiauh_extension is a no-op when target files match source" {
+    local kiauh_ext="$BATS_TEST_TMPDIR/fakehome/kiauh/kiauh/extensions"
+    mkdir -p "$kiauh_ext/helixscreen"
+
+    # Pre-seed target with identical copies of the source files
+    cp "$INSTALL_DIR/scripts/kiauh/helixscreen/__init__.py" "$kiauh_ext/helixscreen/"
+    cp "$INSTALL_DIR/scripts/kiauh/helixscreen/helixscreen_extension.py" "$kiauh_ext/helixscreen/"
+    cp "$INSTALL_DIR/scripts/kiauh/helixscreen/metadata.json" "$kiauh_ext/helixscreen/"
+    local before_init_mtime
+    before_init_mtime=$(stat -c %Y "$kiauh_ext/helixscreen/__init__.py")
+
+    sleep 1  # mtime resolution is 1s on most filesystems
+    HOME="$BATS_TEST_TMPDIR/fakehome" run install_kiauh_extension ""
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already up to date"* ]]
+
+    # mtime unchanged → file was not rewritten
+    local after_init_mtime
+    after_init_mtime=$(stat -c %Y "$kiauh_ext/helixscreen/__init__.py")
+    [ "$before_init_mtime" = "$after_init_mtime" ]
 }
 
 @test "install_kiauh_extension updates existing silently" {
@@ -85,32 +107,32 @@ setup() {
     ! grep -q "^old$" "$kiauh_ext/helixscreen/__init__.py"
 }
 
-@test "install_kiauh_extension installs fresh when kiauh_mode is empty (default-on)" {
+@test "install_kiauh_extension installs fresh when skip flag is empty (default-on)" {
     local kiauh_ext="$BATS_TEST_TMPDIR/fakehome/kiauh/kiauh/extensions"
     mkdir -p "$kiauh_ext"
 
     HOME="$BATS_TEST_TMPDIR/fakehome" run install_kiauh_extension ""
     [ "$status" -eq 0 ]
-    # No prompt, no opt-out — extension should be installed
+    # No opt-out — extension should be installed
     [ -f "$kiauh_ext/helixscreen/__init__.py" ]
     [ -f "$kiauh_ext/helixscreen/helixscreen_extension.py" ]
     [ -f "$kiauh_ext/helixscreen/metadata.json" ]
 }
 
-@test "--kiauh yes forces install without prompt" {
+@test "install_kiauh_extension installs when skip flag is false" {
     local kiauh_ext="$BATS_TEST_TMPDIR/fakehome/kiauh/kiauh/extensions"
     mkdir -p "$kiauh_ext"
 
-    HOME="$BATS_TEST_TMPDIR/fakehome" run install_kiauh_extension "yes"
+    HOME="$BATS_TEST_TMPDIR/fakehome" run install_kiauh_extension "false"
     [ "$status" -eq 0 ]
     [ -f "$kiauh_ext/helixscreen/__init__.py" ]
 }
 
-@test "--kiauh no skips install without prompt" {
+@test "--skip-kiauh-registration skips install" {
     local kiauh_ext="$BATS_TEST_TMPDIR/fakehome/kiauh/kiauh/extensions"
     mkdir -p "$kiauh_ext"
 
-    HOME="$BATS_TEST_TMPDIR/fakehome" run install_kiauh_extension "no"
+    HOME="$BATS_TEST_TMPDIR/fakehome" run install_kiauh_extension "true"
     [ "$status" -eq 0 ]
     # Extension dir should NOT have been created
     [ ! -d "$kiauh_ext/helixscreen" ]

@@ -35,14 +35,14 @@ detect_kiauh_dir() {
 }
 
 # Install KIAUH extension for HelixScreen
-# Args: $1 = kiauh_mode ("yes", "no", or "" for default-install)
+# Args: $1 = skip flag ("true" to skip, anything else to install)
 #
 # Default behavior: if KIAUH is detected, install the extension automatically.
-# Pass --kiauh no to opt out. The interactive prompt was removed because it
-# was easy to miss in the curl|sh output stream and read-from-/dev/tty is
-# unreliable across SSH/sudo contexts.
+# Pass --skip-kiauh-registration to opt out. KIAUH itself sets this flag when
+# it invokes install.sh from its own extension wrapper, since the extension
+# files are already in place at that point.
 install_kiauh_extension() {
-    local kiauh_mode="${1:-}"
+    local skip="${1:-false}"
     local kiauh_ext_dir
     local src_dir="$INSTALL_DIR/scripts/kiauh/helixscreen"
 
@@ -53,8 +53,8 @@ install_kiauh_extension() {
         return 0
     fi
 
-    if [ "$kiauh_mode" = "no" ]; then
-        log_info "KIAUH detected at $kiauh_ext_dir — skipping extension (--kiauh no)"
+    if [ "$skip" = "true" ]; then
+        log_info "KIAUH detected at $kiauh_ext_dir — skipping extension (--skip-kiauh-registration)"
         return 0
     fi
 
@@ -74,6 +74,18 @@ install_kiauh_extension() {
         log_warn "    for f in __init__.py helixscreen_extension.py metadata.json; do"
         log_warn "      curl -sLO https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/kiauh/helixscreen/\$f"
         log_warn "    done"
+        return 0
+    fi
+
+    # Already-installed-and-identical: don't touch a working tree
+    if [ "$is_update" = true ] \
+        && [ -f "$target_dir/__init__.py" ] \
+        && [ -f "$target_dir/helixscreen_extension.py" ] \
+        && [ -f "$target_dir/metadata.json" ] \
+        && cmp -s "$src_dir/__init__.py" "$target_dir/__init__.py" \
+        && cmp -s "$src_dir/helixscreen_extension.py" "$target_dir/helixscreen_extension.py" \
+        && cmp -s "$src_dir/metadata.json" "$target_dir/metadata.json"; then
+        log_info "KIAUH extension already up to date at $target_dir"
         return 0
     fi
 

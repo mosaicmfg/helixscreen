@@ -29,7 +29,8 @@ usage() {
     echo "                 including config and caches (asks for confirmation)"
     echo "  --version VER  Install specific version (default: latest)"
     echo "  --local FILE   Install from local archive (.zip or .tar.gz, skip download)"
-    echo "  --kiauh no     Skip KIAUH extension registration (default: install if KIAUH detected)"
+    echo "  --skip-kiauh-registration"
+    echo "                 Skip KIAUH extension registration (default: install if KIAUH detected)"
     echo "  --help         Show this help message"
     echo ""
     echo "Examples:"
@@ -86,7 +87,7 @@ main() {
     clean_mode=false
     version=""
     local_tarball=""
-    kiauh_mode=""
+    skip_kiauh_registration=false
 
     # Parse arguments
     while [ $# -gt 0 ]; do
@@ -119,13 +120,9 @@ main() {
                 local_tarball="$2"
                 shift 2
                 ;;
-            --kiauh)
-                if [ -z "${2:-}" ]; then
-                    log_error "--kiauh requires yes|no"
-                    exit 1
-                fi
-                kiauh_mode="$2"
-                shift 2
+            --skip-kiauh-registration)
+                skip_kiauh_registration=true
+                shift
                 ;;
             --help|-h)
                 usage
@@ -251,7 +248,7 @@ main() {
     install_platform_hooks
 
     # Install KIAUH extension if KIAUH is detected
-    install_kiauh_extension "$kiauh_mode" || true
+    install_kiauh_extension "$skip_kiauh_registration" || true
 
     # K1: ensure SSH (dropbear) is running — recovers from #535 where disabling
     # S99start_app also killed SSH. Runs on both fresh install and self-update.

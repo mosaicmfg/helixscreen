@@ -13,11 +13,11 @@ curl -sSL https://raw.githubusercontent.com/prestonbrown/helixscreen/main/script
 ```
 
 If KIAUH is detected at `~/kiauh/kiauh/extensions/`, the installer automatically
-offers to register the HelixScreen KIAUH extension. Answer `Y` at the prompt,
-or pass `--kiauh yes` / `--kiauh no` to skip the prompt:
+registers the HelixScreen KIAUH extension. Pass `--skip-kiauh-registration` to
+opt out:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh | sh -s -- --kiauh yes
+curl -sSL https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh | sh -s -- --skip-kiauh-registration
 ```
 
 After install, restart KIAUH (`~/kiauh/kiauh.sh`) and HelixScreen will appear

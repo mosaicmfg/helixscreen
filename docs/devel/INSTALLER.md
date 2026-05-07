@@ -282,7 +282,7 @@ During installation, `install_kiauh_extension()` in `lib/installer/kiauh.sh`:
 1. Calls `detect_kiauh_dir()` to find `~/kiauh/kiauh/extensions/` or `/home/*/kiauh/kiauh/extensions/`
 2. If KIAUH is found and extension source files exist in the release package (`$INSTALL_DIR/scripts/kiauh/helixscreen/`)
 3. Copies `__init__.py`, `helixscreen_extension.py`, and `metadata.json` to the KIAUH extensions directory
-4. On new installs, prompts interactively (or uses `--kiauh yes/no`)
+4. Installs by default when KIAUH is detected; `--skip-kiauh-registration` opts out
 5. On updates, silently updates the extension files
 
 ### Updating the KIAUH Extension
