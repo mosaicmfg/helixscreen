@@ -21,11 +21,21 @@ _INSTALL_PATHS = [
 ]
 
 
+def _has_helix_screen(path: Path) -> bool:
+    # Releases ship the binary at <install>/bin/helix-screen; very old
+    # pre-1.0 installs put it at the top level. Accept either so update/
+    # remove don't false-negative.
+    return (
+        path.joinpath("bin", "helix-screen").exists()
+        or path.joinpath("helix-screen").exists()
+    )
+
+
 def find_install_dir() -> Optional[Path]:
     """Find the actual HelixScreen install directory."""
     for path in _INSTALL_PATHS:
         try:
-            if path.exists() and path.joinpath("helix-screen").exists():
+            if path.exists() and _has_helix_screen(path):
                 return path
         except PermissionError:
             continue
@@ -35,7 +45,7 @@ def find_install_dir() -> Optional[Path]:
         try:
             for home_dir in home.iterdir():
                 candidate = home_dir.joinpath("helixscreen")
-                if candidate.exists() and candidate.joinpath("helix-screen").exists():
+                if candidate.exists() and _has_helix_screen(candidate):
                     return candidate
         except PermissionError:
             pass

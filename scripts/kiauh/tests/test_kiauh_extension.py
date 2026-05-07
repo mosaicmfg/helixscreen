@@ -270,11 +270,30 @@ class TestFindInstallDir(unittest.TestCase):
 
     def test_find_install_dir_found(self):
         """_find_install_dir() returns correct path when install exists."""
-        # Mock Path.exists and joinpath to simulate an install at ~/helixscreen
+        # Mock Path.exists to simulate an install at ~/helixscreen with the
+        # standard release layout (binary under bin/).
         expected_path = Path.home() / "helixscreen"
 
         def fake_exists(self_path):
-            # The function checks path.exists() and path.joinpath("helix-screen").exists()
+            # The function checks path.exists() and _has_helix_screen(path),
+            # which probes <path>/bin/helix-screen (preferred) or <path>/helix-screen.
+            return str(self_path) in (
+                str(expected_path),
+                str(expected_path / "bin" / "helix-screen"),
+            )
+
+        with patch.object(Path, "exists", fake_exists):
+            with patch.object(Path, "is_dir", return_value=False):
+                result = self.module._find_install_dir()
+
+        self.assertEqual(result, expected_path)
+
+    def test_find_install_dir_legacy_layout(self):
+        """_find_install_dir() also accepts pre-1.0 layout with binary at top level."""
+        expected_path = Path.home() / "helixscreen"
+
+        def fake_exists(self_path):
+            # Legacy: only <path>/helix-screen exists, no bin/ subdir.
             return str(self_path) in (
                 str(expected_path),
                 str(expected_path / "helix-screen"),
@@ -311,11 +330,18 @@ class TestInitNoSideEffects(unittest.TestCase):
         except Exception as e:
             self.fail(f"__init__.py import caused side effect that raised: {e}")
 
-        # Verify it only defines expected constants (no classes, no functions
-        # that do work)
+        # The original bug was code at *module scope* that touched the
+        # filesystem at import time. Defining a helper function is fine —
+        # KIAUH only invokes it on user action. Skip re-exported imports
+        # (typing.Optional is callable on Python 3.12+) and our intentional
+        # find_install_dir helper.
+        ALLOWED_DEFINED = {"find_install_dir"}
         public_attrs = [a for a in dir(module) if not a.startswith("_")]
         for attr in public_attrs:
             obj = getattr(module, attr)
+            from_this_module = getattr(obj, "__module__", None) == module.__name__
+            if not from_this_module or attr in ALLOWED_DEFINED:
+                continue
             self.assertFalse(
                 callable(obj) and not isinstance(obj, type) and not isinstance(obj, Path),
                 f"__init__.py defines callable '{attr}' which may cause side effects",
