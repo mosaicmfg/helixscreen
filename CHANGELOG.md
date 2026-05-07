@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.99.57] - 2026-05-07
+
+### Added
+
+- **Shutdown / Reboot rows in Advanced settings** — adds a POWER section to the Advanced panel with Shutdown and Reboot rows that open the same ShutdownModal the home-panel power widget uses. Single-/dual-host scope, Moonraker-disconnect → local `SystemPower` fallback, and the deferred screen-on-ack ordering for the *Both* flow are preserved. The widget's `handle_click` and its six `execute_*` methods are extracted into a free `helix::show_shutdown_dialog()` helper so the widget and the panel rows share one wiring instead of duplicating it.
+
+### Fixed
+
+- **Multi-tool prints sliced to a non-T0 tool no longer render in T0's color** — in streaming mode (large gcode files on memory-constrained hosts), `GCodeStreamingController` parsed each layer with a fresh `GCodeParser`, so the `T<N>` issued in the file's prologue was invisible to per-layer parses. Every segment was tagged `tool_index=0` and resolved to `palette[0]`. On a Voron + AFC setup with black ASA in lane 1 and a print sliced to T3 (white PLA), this manifested as a solid-black render that looked like *no color applied* but was really *every segment tagged with the wrong tool*. `GCodeLayerIndex::build_from_file` now records the first standalone T-command during its single-pass scan; `GCodeParser::set_active_tool_index()` seeds the parser before each per-layer parse; and the `extruder_colour` single-color fallback now uses the initial tool's color instead of `palette[0]`. Also drops the `!= 0x000000` clobber in `apply_ams_tool_colors` that was wrongly treating legitimately-black filament as *unset*.
+- **KIAUH extension index** — KIAUH 6.2.x added *Klipper Adaptive Meshing Purging* at index 14, so the helixscreen extension was skipped with a duplicate-index warning on load. Bumped to 15, then to 99 to dodge any further upstream collisions.
+- **KIAUH update / remove now finds the installed binary** — `find_install_dir()` only probed `<dir>/helix-screen`, but releases ship the binary at `<dir>/bin/helix-screen`, so update and remove always reported *helixscreen not installed* on a working install. Probes the release path first, falls back to the top-level for any pre-1.0 layout.
+
+### Changed
+
+- **Installer flag: `--skip-kiauh-registration` replaces `--kiauh yes|no`** — the old flag read awkwardly when KIAUH passed `--kiauh no` to invoke install.sh. Single boolean is cleaner. `install_kiauh_extension` is also now idempotent: when target files match the source byte-for-byte, it logs *already up to date* and preserves mtimes instead of needlessly rewriting files KIAUH already owns at the right version. Bats test added for the no-op path.
+
 ## [0.99.56] - 2026-05-06
 
 The headline is the **structural fix** for the cluster:pstat-async-delete crash family — v0.99.55 already closed the render-thread half (#929), and v0.99.56 closes the other: an **array-backed event stack** that replaces LVGL's linked-list `event_head` with a global array, eliminating the wild-pointer dereference path that's been the dominant production crash signature for weeks (#793/#840/#871/#878/#880/#906). Plus a defensive NULL-guard layer on `lv_obj_event.c` for the new VHTR49QJ signature, and a suppress-the-dialog fix for truncated crash files that were generating useless bundle submissions. Round it out with a **K2 phase-tracker fix** that stops mis-flagging BED_MESH on profile-load echoes, a **theme-init DPI fix** for BTT CB1 / sun4i framebuffers reporting bogus `width_mm`, and a **label-printer font-fit fix** for longer vendor strings on continuous tape.
@@ -3522,6 +3538,7 @@ Initial tagged release. Foundation for all subsequent development.
 - Automated GitHub Actions release pipeline
 - One-liner installation script with platform auto-detection
 
+[0.99.57]: https://github.com/prestonbrown/helixscreen/compare/v0.99.56...v0.99.57
 [0.99.56]: https://github.com/prestonbrown/helixscreen/compare/v0.99.55...v0.99.56
 [0.99.55]: https://github.com/prestonbrown/helixscreen/compare/v0.99.54...v0.99.55
 [0.99.54]: https://github.com/prestonbrown/helixscreen/compare/v0.99.53...v0.99.54
