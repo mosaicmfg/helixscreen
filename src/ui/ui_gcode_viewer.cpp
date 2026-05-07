@@ -2203,7 +2203,7 @@ bool ui_gcode_viewer_apply_ams_tool_colors(lv_obj_t* obj) {
     for (size_t tool = 0; tool < tool_map.size(); ++tool) {
         int slot_index = tool_map[tool];
         const auto* slot = info.get_slot_global(slot_index);
-        if (slot && slot->color_rgb != AMS_DEFAULT_SLOT_COLOR && slot->color_rgb != 0x000000) {
+        if (slot && slot->color_rgb != AMS_DEFAULT_SLOT_COLOR) {
             tool_colors.push_back(slot->color_rgb);
             all_default = false;
             spdlog::debug("[GCode Viewer] Tool {} -> slot {} -> color 0x{:06X}", tool, slot_index,

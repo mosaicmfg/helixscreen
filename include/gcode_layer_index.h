@@ -47,6 +47,7 @@ struct LayerIndexStats {
     size_t travel_moves{0};     ///< Count of G0/G1 without extrusion
     double build_time_ms{0.0};  ///< Time to build index
     std::string filament_color; ///< Filament color hex (e.g., "#26A69A") from metadata
+    int initial_tool_index{-1}; ///< First T-command seen in the file (-1 = none)
 };
 
 /**

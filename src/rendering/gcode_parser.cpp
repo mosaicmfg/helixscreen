@@ -109,6 +109,8 @@ void GCodeParser::reset() {
     object_name_table_.clear();
     is_absolute_positioning_ = true;
     is_absolute_extrusion_ = true;
+    current_tool_index_ = 0;
+    initial_tool_index_ = -1;
     layers_.clear();
     objects_.clear();
     global_bounds_ = AABB();
@@ -798,9 +800,18 @@ void GCodeParser::parse_extruder_color_metadata(const std::string& line) {
     spdlog::debug("[GCode Parser] Parsed {} extruder colors from metadata: [{}]",
                   tool_color_palette_.size(), palette_str);
 
-    // Set metadata_filament_color_ to the first valid color (for single-color rendering fallback)
-    if (!tool_color_palette_.empty() && !tool_color_palette_[0].empty()) {
-        metadata_filament_color_ = tool_color_palette_[0];
+    // Set metadata_filament_color_ to the active tool's color (for single-color
+    // rendering fallback). Prefer the first T command seen — picking palette[0]
+    // unconditionally would render a print on T3 with T0's color, which can be
+    // wildly wrong on multi-material setups.
+    int fallback_tool = (initial_tool_index_ >= 0 &&
+                         initial_tool_index_ < static_cast<int>(tool_color_palette_.size()) &&
+                         !tool_color_palette_[initial_tool_index_].empty())
+                            ? initial_tool_index_
+                            : 0;
+    if (fallback_tool < static_cast<int>(tool_color_palette_.size()) &&
+        !tool_color_palette_[fallback_tool].empty()) {
+        metadata_filament_color_ = tool_color_palette_[fallback_tool];
     }
 }
 
@@ -832,6 +843,16 @@ void GCodeParser::parse_tool_change_command(const std::string& line) {
     int tool_num = std::stoi(tool_str);
 
     current_tool_index_ = tool_num;
+    if (initial_tool_index_ < 0) {
+        initial_tool_index_ = tool_num;
+        // If palette already parsed, retroactively pick the active tool's color
+        // as the single-color fallback (used when per-tool data isn't available
+        // to the renderer at draw time).
+        if (tool_num >= 0 && tool_num < static_cast<int>(tool_color_palette_.size()) &&
+            !tool_color_palette_[tool_num].empty()) {
+            metadata_filament_color_ = tool_color_palette_[tool_num];
+        }
+    }
     spdlog::trace("[GCode Parser] Tool change: T{}", tool_num);
 }
 

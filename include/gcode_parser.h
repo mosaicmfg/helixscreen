@@ -281,6 +281,23 @@ class GCodeParser {
      */
     void reset();
 
+    /**
+     * @brief Seed the active tool index before parsing a chunk.
+     *
+     * Streaming mode parses each layer with a fresh parser, so any T-command
+     * issued in the file's prologue is invisible to per-layer parses. Callers
+     * that already scanned for the initial tool (e.g. GCodeLayerIndex) use
+     * this to seed the parser so segments are tagged with the correct tool.
+     */
+    void set_active_tool_index(int tool) {
+        if (tool >= 0) {
+            current_tool_index_ = tool;
+            if (initial_tool_index_ < 0) {
+                initial_tool_index_ = tool;
+            }
+        }
+    }
+
     // Progress tracking
 
     /**
@@ -435,6 +452,7 @@ class GCodeParser {
 
     // Multi-color tool tracking
     int current_tool_index_{0};                   ///< Active extruder/tool (0-indexed)
+    int initial_tool_index_{-1};                  ///< First T command seen (-1 = none)
     std::vector<std::string> tool_color_palette_; ///< Hex colors per tool: ["#ED1C24", ...]
     bool in_wipe_tower_{false};                   ///< True when inside wipe tower section
 

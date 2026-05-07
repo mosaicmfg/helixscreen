@@ -239,6 +239,27 @@ bool GCodeLayerIndex::build_from_file(const std::string& filepath) {
             }
         }
 
+        // Track the first standalone T-command — streaming mode parses each
+        // layer with a fresh GCodeParser, so without this, segments after a
+        // PRINT_START toolchange in the prologue render as T0 (#776 / black-fill
+        // bug for prints sliced to a non-T0 tool).
+        if (stats_.initial_tool_index < 0 && line_len >= 2 && line[0] == 'T') {
+            size_t i = 1;
+            while (i < line_len && line[i] >= '0' && line[i] <= '9') {
+                ++i;
+            }
+            if (i > 1 && (i == line_len || line[i] == ' ' || line[i] == '\t' ||
+                          line[i] == '\r' || line[i] == ';')) {
+                try {
+                    stats_.initial_tool_index = std::stoi(line.substr(1, i - 1));
+                    spdlog::debug("[LayerIndex] Initial tool: T{}",
+                                  stats_.initial_tool_index);
+                } catch (...) {
+                    // Malformed T-line — leave as -1 and keep scanning
+                }
+            }
+        }
+
         // Check for movement commands
         if (is_movement_command(line.c_str(), line_len)) {
             float z;

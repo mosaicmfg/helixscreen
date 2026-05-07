@@ -634,6 +634,11 @@ std::vector<ToolpathSegment> GCodeStreamingController::load_layer(size_t layer_i
 
     // Parse the bytes line by line
     GCodeParser parser;
+    // Seed with the initial tool from the index. Layer chunks don't include
+    // the file prologue, so a fresh parser would default to T0 and tag every
+    // segment with the wrong tool index — rendering a T3-only print in T0's
+    // color.
+    parser.set_active_tool_index(index_.get_stats().initial_tool_index);
     std::istringstream stream(std::string(bytes.begin(), bytes.end()));
     std::string line;
 
