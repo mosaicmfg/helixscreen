@@ -1222,8 +1222,12 @@ static void ui_gcode_viewer_load_file_async(lv_obj_t* obj, const char* file_path
     crash_handler::breadcrumb::note("layer_renderer", "load_reset_pre");
     st->layer_renderer_2d_.reset();
     crash_handler::breadcrumb::note("layer_renderer", "load_reset_post");
+    crash_handler::breadcrumb::note("layer_renderer", "stream_reset_pre");
     st->streaming_controller_.reset();
+    crash_handler::breadcrumb::note("layer_renderer", "stream_reset_post");
+    crash_handler::breadcrumb::note("layer_renderer", "file_reset_pre");
     st->gcode_file.reset();
+    crash_handler::breadcrumb::note("layer_renderer", "file_reset_post");
 
     // =========================================================================
     // PHASE 0: Streaming Mode Detection (Phase 6)
