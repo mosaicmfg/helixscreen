@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.99.58] - 2026-05-08
+
+### Fixed
+
+- **Silent Moonraker request loss during connect/reconnect (#909)** — libhv's `WebSocketClient::send` only checks that the channel exists, not that the WS protocol is past `CONNECTING` / `WS_UPGRADING` / `RECONNECTING`. A send issued in those windows wrote WS frame bytes onto a stream Moonraker treats as still-handshaking, so the bytes were silently dropped and the request sat in `MoonrakerRequestTracker::pending_requests_` until the 60s timeout — or forever, if the calling panel had already cleared its in-flight flag. Surfaced as the K2 Plus startup race where `PrintSelectPanel::refresh_files` issued `get_directory` before `onopen` and the panel stuck on its refresh spinner for hours with no timeout warning. `MoonrakerClient::ready_to_send()` now gates all four `send_jsonrpc` overloads on `connection_state_ == CONNECTED`; the 5-arg overload fires the caller's `error_cb` synchronously with `CONNECTION_LOST` so panels see immediate failure instead of silence. Adds debug-visibility instrumentation to the tracker's timeout sweep so future regressions surface as a stuck queue in bundles.
+- **Background Moonraker/HTTP callbacks now marshal LVGL work to the main thread (#933)** — several success/error callbacks in `PrintStatusPanel` (gcode-for-viewing download, reprint error path) and `CrashReportModal::send_with_bundle` captured a lifetime token and checked `tok.expired()` but ran the body inline on the WebSocket / HttpExecutor worker thread. Bodies that touched LVGL widgets (`safe_delete`, `lv_qrcode_create`, modal `hide`, `ui_set_button_enabled`) raced the render loop and produced the L081-cluster heap corruption surfacing as SIGSEGV in `get_prop_core` / `layout_update_core` the next frame. All affected callbacks now wrap their LVGL touches in `tok.defer(...)` so the work runs on the main thread. Telemetry: WKC5J9SK (ad5x v0.99.56), B4SG5M79 (k1 v0.99.53).
+
 ## [0.99.57] - 2026-05-07
 
 ### Added
@@ -3538,6 +3545,7 @@ Initial tagged release. Foundation for all subsequent development.
 - Automated GitHub Actions release pipeline
 - One-liner installation script with platform auto-detection
 
+[0.99.58]: https://github.com/prestonbrown/helixscreen/compare/v0.99.57...v0.99.58
 [0.99.57]: https://github.com/prestonbrown/helixscreen/compare/v0.99.56...v0.99.57
 [0.99.56]: https://github.com/prestonbrown/helixscreen/compare/v0.99.55...v0.99.56
 [0.99.55]: https://github.com/prestonbrown/helixscreen/compare/v0.99.54...v0.99.55
