@@ -2869,12 +2869,16 @@ void Application::init_action_prompt() {
                         if (j.contains("values")) {
                             values = j["values"];
                         }
+#if HELIX_HAS_CFS
                         if (auto friendly =
                                 helix::printer::CfsErrorDecoder::lookup_message_with_values(
                                     out_code, values)) {
                             text = friendly->first + ". " + friendly->second;
                             return;
                         }
+#else
+                        (void)values;
+#endif
                     }
                     if (j.contains("msg") && j["msg"].is_string()) {
                         text = j["msg"].get<std::string>();

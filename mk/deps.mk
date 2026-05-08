@@ -371,7 +371,11 @@ else ifeq ($(UNAME_S),Darwin)
 		CFLAGS="$(MACOS_DEPLOYMENT_TARGET)" \
 		CXXFLAGS="$(MACOS_DEPLOYMENT_TARGET)" \
 		./configure --with-http-client
-	$(Q)MACOSX_DEPLOYMENT_TARGET=$(MACOS_MIN_VERSION) $(MAKE) -C $(LIBHV_DIR) LDFLAGS= libhv
+	# LIBHV_TARGET_TYPE=STATIC skips the dylib link, which would otherwise fail
+	# because libhv's Makefile doesn't pass `-framework CoreFoundation -framework
+	# Security` (needed by ssl/appletls.o). We only consume libhv as a static
+	# archive anyway, so the dylib is just dead weight that breaks the build.
+	$(Q)MACOSX_DEPLOYMENT_TARGET=$(MACOS_MIN_VERSION) $(MAKE) -C $(LIBHV_DIR) LDFLAGS= LIBHV_TARGET_TYPE=STATIC libhv
 else
 	$(Q)cd $(LIBHV_DIR) && ./configure --with-http-client $(if $(filter yes,$(ENABLE_SSL)),--with-openssl)
 	# LDFLAGS= override: see cross-compile branch above for rationale. Critical
