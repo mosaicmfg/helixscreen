@@ -267,9 +267,27 @@ void MoonrakerRequestTracker::check_timeouts(
     std::vector<TimeoutInfo> timed_out;
 
     // Phase 1: Find timed out requests and copy data (under lock)
+    size_t pending_count = 0;
+    uint32_t oldest_age_ms = 0;
+    std::string oldest_method;
     {
         std::lock_guard<std::mutex> lock(requests_mutex_);
         std::vector<uint64_t> timed_out_ids;
+
+        // Visibility instrumentation for #909 — surface the size of
+        // pending_requests_ + the oldest age periodically. If a request is
+        // silently lost (libhv state-race, malformed WS frame dropped by
+        // Moonraker), it sits here until is_timed_out() trips. Operators can
+        // grep this line in debug bundles to confirm whether the timer
+        // machinery is ticking and whether the queue is draining.
+        pending_count = pending_requests_.size();
+        for (const auto& [id, request] : pending_requests_) {
+            uint32_t age = request.get_elapsed_ms();
+            if (age > oldest_age_ms) {
+                oldest_age_ms = age;
+                oldest_method = request.method;
+            }
+        }
 
         for (auto& [id, request] : pending_requests_) {
             if (request.is_timed_out()) {
@@ -311,6 +329,20 @@ void MoonrakerRequestTracker::check_timeouts(
             pending_requests_.erase(id);
         }
     } // Lock released here
+
+    // Periodic pending-count log when the queue is non-empty — debug at any
+    // age, escalated to warn if a single request has been pending longer than
+    // 30 s (well past the 60 s default but a leading indicator that the
+    // timer isn't draining and the queue is stuck — #909).
+    if (pending_count > 0) {
+        if (oldest_age_ms > 30000) {
+            spdlog::warn("[Request Tracker] {} pending request(s); oldest '{}' age {}ms",
+                         pending_count, oldest_method, oldest_age_ms);
+        } else {
+            spdlog::debug("[Request Tracker] {} pending request(s); oldest '{}' age {}ms",
+                          pending_count, oldest_method, oldest_age_ms);
+        }
+    }
 
     // Phase 2: Emit events and invoke callbacks outside lock
     // (safe - event handlers and callbacks can call send without deadlock)

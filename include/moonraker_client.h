@@ -638,6 +638,24 @@ class MoonrakerClient : public hv::WebSocketClient, public IMoonrakerClient {
     // Discovery sequence (protected to allow mock access to hardware vectors)
     MoonrakerDiscoverySequence discovery_;
 
+    /**
+     * @brief Gate for outbound sends — true only when connection_state_ ==
+     *        CONNECTED.
+     *
+     * libhv's WebSocketClient::send only checks `channel != NULL`, NOT the WS
+     * protocol state. Sends issued during CONNECTING / WS_UPGRADING /
+     * RECONNECTING write WS frame bytes onto a stream that's not in WS-frame
+     * phase — Moonraker silently drops the malformed bytes and the request
+     * stalls indefinitely (#909).
+     *
+     * Virtual so MoonrakerClientMock can return true unconditionally without
+     * having to drive connection_state_ through tests.
+     *
+     * @param method RPC method name (used for diagnostic logging only)
+     * @return true if it is safe to issue a send right now
+     */
+    virtual bool ready_to_send(const char* method) const;
+
   private:
     // Request tracker (pending requests, timeouts, response routing)
     MoonrakerRequestTracker tracker_;

@@ -933,11 +933,39 @@ bool MoonrakerClient::unregister_method_callback(const std::string& method,
     return true;
 }
 
+// libhv's WebSocketClient::send only checks `channel != NULL`, NOT the WS
+// protocol state. Sending while the channel exists but state ∈ {CONNECTING,
+// WS_UPGRADING, WS_CLOSED} writes WS frame bytes into the wrong phase of the
+// underlying TCP stream — Moonraker silently drops the malformed bytes and the
+// request sits pending until 60 s timeout (or never, if the panel cleared its
+// in-flight flag and stopped expecting a response). Surfaced as #909 (K2 Plus
+// startup race: get_directory issued before onopen → request lost, panel stuck
+// in refresh_in_flight_ for hours, no timeout warning fired because the timer
+// was scheduled but the request wasn't where the timer expected).
+//
+// Fail fast unless our connection_state_ is CONNECTED — that flag flips ONLY
+// in the onopen callback after WS_OPENED, and back out on disconnect/close.
+bool MoonrakerClient::ready_to_send(const char* method) const {
+    auto state = connection_state_.load(std::memory_order_acquire);
+    if (state == ConnectionState::CONNECTED) {
+        return true;
+    }
+    spdlog::debug("[Moonraker Client] Refusing send for '{}' — connection_state={}",
+                  method ? method : "?", static_cast<int>(state));
+    return false;
+}
+
 int MoonrakerClient::send_jsonrpc(const std::string& method) {
+    if (!ready_to_send(method.c_str())) {
+        return -1;
+    }
     return tracker_.send_fire_and_forget(*this, method, json());
 }
 
 int MoonrakerClient::send_jsonrpc(const std::string& method, const json& params) {
+    if (!ready_to_send(method.c_str())) {
+        return -1;
+    }
     return tracker_.send_fire_and_forget(*this, method, params);
 }
 
@@ -951,6 +979,20 @@ RequestId MoonrakerClient::send_jsonrpc(const std::string& method, const json& p
                                         std::function<void(const json&)> success_cb,
                                         std::function<void(const MoonrakerError&)> error_cb,
                                         uint32_t timeout_ms, bool silent) {
+    if (!ready_to_send(method.c_str())) {
+        // Invoke error callback synchronously so callers (panels with
+        // in_flight flags, etc.) see immediate failure instead of a stuck
+        // request that never times out (#909).
+        if (error_cb) {
+            try {
+                error_cb(MoonrakerError::connection_lost(method));
+            } catch (const std::exception& e) {
+                spdlog::error("[Moonraker Client] Pre-send error cb for '{}' threw: {}", method,
+                              e.what());
+            }
+        }
+        return INVALID_REQUEST_ID;
+    }
     return tracker_.send(*this, method, params, success_cb, error_cb, timeout_ms, silent);
 }
 
