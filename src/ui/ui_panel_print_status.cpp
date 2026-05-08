@@ -1437,12 +1437,12 @@ void PrintStatusPanel::handle_reprint_button() {
             // Button will transform back to Cancel mode when state changes to Printing
         },
         [this, token = lifetime_.token()](const MoonrakerError& err) {
-            spdlog::error("[{}] Failed to reprint: {}", get_name(), err.message);
-            NOTIFY_ERROR(lv_tr("Failed to reprint: {}"), err.user_message());
-            // Re-enable button on failure (with lifetime guard)
-            if (token.expired())
-                return;
-            ui_set_button_enabled(btn_cancel_, true);
+            // Runs on libhv WS event loop — marshal LVGL work to main.
+            token.defer("PrintStatusPanel::reprint_err", [this, err]() {
+                spdlog::error("[{}] Failed to reprint: {}", get_name(), err.message);
+                NOTIFY_ERROR(lv_tr("Failed to reprint: {}"), err.user_message());
+                ui_set_button_enabled(btn_cancel_, true);
+            });
         });
 }
 
@@ -2535,78 +2535,66 @@ void PrintStatusPanel::load_gcode_for_viewing(const std::string& filename) {
 
     auto token = lifetime_.token();
 
+    // All four callbacks below fire on background threads — get_file_metadata's
+    // success/error cb runs on libhv's WS event loop, download_file_to_path's
+    // runs on HttpExecutor::slow(). They MUST marshal to the main thread via
+    // tok.defer before touching LVGL widgets, the gcode_viewer state, or the
+    // temp_gcode_path_ member. Pre-fix, the inner success cb called
+    // load_gcode_file → ui_gcode_viewer_load_file_async → safe_delete on the
+    // HTTP worker, racing the main render loop and producing the L081-cluster
+    // heap corruption that surfaces as a SIGSEGV in get_prop_core / layout
+    // (#906 family, WKC5J9SK on v0.99.56 ad5x).
     api_->files().get_file_metadata(
         metadata_filename,
         [this, token, filename, temp_path](const FileMetadata& metadata) {
-            // Abort if panel was destroyed during async operation
-            if (token.expired()) {
-                return;
-            }
-            // Check if 2D streaming rendering is safe for this file size + available RAM
-            // 2D streaming has much lower memory requirements than 3D:
-            // - Layer index: ~24 bytes per layer
-            // - LRU cache: 1MB fixed
-            // - Ghost buffer: display_width * display_height * 4 bytes
-            // - File streams directly to disk (no memory spike during download)
-            if (!helix::is_gcode_2d_streaming_safe(metadata.size)) {
-                auto mem = helix::get_system_memory_info();
-                spdlog::warn(
-                    "[{}] G-code too large for 2D streaming: file={} bytes, available RAM={}MB "
-                    "- using thumbnail only",
-                    get_name(), metadata.size, mem.available_mb());
-                // Revert to thumbnail mode since rendering is not safe
-                show_gcode_viewer(false);
-                return;
-            }
-
-            spdlog::debug("[{}] G-code size {} bytes - safe to render, streaming to disk...",
-                          get_name(), metadata.size);
-
-            // Clean up previous temp file if any
-            if (!temp_gcode_path_.empty() && temp_gcode_path_ != temp_path) {
-                std::remove(temp_gcode_path_.c_str());
-                temp_gcode_path_.clear();
-            }
-
-            // Stream download directly to disk (no memory spike)
-            // For mock mode, this copies from test_gcodes/ directory
-            // For real mode, this streams from Moonraker using libhv's chunked download
-            api_->transfers().download_file_to_path(
-                "gcodes", filename, temp_path,
-                [this, token, temp_path](const std::string& path) {
-                    // Abort if panel was destroyed during download
-                    if (token.expired()) {
-                        return;
-                    }
-                    // Track the temp file for cleanup
-                    temp_gcode_path_ = path;
-
-                    spdlog::debug("[{}] Streamed G-code to disk, loading into viewer: {}",
-                                  get_name(), path);
-
-                    // Load into the viewer widget
-                    load_gcode_file(path.c_str());
-                },
-                [this, token, filename](const MoonrakerError& err) {
-                    // Abort if panel was destroyed during download
-                    if (token.expired()) {
-                        return;
-                    }
-                    spdlog::warn("[{}] Failed to stream G-code for viewing '{}': {}", get_name(),
-                                 filename, err.message);
-                    // Revert to thumbnail mode on download failure
+            token.defer("PrintStatusPanel::gcode_metadata_ok",
+                        [this, filename, temp_path, metadata]() {
+                if (!helix::is_gcode_2d_streaming_safe(metadata.size)) {
+                    auto mem = helix::get_system_memory_info();
+                    spdlog::warn("[{}] G-code too large for 2D streaming: file={} bytes, available "
+                                 "RAM={}MB - using thumbnail only",
+                                 get_name(), metadata.size, mem.available_mb());
                     show_gcode_viewer(false);
-                });
+                    return;
+                }
+
+                spdlog::debug("[{}] G-code size {} bytes - safe to render, streaming to disk...",
+                              get_name(), metadata.size);
+
+                if (!temp_gcode_path_.empty() && temp_gcode_path_ != temp_path) {
+                    std::remove(temp_gcode_path_.c_str());
+                    temp_gcode_path_.clear();
+                }
+
+                auto inner_token = lifetime_.token();
+                api_->transfers().download_file_to_path(
+                    "gcodes", filename, temp_path,
+                    [this, inner_token, temp_path](const std::string& path) {
+                        inner_token.defer("PrintStatusPanel::gcode_download_ok",
+                                          [this, path]() {
+                            temp_gcode_path_ = path;
+                            spdlog::debug("[{}] Streamed G-code to disk, loading into viewer: {}",
+                                          get_name(), path);
+                            load_gcode_file(path.c_str());
+                        });
+                    },
+                    [this, inner_token, filename](const MoonrakerError& err) {
+                        inner_token.defer("PrintStatusPanel::gcode_download_err",
+                                          [this, filename, err]() {
+                            spdlog::warn("[{}] Failed to stream G-code for viewing '{}': {}",
+                                         get_name(), filename, err.message);
+                            show_gcode_viewer(false);
+                        });
+                    });
+            });
         },
         [this, token, filename](const MoonrakerError& err) {
-            // Abort if panel was destroyed during async operation
-            if (token.expired()) {
-                return;
-            }
-            spdlog::debug("[{}] Failed to get G-code metadata for '{}': {} - skipping 3D render",
-                          get_name(), filename, err.message);
-            // Revert to thumbnail mode on metadata fetch failure
-            show_gcode_viewer(false);
+            token.defer("PrintStatusPanel::gcode_metadata_err",
+                        [this, filename, err]() {
+                spdlog::debug("[{}] Failed to get G-code metadata for '{}': {} - skipping 3D render",
+                              get_name(), filename, err.message);
+                show_gcode_viewer(false);
+            });
         },
         true // silent - don't trigger RPC_ERROR event/toast
     );

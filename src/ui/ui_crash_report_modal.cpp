@@ -219,12 +219,13 @@ void CrashReportModal::attempt_delivery() {
     // may not be connected yet and the bundle already has our syslog tail.
 
     auto token = lifetime_.token();
+    // upload_async fires its callback on a detached worker thread —
+    // send_with_bundle calls hide() and creates an lv_qrcode widget, both of
+    // which are LVGL operations that must run on the main thread. Marshal via
+    // token.defer (same anti-pattern that fed the L081 cluster, see
+    // feedback_token_defer_required.md).
     helix::DebugBundleCollector::upload_async(
         options, [this, token](const helix::BundleResult& result) {
-            if (token.expired()) {
-                spdlog::debug("[CrashReportModal] Modal dismissed during bundle upload, dropping");
-                return;
-            }
             std::string share = result.success ? result.share_code : "";
             if (result.success) {
                 spdlog::info("[CrashReportModal] Debug bundle attached: {}", share);
@@ -233,7 +234,8 @@ void CrashReportModal::attempt_delivery() {
                              "(continuing without share_code): {}",
                              result.error_message);
             }
-            send_with_bundle(share);
+            token.defer("CrashReportModal::send_with_bundle",
+                        [this, share]() { send_with_bundle(share); });
         });
 }
 
