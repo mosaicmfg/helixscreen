@@ -279,6 +279,65 @@ KLIPPER_USER=""
 KLIPPER_GROUP=""
 KLIPPER_HOME=""
 
+# Friendly description of the underlying SBC for the user-facing log line.
+# Returns free-text (NOT used for routing). Pi/pi32 covers a long tail of
+# aarch64/armv7l Klipper boxes (Raspberry Pi, BTT CB1, MKS-Pi, QIDI Q2/Plus,
+# generic Armbian) — they all run the same binary, but "Detected: pi" reads
+# as wrong to anyone whose printer says QIDI on the lid. This emits a label
+# based on /proc/device-tree/model, hostname, and home-directory shape so
+# the user sees their own hardware reflected back.
+describe_hardware() {
+    local _model="" _hostname="" _pretty=""
+
+    if [ -r /proc/device-tree/model ]; then
+        _model=$(tr -d '\0' </proc/device-tree/model 2>/dev/null)
+    fi
+    if [ -r /etc/hostname ]; then
+        _hostname=$(cat /etc/hostname 2>/dev/null | tr -d '[:space:]')
+    fi
+    if [ -r /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        _pretty=$(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-${NAME:-}}")
+    fi
+
+    # Device-tree model is the strongest signal when present.
+    case "$_model" in
+        *"Raspberry Pi"*) echo "$_model"; return ;;
+        *"BIGTREETECH"*|*"BTT"*) echo "BIGTREETECH SBC ($_model)"; return ;;
+        *Rockchip*|*"RK3"*|*Allwinner*|*Amlogic*) ;;  # fall through, often too generic alone
+    esac
+
+    # Hostname + user-dir heuristics for boards without a useful DT model.
+    # `linaro-alip` is the Linaro Debian reference rootfs hostname; QIDI
+    # ships it on the Q2 (and likely Plus 4) running Klipper as `mks`.
+    if [ "$_hostname" = "linaro-alip" ] && [ -d "/home/mks" ]; then
+        echo "QIDI-class SBC (likely Q2/Plus, hostname: $_hostname, user: mks)"
+        return
+    fi
+    if [ -d "/home/biqu" ]; then
+        echo "BIGTREETECH Pi/CB1 (user: biqu)"
+        return
+    fi
+    if [ -d "/home/mks" ]; then
+        echo "MKS-branded SBC (user: mks)"
+        return
+    fi
+    if [ -d "/home/pi" ] && [ -z "$_model" ]; then
+        echo "Raspberry Pi (user: pi)"
+        return
+    fi
+
+    if [ -n "$_model" ]; then
+        echo "$_model"
+        return
+    fi
+    if [ -n "$_pretty" ]; then
+        echo "ARM SBC ($_pretty)"
+        return
+    fi
+    echo "ARM SBC"
+}
+
 # Resolve the primary group of a user, falling back to the user name.
 # Some firmwares (e.g. QIDI Q2 stock) ship a `mks` user without a matching
 # `mks` group, which makes `Group=mks` in the systemd unit fail with
@@ -5187,6 +5246,13 @@ main() {
     # Detect platform
     platform=$(detect_platform)
     log_info "Detected platform: ${BOLD}${platform}${NC}"
+    # For Pi-class SBCs, also print a friendly hardware label so QIDI/BTT/MKS
+    # users don't see a bare "pi" and assume we mis-identified their printer.
+    if [ "$platform" = "pi" ] || [ "$platform" = "pi32" ]; then
+        local _hw_label
+        _hw_label=$(describe_hardware)
+        log_info "Hardware: ${_hw_label}"
+    fi
 
     # AD5X: refuse to run outside the ZMOD chroot — applies to fresh install,
     # --update, --uninstall, and --local. Inside the chroot the check is a no-op.

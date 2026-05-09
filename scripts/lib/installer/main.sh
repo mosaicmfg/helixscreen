@@ -145,6 +145,13 @@ main() {
     # Detect platform
     platform=$(detect_platform)
     log_info "Detected platform: ${BOLD}${platform}${NC}"
+    # For Pi-class SBCs, also print a friendly hardware label so QIDI/BTT/MKS
+    # users don't see a bare "pi" and assume we mis-identified their printer.
+    if [ "$platform" = "pi" ] || [ "$platform" = "pi32" ]; then
+        local _hw_label
+        _hw_label=$(describe_hardware)
+        log_info "Hardware: ${_hw_label}"
+    fi
 
     # AD5X: refuse to run outside the ZMOD chroot — applies to fresh install,
     # --update, --uninstall, and --local. Inside the chroot the check is a no-op.
