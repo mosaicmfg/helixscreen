@@ -13,6 +13,7 @@
 
 #include "app_globals.h"
 #include "application.h"
+#include "async_lifetime_guard.h"
 #include "data_root_resolver.h"
 #include "helix_version.h"
 #include "system/crash_handler.h"
@@ -83,6 +84,10 @@ static void terminate_handler() {
 }
 
 int main(int argc, char** argv) {
+    // Record the main thread id before any thread that uses LifetimeToken
+    // can spawn. The bg-thread expired() detector compares against this.
+    helix::internal::set_main_thread_id();
+
     std::set_terminate(terminate_handler);
 
     int rc = 1;

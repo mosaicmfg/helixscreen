@@ -43,6 +43,33 @@ namespace helix {
 
 class AsyncLifetimeGuard;
 
+namespace internal {
+
+/// Capture the calling thread as the "main" thread (the LVGL/render thread).
+/// Call exactly once, as the very first thing in main(), before any thread
+/// that uses LifetimeToken can spawn. Subsequent calls are silently ignored.
+void set_main_thread_id() noexcept;
+
+/// Returns true if the calling thread is the recorded main thread, OR if
+/// set_main_thread_id() has not yet run (returns true conservatively during
+/// early init so the bg-thread detector doesn't fire false positives).
+bool on_main_thread() noexcept;
+
+/// Report a "tok.expired() called from a bg thread while owner is alive"
+/// anti-pattern hit. Per-thread first-fire-only via a small TLS seen-set,
+/// so each unique callsite (LR) reports at most once per thread per session.
+///
+/// Captures `__builtin_return_address(0)` *inside* this function (which is
+/// noinline). With `expired()` always inlined into its caller F, the
+/// trampoline's caller is F itself, and the captured LR is the position in
+/// F where the inlined `tok.expired()` lives — i.e. the original source
+/// location. If we captured the LR in the inline `expired()` and passed it
+/// in, the compiler would substitute F's caller's LR after inlining, which
+/// is the wrong frame for the audit. Resolve the captured LR with addr2line.
+void report_bg_expired_check() noexcept;
+
+} // namespace internal
+
 /**
  * @brief Lightweight, copyable token captured in lambdas to check validity
  *
@@ -54,9 +81,25 @@ class LifetimeToken {
     /**
      * @brief Check if the generation has advanced past the snapshot
      * @return true if the owning object has been invalidated/destroyed
+     *
+     * 3XNZQB2R / cluster:pstat-async-delete Mechanism C detector: if the
+     * owner is still alive (returning false) AND we're on a non-main
+     * thread, flag the callsite as a likely L081 anti-pattern hit
+     * (`tok.expired()` check followed by inline LVGL mutation on a bg
+     * thread). The correct pattern is `tok.defer([this]() { ... })`,
+     * which marshals the body to the main thread before the check.
+     * See `feedback_token_defer_required.md` and the audit pending in
+     * `project_l081_recurrence_post_840.md`.
      */
-    bool expired() const {
-        return gen_->load(std::memory_order_acquire) != snapshot_;
+    [[gnu::always_inline]] inline bool expired() const {
+        bool is_expired = gen_->load(std::memory_order_acquire) != snapshot_;
+        if (!is_expired && !internal::on_main_thread()) {
+            // LR capture is inside report_bg_expired_check() (noinline) so
+            // that the captured address is the position in our caller where
+            // this inline expired() lives — see comment on the declaration.
+            internal::report_bg_expired_check();
+        }
+        return is_expired;
     }
 
     /**

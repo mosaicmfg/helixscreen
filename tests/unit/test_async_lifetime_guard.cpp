@@ -240,6 +240,93 @@ TEST_CASE_METHOD(LVGLTestFixture, "Token defer queued before invalidate is skipp
     REQUIRE_FALSE(ran);
 }
 
+// ============================================================================
+// Bg-thread expired() detector (3XNZQB2R / cluster:pstat-async-delete)
+// ============================================================================
+//
+// These tests verify expired()'s correctness invariant under bg-thread use.
+// The *anomaly reporting* side-effect (helix_lvgl_anomaly call + spdlog
+// warn) is exercised here too — the binary links the real telemetry
+// implementation, so a misfire would surface as a [Warn] in the test log.
+//
+// What these don't test: that telemetry actually emitted the bundle field
+// the field-resolver reads. That's verified manually after the AD5M deploy
+// smoke + via the next field bundle in this signature.
+
+TEST_CASE("expired() correct on main thread (alive)", "[lifetime_guard][bg_detector]") {
+    helix::internal::set_main_thread_id();
+    AsyncLifetimeGuard guard;
+    auto tok = guard.token();
+    REQUIRE_FALSE(tok.expired());
+}
+
+TEST_CASE("expired() correct on main thread (after invalidate)",
+         "[lifetime_guard][bg_detector]") {
+    helix::internal::set_main_thread_id();
+    AsyncLifetimeGuard guard;
+    auto tok = guard.token();
+    guard.invalidate();
+    REQUIRE(tok.expired());
+}
+
+TEST_CASE("expired() correct on bg thread (alive)", "[lifetime_guard][bg_detector]") {
+    helix::internal::set_main_thread_id();
+    AsyncLifetimeGuard guard;
+    auto tok = guard.token();
+
+    // Bg thread + alive token: should return false (the dangerous case the
+    // detector flags via anomaly, but the boolean must still be correct).
+    std::atomic<bool> bg_saw_alive{false};
+    std::thread bg([&]() {
+        bg_saw_alive.store(!tok.expired());
+    });
+    bg.join();
+    REQUIRE(bg_saw_alive.load());
+}
+
+TEST_CASE("expired() correct on bg thread (after invalidate)",
+         "[lifetime_guard][bg_detector]") {
+    helix::internal::set_main_thread_id();
+    AsyncLifetimeGuard guard;
+    auto tok = guard.token();
+    guard.invalidate();
+
+    std::atomic<bool> bg_saw_expired{false};
+    std::thread bg([&]() {
+        bg_saw_expired.store(tok.expired());
+    });
+    bg.join();
+    REQUIRE(bg_saw_expired.load());
+}
+
+TEST_CASE("expired() under tight bg-thread loop doesn't crash",
+         "[lifetime_guard][bg_detector]") {
+    helix::internal::set_main_thread_id();
+    AsyncLifetimeGuard guard;
+    auto tok = guard.token();
+
+    // First-fire-only seen-set must tolerate the same callsite firing many
+    // times without spamming, crashing, or breaking the boolean result.
+    std::thread bg([&]() {
+        for (int i = 0; i < 1000; ++i) {
+            REQUIRE_FALSE(tok.expired());
+        }
+    });
+    bg.join();
+}
+
+TEST_CASE("on_main_thread() reflects current thread", "[lifetime_guard][bg_detector]") {
+    helix::internal::set_main_thread_id();
+    REQUIRE(helix::internal::on_main_thread());
+
+    std::atomic<bool> bg_saw_main{true};
+    std::thread bg([&]() {
+        bg_saw_main.store(helix::internal::on_main_thread());
+    });
+    bg.join();
+    REQUIRE_FALSE(bg_saw_main.load());
+}
+
 TEST_CASE("Thread safety — concurrent token and invalidate", "[lifetime_guard][slow]") {
     AsyncLifetimeGuard guard;
     std::atomic<bool> stop{false};

@@ -138,6 +138,19 @@ static volatile uintptr_t s_current_event_target = 0;
 static volatile uintptr_t s_current_event_original_target = 0;
 static volatile unsigned int s_current_event_code = 0;
 
+/// Identity of the in-flight event target (class_p->name + spec_attr->name).
+/// Populated by the LVGL event_send_core hook via
+/// helix_crash_note_event_target_id(). Class name is a const char* into the
+/// LVGL widget class table (.rodata, stable). Obj name is heap-allocated by
+/// LVGL, so we copy bytes into a fixed buffer at hook time — the original
+/// memory may be freed by crash time. Empty buffer means "no name".
+///
+/// Race: same as event target/code — a signal could observe a half-updated
+/// triple. Acceptable for diagnostic purposes; a stale identity is still a
+/// big lift over the bare hex pointer we have today.
+static volatile const char* s_current_event_target_class = nullptr;
+static char s_current_event_target_name[32] = {0};
+
 // =============================================================================
 // Breadcrumb ring buffer (activity context for crash diagnosis)
 // =============================================================================
@@ -791,6 +804,20 @@ static void crash_signal_handler(int sig, siginfo_t* info, void* ucontext) {
             }
             write_kv_long(fd, "event_code:", static_cast<long>(s_current_event_code), num_buf,
                           sizeof(num_buf));
+            // Widget identity (paired hook from patched event_send_core).
+            // Bundle 3XNZQB2R: bare hex pointer wasn't enough to ID the click;
+            // these two lines turn "0x23042e0" into "lv_button (recovery_dismiss_btn)".
+            const char* cls = const_cast<const char*>(s_current_event_target_class);
+            if (cls != nullptr) {
+                safe_write(fd, "event_target_class:");
+                safe_write(fd, cls);
+                safe_write(fd, "\n");
+            }
+            if (s_current_event_target_name[0] != '\0') {
+                safe_write(fd, "event_target_name:");
+                safe_write(fd, s_current_event_target_name);
+                safe_write(fd, "\n");
+            }
         }
     }
 
@@ -1066,12 +1093,57 @@ void crash_handler::set_current_event(const void* target, const void* original_t
     s_current_event_target = reinterpret_cast<uintptr_t>(target);
     s_current_event_original_target = reinterpret_cast<uintptr_t>(original_target);
     s_current_event_code = code;
+    // Identity is updated separately via helix_crash_note_event_target_id()
+    // — patched LVGL calls both bridges per dispatch. Clear identity here on
+    // the dispatch-end NULL clear so we don't carry stale strings.
+    if (target == nullptr) {
+        s_current_event_target_class = nullptr;
+        s_current_event_target_name[0] = '\0';
+    }
 }
 
 // C-ABI bridge for LVGL — see include/system/crash_handler.h
 extern "C" void helix_crash_note_event(const void* target, const void* original_target,
                                        unsigned int code) {
     crash_handler::set_current_event(target, original_target, code);
+}
+
+// C-ABI bridge for the in-flight event target's identity. Called by patched
+// LVGL event_send_core right after helix_crash_note_event(). Class name is
+// stored by reference (LVGL class names live in static .rodata). Obj name is
+// copied to a fixed buffer because LVGL frees the heap-allocated name when
+// the widget is destroyed. NULL args clear the slots.
+extern "C" void helix_crash_note_event_target_id(const char* class_name,
+                                                 const char* obj_name) {
+    s_current_event_target_class = class_name;
+    if (obj_name == nullptr) {
+        s_current_event_target_name[0] = '\0';
+        return;
+    }
+    // Manual copy — strncpy could read past the source if shorter than buf;
+    // a hand-rolled loop bounds both source and destination.
+    size_t i = 0;
+    constexpr size_t kBufSize = sizeof(s_current_event_target_name);
+    while (i < kBufSize - 1) {
+        char c = obj_name[i];
+        if (c == '\0') break;
+        s_current_event_target_name[i] = c;
+        ++i;
+    }
+    s_current_event_target_name[i] = '\0';
+}
+
+// C-ABI bridge: report the binary's text segment bounds, captured by
+// crash_handler::install() via __executable_start / _etext. Returns 1 if
+// bounds are valid (init has run), 0 otherwise. Used by the patched LVGL
+// dispatch-cb-bounds gate.
+extern "C" int helix_get_text_bounds(unsigned long* lo, unsigned long* hi) {
+    if (s_text_start == 0 || s_text_end <= s_text_start) {
+        return 0;
+    }
+    if (lo) *lo = static_cast<unsigned long>(s_text_start);
+    if (hi) *hi = static_cast<unsigned long>(s_text_end);
+    return 1;
 }
 
 // C-ABI bridges for LVGL — see include/system/crash_handler.h.
@@ -1494,6 +1566,10 @@ nlohmann::json crash_handler::read_crash_file(const std::string& crash_file_path
                 } catch (...) {
                     result["event_code"] = 0;
                 }
+            } else if (key == "event_target_class") {
+                result["event_target_class"] = value;
+            } else if (key == "event_target_name") {
+                result["event_target_name"] = value;
             } else if (key.rfind("heap_", 0) == 0 || key.rfind("lv_heap_", 0) == 0) {
                 // All heap snapshot fields are numeric kilobyte / percent values
                 try {

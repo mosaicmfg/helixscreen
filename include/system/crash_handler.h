@@ -255,6 +255,23 @@ extern "C" void helix_crash_note_event(const void* target,
                                        const void* original_target,
                                        unsigned int code);
 
+// C-ABI bridge for the in-flight event target's identity (class name + obj
+// name). Patched LVGL event_send_core extracts these from e->current_target
+// and hands them to us; we save copies (signal-safe, fixed buffers) so the
+// crash handler can dump them as event_target_class / event_target_name.
+// Bundle 3XNZQB2R: bare event_target=0x23042e0 wasn't enough to ID the click;
+// next bundle in this signature should name the widget. Both args may be NULL.
+extern "C" void helix_crash_note_event_target_id(const char* class_name,
+                                                 const char* obj_name);
+
+// C-ABI bridge: text segment bounds for the patched LVGL cb-bounds gate.
+// Returns 1 if bounds are valid, 0 if not yet captured (early init). The
+// dispatch gate falls back to "no check" when bounds aren't ready, which is
+// fine — the corruption surface we're guarding against (a heap-resident cb
+// pointer in a per-widget event handler list) is a runtime mutation, not an
+// init-time issue.
+extern "C" int helix_get_text_bounds(unsigned long* lo, unsigned long* hi);
+
 // C-ABI bridges for LVGL (C source) to breadcrumb the root of a destruction
 // subtree. Called from lv_obj_delete() and lv_obj_delete_async_cb at the
 // moment tear-down begins — names class + pointer so #840/L081-class SIGBUS

@@ -533,6 +533,13 @@ $(PATCHES_STAMP): $(PATCH_FILES) $(LVGL_HEAD) $(LIBHV_HEAD)
 	else \
 		echo "$(GREEN)✓ LVGL #907 array-backed event stack patch already applied$(RESET)"; \
 	fi
+	$(Q)if git -C $(LVGL_DIR) apply --check ../../patches/lvgl_event_dispatch_cb_guard.patch 2>/dev/null; then \
+		echo "$(YELLOW)→ Applying LVGL dispatch-cb bounds gate + widget identity (3XNZQB2R)...$(RESET)"; \
+		git -C $(LVGL_DIR) apply ../../patches/lvgl_event_dispatch_cb_guard.patch && \
+		echo "$(GREEN)✓ dispatch-cb guard + widget identity patch applied$(RESET)"; \
+	else \
+		echo "$(GREEN)✓ LVGL dispatch-cb guard patch already applied$(RESET)"; \
+	fi
 	$(Q)if git -C $(LVGL_DIR) apply --check ../../patches/lvgl_obj_event_null_guards.patch 2>/dev/null; then \
 		echo "$(YELLOW)→ Applying LVGL obj-event NULL guards (VHTR49QJ — recoverable bail + telemetry)...$(RESET)"; \
 		git -C $(LVGL_DIR) apply ../../patches/lvgl_obj_event_null_guards.patch && \

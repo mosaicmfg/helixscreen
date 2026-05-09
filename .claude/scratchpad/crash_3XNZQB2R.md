@@ -126,3 +126,43 @@ Add to `project_l081_recurrence_post_840.md` "Bundle inventory" section:
   Trigger context: 5 disc cycles + 2 tear_down + Hardware Health teardown + nav Home + click in flight.
   No structural-fix anomaly markers fired.
 ```
+
+---
+
+## What shipped (2026-05-09)
+
+Decided on **Tier 1A + 1B + 2D**, dropping Tier 1C as redundant once 1A+1B both fire (the cb pointer + widget identity together identify the click).
+
+**Tier 1A — dispatch cb-bounds gate** (`patches/lvgl_event_dispatch_cb_guard.patch`, hunk in `lib/lvgl/src/misc/lv_event.c` inside `lv_event_send`'s dispatch loop):
+- Before `dsc->cb(e)`, snapshot the cb pointer (`cb_snap = dsc->cb`) and check it falls within `[text_lo, text_hi)` via `helix_get_text_bounds()`.
+- Out-of-text → `helix_lvgl_anomaly("event_dsc_cb_oob", "obj=… cb=… dsc=… i=… code=…")` and `continue`.
+- Snapshot closes the TOCTOU window where a bg-thread overwrite could land between the bounds check and the call.
+- Best-effort: bounds returns 0 during very early init → falls back to "no check". Production bug is a runtime mutation, so this is fine.
+
+**Tier 1B — widget identity capture** (same patch, `lib/lvgl/src/core/lv_obj_event.c` event_send_core):
+- Pairs the existing `helix_crash_note_event(target, …)` hook with `helix_crash_note_event_target_id(class_p->name, spec_attr->name)`.
+- crash_handler stores them in `s_current_event_target_class` (const ref into `.rodata`) and a 32-byte fixed buffer `s_current_event_target_name`.
+- Crash dump now writes `event_target_class:` and `event_target_name:` lines so the next bundle reads "lv_button (recovery_dismiss_btn)" instead of "0x23042e0".
+
+**Tier 2D — bg-thread `tok.expired()` detector** (`include/async_lifetime_guard.h`, `src/system/async_lifetime_guard.cpp`, `src/main.cpp`):
+- `LifetimeToken::expired()` is `[[gnu::always_inline]]`. After computing the boolean, if `!is_expired && !on_main_thread()`, calls a `[[gnu::noinline]]` trampoline `report_bg_expired_check()`.
+- The trampoline captures `__builtin_return_address(0)` *inside the noinline*, which after expired() is inlined into caller F gives the LR within F at the inlined call site — the user's source-level `tok.expired()` location. (Capturing the LR up in the inline path would have given F's caller's LR, which is the wrong frame — review caught this as B1.)
+- Per-thread first-fire-only via TLS 64-slot seen-set; same (thread, LR) fires once per session. Different threads each get one report per LR.
+- Main thread id captured at entry to `main()` via `helix::internal::set_main_thread_id()`. `on_main_thread()` returns true conservatively while unset (init window) so early callbacks don't false-positive.
+- Anomaly emitted via `helix_lvgl_anomaly("bg_tok_expired_check", "lr=… tid=…")` — same telemetry channel as the existing event-stack guards.
+
+**Stubs for splash/watchdog** (`tools/helix_lvgl_anomaly_stub.cpp`): added no-op stubs for `helix_crash_note_event_target_id` and `helix_get_text_bounds` so non-helix-screen binaries link cleanly without relying on weak-undef-resolves-to-NULL toolchain behavior (review caught this as B2).
+
+**Tests** (`tests/unit/test_async_lifetime_guard.cpp`): 6 new `[bg_detector]` cases covering main-thread silence (alive + expired tokens), bg-thread correctness invariants (alive returns false, expired returns true), the tight-loop no-crash path, and `on_main_thread()` reflecting the calling thread. Anomaly fire is observable in the test log warns; no production-test coupling added.
+
+**Code review** (general-purpose agent, 2026-05-09):
+- Verdict: ship-with-fixes
+- B1: noinline-trampoline LR capture — **fixed**
+- B2: splash/watchdog stubs — **fixed**
+- N1: TOCTOU snapshot of `dsc->cb` — **fixed**
+- N2 (perf cache), N3 (saturation marker), N8 (anomaly-fire test assert) — deferred, non-blocking
+
+**Build status:**
+- Native: clean.
+- pi32-docker: ARM 32-bit `pthread_t`/`uintptr_t` cast issue caught and fixed (memcpy into `uint64_t`).
+- AD5M smoke deploy: pending.
