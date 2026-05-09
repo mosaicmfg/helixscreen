@@ -984,6 +984,16 @@ extract_release() {
         _restore_config_file "${INSTALL_BACKUP}/config/helixscreen.env" "$_env_dest" "helixscreen.env from .old backup"
     fi
 
+    # One-time migration: older env templates shipped `HELIX_LOG_LEVEL=info`
+    # uncommented, which silently shadowed the in-app Settings → System → Log
+    # Level setting on every restart. Comment it out IFF it still matches the
+    # exact old default, so users who deliberately set a different value keep
+    # their customization.
+    if [ -f "$_env_dest" ] && grep -q '^HELIX_LOG_LEVEL=info[[:space:]]*$' "$_env_dest"; then
+        $(file_sudo "$_env_dest") sed -i 's/^HELIX_LOG_LEVEL=info[[:space:]]*$/#HELIX_LOG_LEVEL=info/' "$_env_dest" 2>/dev/null && \
+            log_info "Migrated helixscreen.env: commented out default HELIX_LOG_LEVEL=info (in-app Log Level setting now applies)"
+    fi
+
     # Prune legacy seed files from the .old backup before the restore loop.
     # Older releases shipped these inside config/; current releases ship them
     # under assets/config/ instead. Without this prune, the loop below would
