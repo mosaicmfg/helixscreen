@@ -11,6 +11,7 @@
  * - Cleanup on widget deletion
  */
 
+#include "ui_ams_tool_text.h"
 #include "ui_nav_manager.h"
 #include "ui_observer_guard.h"
 #include "ui_panel_ams.h"
@@ -113,6 +114,14 @@ static void on_widget_created(lv_obj_t* widget) {
 void ui_ams_current_tool_init() {
     // Register click callback for XML event_cb [L007]
     lv_xml_register_event_cb(nullptr, "on_ams_current_tool_clicked", on_clicked);
+
+    // The "T<n>" / "---" text formatter for ams_current_tool_text must be
+    // registered at app startup, not lazily when an AMS panel is opened.
+    // The print status panel embeds <ams_current_tool> and binds the same
+    // subject — without this, the lane label stays at the initial "---"
+    // value until a user navigates to AMS, even though ams_current_tool
+    // itself has been set correctly by AmsState::sync_from_backend.
+    helix::ui::init_ams_tool_text_observers();
 
     spdlog::debug("[AmsCurrentTool] Callbacks registered");
 }

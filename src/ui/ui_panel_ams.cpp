@@ -9,7 +9,6 @@
 #include "ui_ams_sidebar.h"
 #include "ui_ams_slot.h"
 #include "ui_ams_slot_layout.h"
-#include "ui_ams_tool_text.h"
 #include "ui_endless_spool_arrows.h"
 #include "ui_error_reporting.h"
 #include "ui_event_safety.h"
@@ -99,8 +98,9 @@ static void ensure_ams_widgets_registered() {
         env_cb_registered = true;
     }
 
-    // Initialize tool text observers (format raw int subjects → display text)
-    helix::ui::init_ams_tool_text_observers();
+    // Tool text observers are initialized in ui_ams_current_tool_init() at
+    // app startup so the print status panel's lane label works before any
+    // AMS panel has been opened.
 
     // Register AMS overlay callbacks BEFORE XML parsing
     helix::ui::get_ams_device_operations_overlay().register_callbacks();

@@ -8,7 +8,6 @@
 #include "ui_ams_sidebar.h"
 #include "ui_ams_slot.h"
 #include "ui_ams_slot_layout.h"
-#include "ui_ams_tool_text.h"
 #include "ui_error_reporting.h"
 #include "ui_event_safety.h"
 #include "ui_filament_path_canvas.h"
@@ -960,7 +959,7 @@ static void ensure_overview_registered() {
 
     // Register sidebar callbacks before component registration
     helix::ui::AmsOperationSidebar::register_callbacks_static();
-    helix::ui::init_ams_tool_text_observers();
+    // Tool text observers initialized in ui_ams_current_tool_init() at startup.
 
     // Register context-aware back button callback for header
     // Detail mode: return to overview. Overview mode: close the overlay.
