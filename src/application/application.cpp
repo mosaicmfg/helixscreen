@@ -54,6 +54,7 @@
 
 // UI headers
 #include "ui_ams_mini_status.h"
+#include "ui_ams_tool_text.h"
 #include "ui_bed_mesh.h"
 #include "ui_card.h"
 #include "ui_component_header_bar.h"
@@ -1446,6 +1447,13 @@ bool Application::init_core_subjects() {
     // Phase 1-3: Core subjects, PrinterState, AmsState
     // These must exist before MoonrakerManager::init() can create the API
     m_subjects->init_core_and_state();
+
+    // Register the ams_current_tool_text formatter ("T<n>" / "---") now that
+    // AmsState's subjects are live. The print status panel embeds
+    // <ams_current_tool> and binds ams_current_tool_text — without this
+    // observer the lane label stays at its default "---" until a user
+    // navigates into an AMS panel, which is where the call used to live.
+    helix::ui::init_ams_tool_text_observers();
 
     spdlog::debug("[Application] Core subjects initialized");
     helix::MemoryMonitor::log_now("after_core_subjects_init");
