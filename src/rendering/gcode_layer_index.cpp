@@ -3,6 +3,8 @@
 
 #include "gcode_layer_index.h"
 
+#include "gcode_color_metadata.h"
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -82,79 +84,24 @@ bool has_positive_extrusion(const char* line, size_t len) {
 }
 
 // Extract filament/extruder color from metadata comment
-// Looks for patterns like:
-//   ; extruder_colour = #26A69A
-//   ; filament_colour = "#FF0000"
-//   ;extruder_color = #00FF00
-//   ; extruder_colour = #000000;#F3FDFD     (multi-filament, semicolon-separated)
-//
-// Extracts ALL semicolon-separated colors into out_palette. For backward
-// compatibility, out_color is set to the first entry. Multi-color slicing
-// (OrcaSlicer) emits one entry per filament, indexed by tool number.
+// Thin wrapper over helix::gcode::parse_filament_color_palette() that also
+// projects the legacy single-color field (palette[0]) for backward compat.
 bool extract_filament_color(const char* line, size_t len, std::string& out_color,
                             std::vector<std::string>& out_palette) {
-    // Only check comment lines
     if (len < 10 || line[0] != ';') {
         return false;
     }
-
-    // Convert to lowercase for matching (limited to first 50 chars)
-    char lower[64];
-    size_t check_len = std::min(len, size_t(63));
-    for (size_t i = 0; i < check_len; ++i) {
-        lower[i] = (line[i] >= 'A' && line[i] <= 'Z') ? (line[i] + 32) : line[i];
-    }
-    lower[check_len] = '\0';
-
-    // Look for color keywords
-    const char* color_pos = nullptr;
-    if (std::strstr(lower, "extruder_colour") || std::strstr(lower, "extruder_color")) {
-        color_pos = std::strchr(line, '=');
-    } else if (std::strstr(lower, "filament_colour") || std::strstr(lower, "filament_color")) {
-        color_pos = std::strchr(line, '=');
-    }
-
-    if (!color_pos) {
+    if (!helix::gcode::parse_filament_color_palette(std::string_view(line, len), out_palette)) {
         return false;
     }
-
-    // Skip past '=' and whitespace/quotes to start of value
-    ++color_pos;
-
-    // Walk the rest of the line collecting every #RRGGBB[AA] token. The slicer
-    // separates entries with ';' (e.g. "#000000;#F3FDFD"); we just scan for hashes.
-    const char* end = line + len;
-    std::vector<std::string> palette;
-    const char* p = color_pos;
-    while (p < end) {
-        const char* hash = static_cast<const char*>(std::memchr(p, '#', end - p));
-        if (!hash) {
-            break;
+    // First non-empty entry is the legacy "single color" surface.
+    for (const auto& s : out_palette) {
+        if (!s.empty()) {
+            out_color = s;
+            return true;
         }
-        std::string color = "#";
-        const char* q = hash + 1;
-        while (q < end &&
-               ((*q >= '0' && *q <= '9') || (*q >= 'A' && *q <= 'F') ||
-                (*q >= 'a' && *q <= 'f'))) {
-            color += *q;
-            ++q;
-            if (color.length() >= 9) { // #RRGGBBAA max
-                break;
-            }
-        }
-        if (color.length() >= 7) { // At least #RRGGBB
-            palette.push_back(std::move(color));
-        }
-        p = q;
     }
-
-    if (palette.empty()) {
-        return false;
-    }
-
-    out_palette = std::move(palette);
-    out_color = out_palette.front();
-    return true;
+    return false;
 }
 
 // Check if line is a layer change marker

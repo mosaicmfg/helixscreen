@@ -3,6 +3,8 @@
 
 #include "gcode_parser.h"
 
+#include "gcode_color_metadata.h"
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -757,38 +759,11 @@ void GCodeParser::parse_extruder_color_metadata(const std::string& line) {
     // Format: "; extruder_colour = #ED1C24;#00C1AE;#F4E2C1;#000000"
     //     OR: "; filament_colour = ..." (fallback)
     //     OR: ";extruder_colour=#AA0000 ; #00BB00 ;#0000CC" (with variations)
-
-    // Find '=' character (with or without spaces)
-    size_t eq_pos = line.find('=');
-    if (eq_pos == std::string::npos) {
+    std::vector<std::string> palette;
+    if (!helix::gcode::parse_filament_color_palette(line, palette)) {
         return;
     }
-
-    std::string_view colors_sv(line);
-    colors_sv = colors_sv.substr(eq_pos + 1);
-
-    // Trim leading whitespace
-    size_t start = 0;
-    while (start < colors_sv.size() && (colors_sv[start] == ' ' || colors_sv[start] == '\t' ||
-                                         colors_sv[start] == '\r' || colors_sv[start] == '\n'))
-        start++;
-    std::string colors_str(colors_sv.substr(start));
-
-    // Split by semicolons
-    std::stringstream ss(colors_str);
-    std::string color;
-    while (std::getline(ss, color, ';')) {
-        // Trim whitespace
-        color.erase(0, color.find_first_not_of(" \t\r\n"));
-        color.erase(color.find_last_not_of(" \t\r\n") + 1);
-
-        if (!color.empty() && color[0] == '#') {
-            tool_color_palette_.push_back(color);
-        } else if (!color.empty()) {
-            // Non-empty but invalid format - use placeholder
-            tool_color_palette_.push_back("");
-        }
-    }
+    tool_color_palette_ = std::move(palette);
 
     // Log color palette (manual join since fmt::join may not be available)
     std::string palette_str;
