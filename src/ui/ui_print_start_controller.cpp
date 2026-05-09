@@ -893,10 +893,16 @@ bool PrintStartController::apply_filament_remaps() {
         return false;
     }
 
-    // Check if backend supports tool mapping
+    // Backend reports supported but not editable (e.g. K2 CFS — BOX_MODIFY_TN
+    // not wired up). User-supplied explicit remaps cannot be honored; surface a
+    // toast so the failure is visible instead of silently ignoring the choice.
     auto caps = backend->get_tool_mapping_capabilities();
     if (!caps.supported || !caps.editable) {
-        spdlog::debug("[PrintStartController] Backend does not support editable tool mapping");
+        spdlog::warn("[PrintStartController] Backend (idx={}) does not support editable tool "
+                     "mapping — {} explicit remap(s) will be ignored",
+                     backend_idx, mappings.size());
+        NOTIFY_WARNING("Filament remap not supported on this printer — print will use "
+                       "the firmware's current tool mapping");
         return false;
     }
 
