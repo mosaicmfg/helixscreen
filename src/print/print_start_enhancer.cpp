@@ -395,14 +395,19 @@ void PrintStartEnhancer::apply_enhancements(MoonrakerAPI* api, const std::string
         on_progress("Creating backup", 1, 4);
     }
 
-    // Wrap error callback to clear operation flag and check lifetime
-    auto safe_error = [on_error, token, op_flag](const MoonrakerError& err) {
-        if (op_flag) {
-            op_flag->store(false);
-        }
-        if (!token.expired() && on_error) {
-            on_error(err);
-        }
+    // Wrap error callback to clear operation flag and check lifetime.
+    // L081 Mechanism C: defer to main — the bg-side store on op_flag (= &operation_in_progress_)
+    // would be a UAF if the wizard owner is destroyed mid-op. token.defer gates on expired()
+    // atomically on main, so the op_flag deref + on_error invoke are both guarded.
+    auto safe_error = [token, op_flag, on_error](const MoonrakerError& err) {
+        token.defer("PrintStartEnhancer::safe_error", [op_flag, on_error, err]() {
+            if (op_flag) {
+                op_flag->store(false);
+            }
+            if (on_error) {
+                on_error(err);
+            }
+        });
     };
 
     create_backup(

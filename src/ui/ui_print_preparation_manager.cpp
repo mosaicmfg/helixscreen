@@ -1196,16 +1196,20 @@ void PrintPreparationManager::modify_and_print_streaming(
                             // start_print.
 
                             // Define common callbacks to avoid code duplication
-                            auto on_print_success = [this, on_navigate_to_status, display_filename,
-                                                     file_path]() {
+                            auto on_print_success = [this, token, on_navigate_to_status,
+                                                     display_filename, file_path]() {
                                 spdlog::info("[PrintPreparationManager] Print started with "
                                              "modified G-code (streaming, original: {})",
                                              display_filename);
 
-                                // Clear in-progress flag on success
-                                if (printer_state_) {
-                                    printer_state_->set_print_in_progress(false);
-                                }
+                                // L081 Mechanism C: printer_state_ is a this->member;
+                                // start_print success cb fires on HTTP bg.
+                                token.defer("PrintPreparationManager::print_success_clear_progress",
+                                            [this]() {
+                                                if (printer_state_) {
+                                                    printer_state_->set_print_in_progress(false);
+                                                }
+                                            });
 
                                 // Defer LVGL operations to main thread
                                 struct PrintStartedData {
@@ -1246,16 +1250,15 @@ void PrintPreparationManager::modify_and_print_streaming(
                                     "[PrintPreparationManager] Print start failed for {}: {}",
                                     remote_temp_path, error.message);
 
-                                // Clear in-progress flag on error
-                                if (printer_state_) {
-                                    printer_state_->set_print_in_progress(false);
-                                }
-
-                                // L081 Mechanism C: defer remote cleanup (api_->) to
-                                // main thread. start_print_* error cb fires on HTTP bg.
+                                // L081 Mechanism C: printer_state_ is a this->member +
+                                // api_->files() touches this->api_; both deferred together.
+                                // start_print_* error cb fires on HTTP bg.
                                 token.defer(
                                     "PrintPreparationManager::start_print_error_cleanup",
                                     [this, remote_temp_path]() {
+                                        if (printer_state_) {
+                                            printer_state_->set_print_in_progress(false);
+                                        }
                                         // Clean up remote temp file on failure
                                         // Moonraker's delete_file requires full path
                                         // including root
@@ -1297,20 +1300,24 @@ void PrintPreparationManager::modify_and_print_streaming(
                             }
                         });
                 },
-                // Upload error - clean up local file
-                [this, modified_path](const MoonrakerError& error) {
+                // Upload error - clean up local file. Runs on HTTP bg thread.
+                [this, token, modified_path](const MoonrakerError& error) {
                     // Hide overlay on error (defer to main thread)
                     helix::ui::async_call([](void*) { BusyOverlay::hide(); }, nullptr);
 
-                    // Clean up local file even on error (safe - filesystem op)
+                    // Clean up local file even on error (bg-safe filesystem op)
                     std::error_code ec;
                     std::filesystem::remove(modified_path, ec);
 
                     NOTIFY_ERROR(lv_tr("Failed to upload modified G-code: {}"), error.message);
                     LOG_ERROR_INTERNAL("[PrintPreparationManager] Upload failed: {}",
                                        error.message);
-                    if (printer_state_)
-                        printer_state_->set_print_in_progress(false);
+                    // L081 Mechanism C: printer_state_ is a this->member.
+                    token.defer("PrintPreparationManager::upload_fail_clear_progress",
+                                [this]() {
+                                    if (printer_state_)
+                                        printer_state_->set_print_in_progress(false);
+                                });
                 },
                 // Upload progress callback
                 [](size_t sent, size_t total) {
@@ -1328,20 +1335,24 @@ void PrintPreparationManager::modify_and_print_streaming(
                 });
                 }); // close PrintPreparationManager::modify_upload_kickoff defer
         },
-        // Download error - clean up partial download
-        [this, file_path, local_download_path](const MoonrakerError& error) {
+        // Download error - clean up partial download. Runs on HTTP bg thread.
+        [this, token, file_path, local_download_path](const MoonrakerError& error) {
             // Hide overlay on error (defer to main thread)
             helix::ui::async_call([](void*) { BusyOverlay::hide(); }, nullptr);
 
-            // Clean up partial download if any (safe - filesystem op)
+            // Clean up partial download if any (bg-safe filesystem op)
             std::error_code ec;
             std::filesystem::remove(local_download_path, ec);
 
             NOTIFY_ERROR(lv_tr("Failed to download G-code for modification: {}"), error.message);
             LOG_ERROR_INTERNAL("[PrintPreparationManager] Download failed for {}: {}", file_path,
                                error.message);
-            if (printer_state_)
-                printer_state_->set_print_in_progress(false);
+            // L081 Mechanism C: printer_state_ is a this->member.
+            token.defer("PrintPreparationManager::download_fail_clear_progress",
+                        [this]() {
+                            if (printer_state_)
+                                printer_state_->set_print_in_progress(false);
+                        });
         },
         // Download progress callback
         download_progress);

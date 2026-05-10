@@ -1481,7 +1481,7 @@ AmsError AmsBackendAd5xIfs::write_adventurer_json(int slot_index) {
     api_->transfers().download_file(
         "config", "Adventurer5M.json",
         [this, token, port, hex_with_hash, material, result, done](const std::string& content) {
-            if (token.expired()) {
+            if (token.expired()) { // L081_OK: sync wait wrapper called from main; defer would deadlock against caller
                 *result =
                     AmsErrorHelper::command_failed("write_adventurer_json", "Connection lost");
                 done->store(true);

@@ -989,96 +989,81 @@ void PrintSelectPanel::fetch_metadata_range(size_t start, size_t end) {
 
         api_->files().get_file_metadata(
             file_path,
-            // Metadata success callback (runs on background thread)
+            // Metadata success callback (runs on background thread).
+            // No self->member access on bg — everything member-touching is inside tok.defer
+            // so the nav-generation check moves into each deferred body. (#L081 Mech-C)
             [self, i, filename, file_path, captured_gen,
              token = self->lifetime_.token()](const FileMetadata& metadata) {
-                // === BG THREAD: nav-generation atomic check (cheap, owner-stable read)
-                //                + decide between metascan-chain or process inline ===
-                // Discard if user navigated to a different directory since this request
-                if (self->nav_generation_.load() != captured_gen) {
-                    return;
-                }
-
-                // Check if metadata is empty (file hasn't been scanned yet)
-                // This happens for USB files added via symlink - they need metascan
+                // Pure local computation — no self access.
+                // Empty metadata means file hasn't been scanned yet (e.g. USB symlinks).
                 bool metadata_empty = metadata.thumbnails.empty() && metadata.estimated_time == 0;
 
                 if (metadata_empty) {
-                    // === MAIN THREAD: chain metascan via self->api_ ===
                     token.defer(
                         "PrintSelectPanel::metadata_empty_metascan",
                         [self, i, filename, file_path, captured_gen, token]() {
+                            if (self->nav_generation_.load() != captured_gen) {
+                                return;
+                            }
                             if (!self->api_) {
                                 return;
                             }
                             spdlog::debug("[{}] Empty metadata for {}, triggering metascan",
                                           self->get_name(), filename);
-                            // Trigger metascan to generate metadata on-demand
                             self->api_->files().metascan_file(
                                 file_path,
                                 [self, i, filename, captured_gen,
                                  token](const FileMetadata& scanned) {
-                                    // === BG THREAD: nav-generation check ===
-                                    if (self->nav_generation_.load() != captured_gen) {
-                                        return;
-                                    }
-                                    // === MAIN THREAD: invoke process_metadata_result on self ===
                                     token.defer(
                                         "PrintSelectPanel::metascan_success_process",
-                                        [self, i, filename, scanned]() {
-                                            // Metascan succeeded - process the fresh metadata
+                                        [self, i, filename, captured_gen, scanned]() {
+                                            if (self->nav_generation_.load() != captured_gen) {
+                                                return;
+                                            }
                                             self->process_metadata_result(i, filename, scanned);
                                         });
                                 },
                                 [self, i, filename, captured_gen,
                                  token](const MoonrakerError& error) {
-                                    // === BG THREAD: nav-generation check ===
-                                    if (self->nav_generation_.load() != captured_gen) {
-                                        return;
-                                    }
-                                    // === MAIN THREAD: log + invoke fallback on self ===
                                     token.defer(
                                         "PrintSelectPanel::metascan_error_process",
-                                        [self, i, filename, error]() {
+                                        [self, i, filename, captured_gen, error]() {
+                                            if (self->nav_generation_.load() != captured_gen) {
+                                                return;
+                                            }
                                             spdlog::debug("[{}] Metascan failed for {}: {}, "
                                                           "trying gcode extraction",
                                                           self->get_name(), filename,
                                                           error.message);
-                                            // Fall through to process_metadata_result with empty
-                                            // metadata so the gcode header extraction fallback
-                                            // can kick in
                                             FileMetadata empty_meta;
                                             self->process_metadata_result(i, filename, empty_meta);
                                         });
                                 });
                         });
-                    return; // Don't process empty metadata inline — metascan callbacks handle it
-                }
-
-                // === MAIN THREAD: process non-empty metadata via self ===
-                token.defer("PrintSelectPanel::metadata_process",
-                            [self, i, filename, metadata]() {
-                                // Process metadata (either from cache or non-empty response)
-                                self->process_metadata_result(i, filename, metadata);
-                            });
-            },
-            // Metadata error callback
-            [self, i, filename, file_path, captured_gen,
-             token = self->lifetime_.token()](const MoonrakerError& error) {
-                // === BG THREAD: nav-generation atomic check ===
-                if (self->nav_generation_.load() != captured_gen) {
                     return;
                 }
 
-                // === MAIN THREAD: log + chain metascan via self->api_ ===
+                token.defer("PrintSelectPanel::metadata_process",
+                            [self, i, filename, captured_gen, metadata]() {
+                                if (self->nav_generation_.load() != captured_gen) {
+                                    return;
+                                }
+                                self->process_metadata_result(i, filename, metadata);
+                            });
+            },
+            // Metadata error callback. Same pattern: nav-gen check moves into the defer body.
+            [self, i, filename, file_path, captured_gen,
+             token = self->lifetime_.token()](const MoonrakerError& error) {
                 token.defer(
                     "PrintSelectPanel::metadata_error_metascan",
                     [self, i, filename, file_path, captured_gen, token, error]() {
+                        if (self->nav_generation_.load() != captured_gen) {
+                            return;
+                        }
                         spdlog::debug("[{}] Failed to get metadata for {}: {} ({})",
                                       self->get_name(), filename, error.message,
                                       error.get_type_string());
 
-                        // Metadata doesn't exist - try metascan to generate it
                         if (!self->api_) {
                             return;
                         }
@@ -1088,32 +1073,27 @@ void PrintSelectPanel::fetch_metadata_range(size_t start, size_t end) {
                             file_path,
                             [self, i, filename, captured_gen,
                              token](const FileMetadata& scanned) {
-                                // === BG THREAD: nav-generation check ===
-                                if (self->nav_generation_.load() != captured_gen) {
-                                    return;
-                                }
-                                // === MAIN THREAD: invoke process_metadata_result on self ===
                                 token.defer(
                                     "PrintSelectPanel::metadata_err_metascan_success",
-                                    [self, i, filename, scanned]() {
+                                    [self, i, filename, captured_gen, scanned]() {
+                                        if (self->nav_generation_.load() != captured_gen) {
+                                            return;
+                                        }
                                         self->process_metadata_result(i, filename, scanned);
                                     });
                             },
                             [self, i, filename, captured_gen,
                              token](const MoonrakerError& scan_error) {
-                                // === BG THREAD: nav-generation check ===
-                                if (self->nav_generation_.load() != captured_gen) {
-                                    return;
-                                }
-                                // === MAIN THREAD: log + invoke fallback on self ===
                                 token.defer(
                                     "PrintSelectPanel::metadata_err_metascan_err",
-                                    [self, i, filename, scan_error]() {
+                                    [self, i, filename, captured_gen, scan_error]() {
+                                        if (self->nav_generation_.load() != captured_gen) {
+                                            return;
+                                        }
                                         spdlog::debug("[{}] Metascan also failed for {}: {}, "
                                                       "trying gcode extraction",
                                                       self->get_name(), filename,
                                                       scan_error.message);
-                                        // Fall through to gcode header extraction fallback
                                         FileMetadata empty_meta;
                                         self->process_metadata_result(i, filename, empty_meta);
                                     });

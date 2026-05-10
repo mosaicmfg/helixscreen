@@ -980,9 +980,9 @@ void AmsBackendAce::poll_info() {
     api_->rest().call_rest_get("/server/ace/info", [this, state, token](const RestResponse& resp) {
         // L081 Mechanism C: defer member access to main thread. The synchronous
         // waiter (state->cv) MUST be signaled regardless of owner liveness, so
-        // we set state->done=true on the bg thread BEFORE deferring the parse.
-        // The defer becomes a no-op if the owner has been destroyed; the
-        // poll_info caller is unblocked either way.
+        // we enqueue the parse defer first, then signal state->done + cv on the
+        // bg thread before returning. The defer becomes a no-op if the owner
+        // has been destroyed; the poll_info caller is unblocked either way.
         token.defer("AmsBackendAce::poll_info_apply",
                     [this, resp]() {
             if (resp.success && resp.data.contains("result")) {
