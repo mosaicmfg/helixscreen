@@ -74,4 +74,67 @@ class FilamentSlotOverrideStore {
     }
 };
 
+// =============================================================================
+// Shared firmware -> lane_data mirror helper
+// =============================================================================
+//
+// AFC and Happy Hare publish lane_data themselves (their Klipper plugins write
+// directly to the Moonraker DB), so OrcaSlicer's MoonrakerPrinterAgent can
+// read filament state without HelixScreen's involvement.
+//
+// CFS, AD5X IFS, and Snapmaker firmware do NOT publish lane_data. HelixScreen
+// has to mirror firmware-detected color/material into the lane_data namespace
+// so OrcaSlicer's "Sync filaments from Printer" works. This helper centralizes
+// that mirror so the three backends share one implementation.
+//
+// Why a policy enum: backends differ in whether user UI edits propagate back
+// to firmware:
+//
+//   - IFS: set_slot_info writes to Adventurer5M.json — firmware re-reads it
+//     and reports the user's chosen color on the next status poll. The mirror
+//     can safely overwrite the override unconditionally because firmware-truth
+//     and user-truth converge.
+//
+//   - CFS / Snapmaker: set_slot_info does NOT touch the firmware-side
+//     material_type / RFID values. If the mirror unconditionally overwrote
+//     ovr.color_rgb with firmware-truth, every status poll would erase the
+//     user's color override. So these backends use FillUnsetOnly: only fill
+//     fields the user hasn't explicitly set. clear_slot_override resets the
+//     entry, after which auto-mirror takes over again.
+enum class MirrorPolicy {
+    /// Overwrite ovr.color_rgb / ovr.material with firmware values
+    /// unconditionally. Use when user edits propagate back to firmware so the
+    /// two views stay in sync (AD5X IFS).
+    OverwriteAlways,
+    /// Only fill ovr.color_rgb / ovr.material when they're currently UNSET
+    /// (color_rgb == 0, empty material). Use when user edits don't reach
+    /// firmware (CFS, Snapmaker).
+    FillUnsetOnly,
+};
+
+/// Mirror firmware-detected color/material into `overrides[slot_index]` and
+/// fire `store->save_async` to push the resulting record to the lane_data
+/// namespace. Caller MUST hold the backend's mutex protecting `overrides`.
+///
+/// No-op (returns false without writing) when:
+///   - !slot_has_filament  (empty / unread slot — no signal)
+///   - firmware_color == 0 (placeholder / unread color — no signal)
+///   - the chosen policy leaves nothing to change (e.g. FillUnsetOnly when
+///     ovr already has both fields set, or OverwriteAlways when ovr already
+///     matches firmware)
+///
+/// `store` may be null (init-time race / test fixture without MR API) — the
+/// in-memory override is still updated, but no save_async is fired.
+///
+/// `log_tag` is included in the warn log on save failure so multi-backend
+/// logs stay attributable.
+///
+/// Returns true iff `overrides[slot_index]` was actually mutated. Callers
+/// (e.g. IFS) use this to drive secondary side-effects like _IFS_VARS sync.
+bool mirror_firmware_to_lane_data(FilamentSlotOverrideStore* store,
+                                  std::unordered_map<int, FilamentSlotOverride>& overrides,
+                                  int slot_index, uint32_t firmware_color,
+                                  const std::string& firmware_material, bool slot_has_filament,
+                                  MirrorPolicy policy, const std::string& log_tag);
+
 } // namespace helix::ams

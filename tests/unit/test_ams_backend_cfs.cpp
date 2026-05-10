@@ -969,16 +969,43 @@ TEST_CASE("CFS RFID fingerprint change clears override (hardware swap detected)"
     REQUIRE(!api.mock_get_db_value("lane_data", "lane1").is_null());
 
     // Second parse: DIFFERENT fingerprint on slot 0 (material=102001, new
-    // color) — physical swap detected. Override must be cleared in-memory
-    // AND the Moonraker DB entry deleted.
+    // color) — physical swap detected.
+    //
+    // Sequence inside handle_status_update for this slot:
+    //   1. check_hardware_event_clear fires clear_override_locked, which
+    //      erases the user-set override (brand, spool_name, spoolman_id,
+    //      material, color) AND deletes the lane_data record.
+    //   2. mirror_firmware_to_lane_data (FillUnsetOnly) immediately
+    //      republishes the NEW firmware-truth color/material so OrcaSlicer's
+    //      MoonrakerPrinterAgent sees the new spool on the same parse.
+    //
+    // So the post-swap state is: override exists with ONLY firmware fields,
+    // lane_data contains the new color/material (no stale user metadata).
     json box2 = make_single_unit_box(
         {"102001", "101001", "101001", "101001"},
         {"000FF00", "0FFFFFF", "00A2989", "0C12E1F"});
     CfsTestAccess::handle_status(backend, make_cfs_notification(box2));
 
-    CHECK_FALSE(CfsTestAccess::get_override(backend, 0).has_value());
-    CHECK(api.mock_get_db_value("lane_data", "lane1").is_null());
     CHECK(CfsTestAccess::last_rfid_uid(backend, 0) == "102001|000FF00");
+
+    // Override should now hold the auto-mirrored firmware values (no user
+    // metadata): new color, no spool_name / spoolman_id / brand from the
+    // wiped user override.
+    auto post_swap = CfsTestAccess::get_override(backend, 0);
+    REQUIRE(post_swap.has_value());
+    CHECK(post_swap->color_rgb == 0x00FF00u);
+    CHECK(post_swap->spool_name.empty());
+    CHECK(post_swap->spoolman_id == 0);
+    CHECK(post_swap->brand.empty());
+
+    // lane_data was cleared by the swap and immediately republished with the
+    // new firmware truth — Orca sees the new spool's color, not stale data.
+    auto stored = api.mock_get_db_value("lane_data", "lane1");
+    REQUIRE(!stored.is_null());
+    CHECK(stored["color"] == "#00FF00");
+    CHECK_FALSE(stored.contains("spool_name"));
+    CHECK_FALSE(stored.contains("spool_id"));
+    CHECK_FALSE(stored.contains("vendor"));
 
     // Override-exclusive fields reset on the live slot. Firmware-populated
     // fields (brand from material DB, color_rgb) stay — CFS firmware owns

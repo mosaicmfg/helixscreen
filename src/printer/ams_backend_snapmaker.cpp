@@ -711,6 +711,14 @@ void AmsBackendSnapmaker::handle_status_update(const nlohmann::json& notificatio
         if (saw_rfid_info[i]) {
             check_hardware_event_clear(*slot, i, observed_uids[i]);
         }
+        // Mirror firmware-truth color/material into lane_data so OrcaSlicer's
+        // MoonrakerPrinterAgent sees the spool. FillUnsetOnly policy: like CFS,
+        // Snapmaker user edits via set_slot_info don't reach firmware (RFID is
+        // hardware-truth). See mirror_firmware_to_lane_data docs.
+        helix::ams::mirror_firmware_to_lane_data(
+            override_store_.get(), overrides_, i, slot->color_rgb, slot->material,
+            slot->status == SlotStatus::AVAILABLE, helix::ams::MirrorPolicy::FillUnsetOnly,
+            backend_log_tag());
         apply_overrides(*slot, i);
     }
 

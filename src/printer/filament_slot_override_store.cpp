@@ -56,8 +56,8 @@ nlohmann::json to_lane_data_record(int slot_index, const FilamentSlotOverride& o
     nlohmann::json j;
     j["lane"] = std::to_string(slot_index); // REQUIRED by Orca (0-based)
     if (o.color_rgb != 0) {
-        char buf[8];
-        std::snprintf(buf, sizeof(buf), "#%06X", o.color_rgb);
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "#%06X", o.color_rgb & 0x00FFFFFFu);
         j["color"] = buf;
     }
     if (!o.material.empty()) j["material"] = o.material;
@@ -811,6 +811,79 @@ void FilamentSlotOverrideStore::clear_async(int slot_index, SaveCallback cb) {
                          backend_id_copy, key, err.message);
             if (cb) cb(false, err.message);
         });
+}
+
+// =============================================================================
+// Shared firmware -> lane_data mirror helper
+// =============================================================================
+
+bool mirror_firmware_to_lane_data(FilamentSlotOverrideStore* store,
+                                  std::unordered_map<int, FilamentSlotOverride>& overrides,
+                                  int slot_index, uint32_t firmware_color,
+                                  const std::string& firmware_material, bool slot_has_filament,
+                                  MirrorPolicy policy, const std::string& log_tag) {
+    // No filament or no color reading = no signal. We must not establish a
+    // phantom lane_data entry for an empty slot, and clear_override paths
+    // already handle ejection.
+    if (!slot_has_filament || firmware_color == 0)
+        return false;
+
+    auto& ovr = overrides[slot_index]; // creates default-constructed entry if absent
+    bool changed = false;
+
+    switch (policy) {
+        case MirrorPolicy::OverwriteAlways: {
+            // IFS: user edits round-trip through firmware (Adventurer5M.json),
+            // so firmware-truth and user-truth converge after a write. Safe to
+            // overwrite — and necessary to catch external edits (Mainsail
+            // console, native LCD, CHANGE_ZCOLOR macro).
+            if (ovr.color_rgb != firmware_color) {
+                ovr.color_rgb = firmware_color;
+                changed = true;
+            }
+            if (ovr.material != firmware_material) {
+                ovr.material = firmware_material;
+                changed = true;
+            }
+            break;
+        }
+        case MirrorPolicy::FillUnsetOnly: {
+            // CFS / Snapmaker: user edits do NOT propagate to firmware (RFID
+            // is hardware-truth). Only fill fields the user hasn't explicitly
+            // set, otherwise every status poll would erase the user's choice.
+            // The escape hatch is clear_slot_override, which erases the entry
+            // and lets auto-mirror take over again.
+            if (ovr.color_rgb == 0) {
+                ovr.color_rgb = firmware_color;
+                changed = true;
+            }
+            if (ovr.material.empty() && !firmware_material.empty()) {
+                ovr.material = firmware_material;
+                changed = true;
+            }
+            break;
+        }
+    }
+
+    if (!changed)
+        return false;
+
+    if (store) {
+        FilamentSlotOverride snapshot = ovr;
+        // Capture log_tag by value — the save callback can fire long after
+        // this returns (Moonraker tracker ~60s timeout). Do NOT capture the
+        // backend by reference: the backend may outlive its store, but the
+        // store will outlive the scheduled save by design.
+        const std::string tag_copy = log_tag;
+        store->save_async(slot_index, snapshot,
+                          [tag_copy, slot_index](bool success, const std::string& err) {
+                              if (!success) {
+                                  spdlog::warn("{} lane_data auto-mirror failed for slot {}: {}",
+                                               tag_copy, slot_index, err);
+                              }
+                          });
+    }
+    return true;
 }
 
 }  // namespace helix::ams

@@ -726,34 +726,27 @@ bool AmsBackendAd5xIfs::check_external_color_change(int slot_index, uint32_t obs
 bool AmsBackendAd5xIfs::sync_override_to_firmware_locked(int slot_index,
                                                          uint32_t firmware_color,
                                                          const std::string& firmware_material) {
-    auto& ovr = overrides_[slot_index]; // creates a default-constructed entry if absent
-    const bool color_changed = ovr.color_rgb != firmware_color;
-    const bool material_changed = ovr.material != firmware_material;
-    if (!color_changed && !material_changed)
-        return false; // already in sync; don't churn lane_data
-
-    ovr.color_rgb = firmware_color;
-    ovr.material = firmware_material;
-    // updated_at left as-is — save_async stamps a fresh value so the on-disk
-    // record's scan_time wins over any local clock skew.
+    // IFS callers (check_external_color_change) have already filtered for
+    // empty-slot / no-signal cases, so this path always represents a real
+    // observation. Pass slot_has_filament=true unconditionally; the helper's
+    // own guards then enforce firmware_color != 0.
     //
+    // OverwriteAlways policy is correct for IFS only — set_slot_info pushes
+    // user color back to firmware via Adventurer5M.json, so user-truth and
+    // firmware-truth converge after any write. The mirror is a no-op in
+    // steady state and catches external edits (Mainsail console, native LCD,
+    // CHANGE_ZCOLOR) when they happen.
+    bool changed = helix::ams::mirror_firmware_to_lane_data(
+        override_store_.get(), overrides_, slot_index, firmware_color, firmware_material,
+        /*slot_has_filament=*/true, helix::ams::MirrorPolicy::OverwriteAlways, backend_log_tag());
+    if (!changed)
+        return false;
+
     // parse_adventurer_json reads external_sync_count_ before/after its loop
     // to decide whether to also push an _IFS_VARS mirror to the
-    // lessWaste/bambufy plugin's save_variables — see the comment block
-    // there for why that's required (the plugins don't self-sync).
+    // lessWaste/bambufy plugin's save_variables — see the comment block there
+    // for why that's required (the plugins don't self-sync).
     ++external_sync_count_;
-
-    if (override_store_) {
-        helix::ams::FilamentSlotOverride snapshot = ovr;
-        const std::string tag = backend_log_tag();
-        override_store_->save_async(
-            slot_index, snapshot,
-            [tag, slot_index](bool success, const std::string& err) {
-                if (!success) {
-                    spdlog::warn("{} lane_data sync failed for slot {}: {}", tag, slot_index, err);
-                }
-            });
-    }
     return true;
 }
 

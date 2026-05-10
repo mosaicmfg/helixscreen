@@ -12,6 +12,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <unistd.h>
 
 using helix::ams::FilamentSlotOverride;
@@ -1436,4 +1438,227 @@ TEST_CASE("Migration: deletes legacy per-backend local JSON file after success",
 
     // Post-migration, the per-backend file is gone.
     CHECK(!std::filesystem::exists(legacy_local));
+}
+
+// ============================================================================
+// mirror_firmware_to_lane_data — shared CFS / Snapmaker / IFS auto-mirror
+// ============================================================================
+//
+// Backend status handlers call this on every parse to publish firmware-detected
+// color/material into the lane_data namespace so OrcaSlicer's
+// MoonrakerPrinterAgent can sync filaments. Two policies:
+//
+//   - FillUnsetOnly  (CFS, Snapmaker): user edits don't propagate to firmware,
+//     so the mirror must not clobber them. Only fills empty fields.
+//   - OverwriteAlways (IFS): user edits round-trip through firmware
+//     (Adventurer5M.json), so firmware-truth and user-truth converge after a
+//     write. Mirror catches external edits.
+//
+// The save_async path runs through the same FilamentSlotOverrideStore tested
+// above, so these tests focus on the mirror's policy decisions and rate-limit
+// behavior. Side-effects on the Moonraker mock confirm that save_async fires
+// (or doesn't) as expected.
+
+TEST_CASE("mirror_firmware_to_lane_data FillUnsetOnly: empty override gets firmware values",
+          "[mirror_firmware][slow]") {
+    TmpCacheDir tmp("mirror_fillunset_empty");
+    MoonrakerClientMock client(MoonrakerClientMock::PrinterType::VORON_24);
+    helix::PrinterState state;
+    state.init_subjects(false);
+    MoonrakerAPIMock api(client, state);
+    FilamentSlotOverrideStore store(&api, "cfs");
+    FilamentSlotOverrideStoreTestAccess::set_cache_directory(store, tmp.path);
+
+    std::unordered_map<int, FilamentSlotOverride> overrides;
+    bool changed = helix::ams::mirror_firmware_to_lane_data(
+        &store, overrides, /*slot_index=*/0, /*firmware_color=*/0xFF5500,
+        /*firmware_material=*/"PLA", /*slot_has_filament=*/true,
+        helix::ams::MirrorPolicy::FillUnsetOnly, "[test]");
+    CHECK(changed);
+    CHECK(overrides[0].color_rgb == 0xFF5500u);
+    CHECK(overrides[0].material == "PLA");
+
+    auto stored = api.mock_get_db_value("lane_data", "lane1");
+    REQUIRE(!stored.is_null());
+    CHECK(stored["color"] == "#FF5500");
+    CHECK(stored["material"] == "PLA");
+}
+
+TEST_CASE("mirror_firmware_to_lane_data FillUnsetOnly: user color preserved against firmware",
+          "[mirror_firmware][slow]") {
+    TmpCacheDir tmp("mirror_fillunset_user_wins");
+    MoonrakerClientMock client(MoonrakerClientMock::PrinterType::VORON_24);
+    helix::PrinterState state;
+    state.init_subjects(false);
+    MoonrakerAPIMock api(client, state);
+    FilamentSlotOverrideStore store(&api, "cfs");
+    FilamentSlotOverrideStoreTestAccess::set_cache_directory(store, tmp.path);
+
+    // Simulate a user who already set blue + brand "Bambu" via set_slot_info.
+    std::unordered_map<int, FilamentSlotOverride> overrides;
+    overrides[0].color_rgb = 0x0000FF;
+    overrides[0].material = "PETG";
+    overrides[0].brand = "Bambu";
+
+    // Firmware reports a different color/material on its next status poll —
+    // typical CFS RFID read. The user's edit must NOT be overwritten.
+    bool changed = helix::ams::mirror_firmware_to_lane_data(
+        &store, overrides, 0, 0xFF0000, "PLA", true,
+        helix::ams::MirrorPolicy::FillUnsetOnly, "[test]");
+    CHECK_FALSE(changed);
+    CHECK(overrides[0].color_rgb == 0x0000FFu); // user's blue preserved
+    CHECK(overrides[0].material == "PETG");
+    CHECK(overrides[0].brand == "Bambu");
+
+    // No save fired — lane_data not written.
+    CHECK(api.mock_get_db_value("lane_data", "lane1").is_null());
+}
+
+TEST_CASE("mirror_firmware_to_lane_data FillUnsetOnly: partial override fills only the gap",
+          "[mirror_firmware][slow]") {
+    TmpCacheDir tmp("mirror_fillunset_partial");
+    MoonrakerClientMock client(MoonrakerClientMock::PrinterType::VORON_24);
+    helix::PrinterState state;
+    state.init_subjects(false);
+    MoonrakerAPIMock api(client, state);
+    FilamentSlotOverrideStore store(&api, "cfs");
+    FilamentSlotOverrideStoreTestAccess::set_cache_directory(store, tmp.path);
+
+    // User has set brand/spool_name but never picked color/material — firmware
+    // RFID is the source for those.
+    std::unordered_map<int, FilamentSlotOverride> overrides;
+    overrides[0].brand = "Polymaker";
+    overrides[0].spool_name = "PolyTerra Sage";
+    // color_rgb default 0, material default empty
+
+    bool changed = helix::ams::mirror_firmware_to_lane_data(
+        &store, overrides, 0, 0x88AA66, "PLA", true,
+        helix::ams::MirrorPolicy::FillUnsetOnly, "[test]");
+    CHECK(changed);
+    CHECK(overrides[0].color_rgb == 0x88AA66u);
+    CHECK(overrides[0].material == "PLA");
+    CHECK(overrides[0].brand == "Polymaker");      // user field preserved
+    CHECK(overrides[0].spool_name == "PolyTerra Sage");
+
+    auto stored = api.mock_get_db_value("lane_data", "lane1");
+    REQUIRE(!stored.is_null());
+    CHECK(stored["color"] == "#88AA66");
+    CHECK(stored["vendor"] == "Polymaker");
+    CHECK(stored["spool_name"] == "PolyTerra Sage");
+}
+
+TEST_CASE("mirror_firmware_to_lane_data: no-signal cases skip writing",
+          "[mirror_firmware][slow]") {
+    TmpCacheDir tmp("mirror_no_signal");
+    MoonrakerClientMock client(MoonrakerClientMock::PrinterType::VORON_24);
+    helix::PrinterState state;
+    state.init_subjects(false);
+    MoonrakerAPIMock api(client, state);
+    FilamentSlotOverrideStore store(&api, "cfs");
+    FilamentSlotOverrideStoreTestAccess::set_cache_directory(store, tmp.path);
+
+    std::unordered_map<int, FilamentSlotOverride> overrides;
+
+    SECTION("empty slot — nothing to publish") {
+        bool changed = helix::ams::mirror_firmware_to_lane_data(
+            &store, overrides, 0, 0xFF5500, "PLA", /*slot_has_filament=*/false,
+            helix::ams::MirrorPolicy::FillUnsetOnly, "[test]");
+        CHECK_FALSE(changed);
+        CHECK(overrides.empty()); // no phantom entry created
+        CHECK(api.mock_get_db_value("lane_data", "lane1").is_null());
+    }
+
+    SECTION("zero color = unread sentinel") {
+        bool changed = helix::ams::mirror_firmware_to_lane_data(
+            &store, overrides, 0, /*firmware_color=*/0, "PLA", true,
+            helix::ams::MirrorPolicy::FillUnsetOnly, "[test]");
+        CHECK_FALSE(changed);
+        CHECK(overrides.empty());
+        CHECK(api.mock_get_db_value("lane_data", "lane1").is_null());
+    }
+}
+
+TEST_CASE("mirror_firmware_to_lane_data OverwriteAlways: external color edit propagates",
+          "[mirror_firmware][slow]") {
+    TmpCacheDir tmp("mirror_overwrite_external");
+    MoonrakerClientMock client(MoonrakerClientMock::PrinterType::VORON_24);
+    helix::PrinterState state;
+    state.init_subjects(false);
+    MoonrakerAPIMock api(client, state);
+    FilamentSlotOverrideStore store(&api, "ifs");
+    FilamentSlotOverrideStoreTestAccess::set_cache_directory(store, tmp.path);
+
+    // IFS state: user previously picked blue via Helix; that wrote
+    // Adventurer5M.json AND saved override blue. Then someone edited the color
+    // to red via Mainsail console / native LCD / CHANGE_ZCOLOR — firmware
+    // truth changes, and the next status parse calls the mirror.
+    std::unordered_map<int, FilamentSlotOverride> overrides;
+    overrides[0].color_rgb = 0x0000FF;
+    overrides[0].material = "PLA";
+    overrides[0].brand = "Polymaker";
+
+    bool changed = helix::ams::mirror_firmware_to_lane_data(
+        &store, overrides, 0, 0xFF0000, "PETG", true,
+        helix::ams::MirrorPolicy::OverwriteAlways, "[test]");
+    CHECK(changed);
+    CHECK(overrides[0].color_rgb == 0xFF0000u); // firmware-truth wins
+    CHECK(overrides[0].material == "PETG");
+    CHECK(overrides[0].brand == "Polymaker"); // brand still preserved (mirror only touches color/material)
+
+    auto stored = api.mock_get_db_value("lane_data", "lane1");
+    REQUIRE(!stored.is_null());
+    CHECK(stored["color"] == "#FF0000");
+    CHECK(stored["material"] == "PETG");
+    CHECK(stored["vendor"] == "Polymaker");
+}
+
+TEST_CASE("mirror_firmware_to_lane_data: steady state does not churn lane_data",
+          "[mirror_firmware][slow]") {
+    TmpCacheDir tmp("mirror_steady_state");
+    MoonrakerClientMock client(MoonrakerClientMock::PrinterType::VORON_24);
+    helix::PrinterState state;
+    state.init_subjects(false);
+    MoonrakerAPIMock api(client, state);
+    FilamentSlotOverrideStore store(&api, "ifs");
+    FilamentSlotOverrideStoreTestAccess::set_cache_directory(store, tmp.path);
+
+    std::unordered_map<int, FilamentSlotOverride> overrides;
+
+    // First call seeds the override + writes lane_data.
+    CHECK(helix::ams::mirror_firmware_to_lane_data(
+        &store, overrides, 0, 0xABCDEF, "ABS", true,
+        helix::ams::MirrorPolicy::OverwriteAlways, "[test]"));
+    auto first = api.mock_get_db_value("lane_data", "lane1");
+    REQUIRE(!first.is_null());
+    auto first_scan_time = first.value("scan_time", "");
+    REQUIRE(!first_scan_time.empty());
+
+    // Subsequent calls with identical firmware values must not write —
+    // otherwise we'd hit Moonraker on every status poll just to rewrite the
+    // same record (and bump scan_time). Sleep briefly so a hypothetical second
+    // save would produce a different scan_time and we'd notice.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    CHECK_FALSE(helix::ams::mirror_firmware_to_lane_data(
+        &store, overrides, 0, 0xABCDEF, "ABS", true,
+        helix::ams::MirrorPolicy::OverwriteAlways, "[test]"));
+    CHECK_FALSE(helix::ams::mirror_firmware_to_lane_data(
+        &store, overrides, 0, 0xABCDEF, "ABS", true,
+        helix::ams::MirrorPolicy::FillUnsetOnly, "[test]"));
+
+    auto second = api.mock_get_db_value("lane_data", "lane1");
+    CHECK(second.value("scan_time", "") == first_scan_time);
+}
+
+TEST_CASE("mirror_firmware_to_lane_data: null store updates in-memory only",
+          "[mirror_firmware]") {
+    // Real-world case: backend init race or test fixture without a Moonraker
+    // API. The in-memory override should still be staged so the next status
+    // parse sees consistent state once the store comes online.
+    std::unordered_map<int, FilamentSlotOverride> overrides;
+    bool changed = helix::ams::mirror_firmware_to_lane_data(
+        /*store=*/nullptr, overrides, 0, 0x123456, "PLA", true,
+        helix::ams::MirrorPolicy::FillUnsetOnly, "[test]");
+    CHECK(changed);
+    CHECK(overrides[0].color_rgb == 0x123456u);
+    CHECK(overrides[0].material == "PLA");
 }

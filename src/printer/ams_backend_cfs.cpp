@@ -657,6 +657,16 @@ void AmsBackendCfs::handle_status_update(const nlohmann::json& notification) {
                         (uid_it != observed_uids.end()) ? uid_it->second : std::string{};
 
                     check_hardware_event_clear(slot, global_idx, observed_uid);
+                    // Mirror firmware-truth color/material into lane_data so
+                    // OrcaSlicer's MoonrakerPrinterAgent sees the spool. Runs
+                    // BEFORE apply_overrides so the values reflect firmware,
+                    // not the override-masked view. FillUnsetOnly: CFS user
+                    // edits don't reach firmware, so we must not let firmware
+                    // overwrite them — see mirror_firmware_to_lane_data docs.
+                    helix::ams::mirror_firmware_to_lane_data(
+                        override_store_.get(), overrides_, global_idx, slot.color_rgb,
+                        slot.material, slot.status == SlotStatus::AVAILABLE,
+                        helix::ams::MirrorPolicy::FillUnsetOnly, backend_log_tag());
                     apply_overrides(slot, global_idx);
                 }
             }
