@@ -157,6 +157,29 @@ class AmsBackendCfs : public AmsSubscriptionBackend {
     const char* backend_log_tag() const override { return "[AMS CFS]"; }
     void on_started() override;
 
+    /// Push the user's chosen color back to firmware via the undocumented
+    /// `BOX_MODIFY_TN_DATA` gcode (registered by box_wrapper.cpython-39.so,
+    /// not in `gcode/help`). Format reverse-engineered from K2's master-server
+    /// binary: `BOX_MODIFY_TN_DATA ADDR=<1..4> NUM=<A|B|C|D> PART=color_value
+    /// DATA=0RRGGBB`. Writes persist to `/mnt/UDISK/creality/userdata/box/tn_data.json`.
+    ///
+    /// Color-only for now — material_type uses CFS-internal codes (e.g. "101001"
+    /// for PLA) that we lack a complete reverse-map for; round-tripping the
+    /// material risks pushing a wrong/empty code and could confuse the K2's
+    /// stock LCD or the LOAD_MATERIAL macros. Color is the primary user-edit
+    /// anyway and round-trips cleanly because the format is just RGB hex.
+    ///
+    /// **CRITICAL:** sending invalid args (ADDR=0, malformed payload) triggers
+    /// a `TypeError` deep in box_wrapper which Klipper escalates to
+    /// `invoke_shutdown` — the entire printer goes offline and needs a full
+    /// `RESTART`. This method validates `global_index` in [0, 16) and skips
+    /// when `color_rgb == 0` BEFORE formatting the gcode. Non-fatal on dispatch
+    /// failure (the override is in lane_data either way).
+    ///
+    /// Marked virtual + protected so test subclasses can override and capture
+    /// the gcode without a live Moonraker connection.
+    virtual void push_slot_color_to_firmware(int global_index, uint32_t color_rgb);
+
   private:
     friend class ::CfsTestAccess;
 

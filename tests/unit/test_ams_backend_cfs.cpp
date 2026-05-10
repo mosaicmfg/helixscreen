@@ -608,6 +608,11 @@ class CfsRemapHelper : public AmsBackendCfs {
         return AmsErrorHelper::success();
     }
 
+    // Expose protected firmware-writeback helper for direct test calls.
+    // push_slot_color_to_firmware is protected (called from set_slot_info but
+    // not part of the public IAmsBackend surface).
+    using AmsBackendCfs::push_slot_color_to_firmware;
+
     std::vector<std::string> captured;
 };
 } // namespace
@@ -660,6 +665,79 @@ TEST_CASE("CFS set_tool_mapping emits BOX_MODIFY_TN with TNN keys/values",
         REQUIRE(helper.set_tool_mapping(2, 7).result == AmsResult::SUCCESS);
         REQUIRE(helper.captured == std::vector<std::string>{"BOX_MODIFY_TN T1A=T1B",
                                                               "BOX_MODIFY_TN T1C=T2D"});
+    }
+}
+
+// =============================================================================
+// CFS BOX_MODIFY_TN_DATA color firmware-writeback (push_slot_color_to_firmware)
+// =============================================================================
+//
+// Format reverse-engineered from K2's master-server binary
+// (`strings /usr/bin/master-server | grep BOX_MODIFY_TN_DATA`):
+//   BOX_MODIFY_TN_DATA ADDR=<1..4> NUM=<A|B|C|D> PART=color_value DATA=0RRGGBB
+//
+// Validated round-trip on K2 Plus 2026-05-10 — see
+// .claude/scratchpad/research/k2-box-firmware-writeback.md.
+//
+// CRITICAL: invalid args trigger box_wrapper TypeError → klippy invoke_shutdown.
+// These tests cover the validation guards in push_slot_color_to_firmware that
+// prevent any out-of-range slot index or zero-color sentinel from reaching the
+// firmware as a malformed gcode.
+
+TEST_CASE("CFS push_slot_color_to_firmware emits BOX_MODIFY_TN_DATA",
+          "[ams][cfs][firmware_writeback]") {
+    CfsRemapHelper helper;
+
+    SECTION("Slot 0 (T1A) red 0xFF0000 → ADDR=1 NUM=A DATA=0FF0000") {
+        helper.push_slot_color_to_firmware(0, 0xFF0000);
+        REQUIRE(helper.captured ==
+                std::vector<std::string>{
+                    "BOX_MODIFY_TN_DATA ADDR=1 NUM=A PART=color_value DATA=0FF0000"});
+    }
+
+    SECTION("Slot 5 (T2B) green 0x00FF00 → ADDR=2 NUM=B DATA=000FF00") {
+        helper.push_slot_color_to_firmware(5, 0x00FF00);
+        REQUIRE(helper.captured ==
+                std::vector<std::string>{
+                    "BOX_MODIFY_TN_DATA ADDR=2 NUM=B PART=color_value DATA=000FF00"});
+    }
+
+    SECTION("Slot 15 (T4D) white 0xFFFFFF → ADDR=4 NUM=D DATA=0FFFFFF") {
+        helper.push_slot_color_to_firmware(15, 0xFFFFFF);
+        REQUIRE(helper.captured ==
+                std::vector<std::string>{
+                    "BOX_MODIFY_TN_DATA ADDR=4 NUM=D PART=color_value DATA=0FFFFFF"});
+    }
+
+    SECTION("Color masks high bits — alpha byte from caller is ignored") {
+        // If a caller passes 0xAA112233, the alpha byte is dropped. The
+        // firmware's leading nibble is always our own '0'.
+        helper.push_slot_color_to_firmware(0, 0xAA112233);
+        REQUIRE(helper.captured ==
+                std::vector<std::string>{
+                    "BOX_MODIFY_TN_DATA ADDR=1 NUM=A PART=color_value DATA=0112233"});
+    }
+}
+
+TEST_CASE("CFS push_slot_color_to_firmware skips invalid inputs (must NOT crash klippy)",
+          "[ams][cfs][firmware_writeback]") {
+    CfsRemapHelper helper;
+
+    SECTION("color_rgb == 0 (no-signal sentinel) is skipped") {
+        helper.push_slot_color_to_firmware(0, 0);
+        REQUIRE(helper.captured.empty());
+    }
+
+    SECTION("Negative slot index is skipped") {
+        helper.push_slot_color_to_firmware(-1, 0xFF0000);
+        REQUIRE(helper.captured.empty());
+    }
+
+    SECTION("slot_index >= 16 is skipped") {
+        helper.push_slot_color_to_firmware(16, 0xFF0000);
+        REQUIRE(helper.captured.empty());
+        helper.push_slot_color_to_firmware(99, 0xFF0000);
+        REQUIRE(helper.captured.empty());
     }
 }
 

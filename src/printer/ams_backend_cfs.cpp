@@ -940,10 +940,57 @@ AmsError AmsBackendCfs::set_slot_info(int slot_index, const SlotInfo& info, bool
                                  err);
                 }
             });
+
+        // Push the user's color back to firmware so the K2's stock LCD and
+        // any other Moonraker-DB readers see the same value. Color-only —
+        // material codes are CFS-internal and we don't have a complete
+        // reverse-map. See push_slot_color_to_firmware docs for the discovered
+        // BOX_MODIFY_TN_DATA gcode syntax.
+        push_slot_color_to_firmware(slot_index, info.color_rgb);
     }
 
     emit_event(EVENT_SLOT_CHANGED, std::to_string(slot_index));
     return AmsErrorHelper::success();
+}
+
+void AmsBackendCfs::push_slot_color_to_firmware(int global_index, uint32_t color_rgb) {
+    // Validate inputs BEFORE formatting the gcode — invalid args trigger an
+    // unhandled TypeError in box_wrapper that Klipper escalates to
+    // invoke_shutdown. Better to silently no-op than to crash the printer.
+    constexpr int kCfsMaxSlots = 16; // 4 units × 4 slots
+    if (global_index < 0 || global_index >= kCfsMaxSlots) {
+        spdlog::debug("{} push_slot_color_to_firmware: skipping invalid slot {}",
+                      backend_log_tag(), global_index);
+        return;
+    }
+    if (color_rgb == 0) {
+        // "No signal" sentinel — same convention as the auto-mirror. Don't
+        // push a placeholder color that would overwrite a real firmware value.
+        spdlog::debug("{} push_slot_color_to_firmware: skipping slot {} (color=0)",
+                      backend_log_tag(), global_index);
+        return;
+    }
+
+    const int unit = (global_index / 4) + 1;          // 1..4
+    const char slot_letter = 'A' + (global_index % 4); // A..D
+    char data[16];
+    // CFS color_value format observed in tn_data.json: 7 hex chars, leading
+    // nibble appears to be alpha (always 0 in stock data). RGB is the trailing
+    // 6 hex digits. Match the firmware's own "0RRGGBB" format exactly.
+    std::snprintf(data, sizeof(data), "0%06X", color_rgb & 0xFFFFFFu);
+
+    char gcode[96];
+    std::snprintf(gcode, sizeof(gcode),
+                  "BOX_MODIFY_TN_DATA ADDR=%d NUM=%c PART=color_value DATA=%s", unit,
+                  slot_letter, data);
+
+    auto err = execute_gcode(gcode);
+    if (err.result != AmsResult::SUCCESS) {
+        // Non-fatal — the override is already in lane_data so user data isn't
+        // lost; only the firmware-side LCD won't reflect this edit.
+        spdlog::warn("{} push_slot_color_to_firmware: gcode dispatch failed for slot {}: {}",
+                     backend_log_tag(), global_index, err.technical_msg);
+    }
 }
 
 AmsError AmsBackendCfs::set_tool_mapping(int tool_number, int slot_index) {
