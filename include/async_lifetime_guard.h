@@ -37,6 +37,7 @@
 
 #include <atomic>
 #include <memory>
+#include <tuple>
 #include <utility>
 
 namespace helix {
@@ -66,7 +67,16 @@ bool on_main_thread() noexcept;
 /// location. If we captured the LR in the inline `expired()` and passed it
 /// in, the compiler would substitute F's caller's LR after inlining, which
 /// is the wrong frame for the audit. Resolve the captured LR with addr2line.
+///
+/// In strict mode (HELIX_STRICT_BG_THREAD_CHECK=1 env or
+/// set_strict_bg_check(true)), this aborts after warning so CI / tests
+/// fail fast on any new instance of the anti-pattern.
 void report_bg_expired_check() noexcept;
+
+/// Enable strict mode programmatically — meant for HelixTestFixture so test
+/// runs assert any L081 anti-pattern instead of silently warning. Production
+/// code should never call this; only the env var path is safe in user builds.
+void set_strict_bg_check(bool enabled) noexcept;
 
 } // namespace internal
 
@@ -238,6 +248,66 @@ class AsyncLifetimeGuard {
             }
             f();
         });
+    }
+
+    /**
+     * @brief Wrap a background-thread callback so its body always fires on the main thread
+     *
+     * Returns a callable suitable to pass directly to HTTP / WebSocket / HttpExecutor /
+     * std::thread APIs. When the underlying API invokes the returned callable on a bg
+     * thread, the supplied `fn` is queued via `defer(tag, ...)` — fn always runs on the
+     * main thread, after a generation-guard re-check, with `this` guaranteed valid.
+     * Arguments are forwarded by-value (decayed) into the deferred lambda so callers
+     * never see a dangling reference to a temporary on the bg-thread side.
+     *
+     * Use this in preference to writing `[this, tok = lifetime_.token()](...) {
+     * if (tok.expired()) return; ... }` by hand — that idiom is the L081 anti-pattern
+     * the strict-mode detector aborts on.
+     *
+     * Pattern:
+     * @code
+     * api_->rest().wled_get_strips(
+     *     lifetime_.bg_cb("LedController::wled_get_strips",
+     *                     [this](const RestResponse& resp) {
+     *                         // runs on main; safe to touch members
+     *                         apply_strips(resp);
+     *                     }),
+     *     [](const MoonrakerError& err) { ... });
+     * @endcode
+     *
+     * If your callback wants to do bg-side work first (parsing JSON before deferring
+     * member mutations), keep using the longhand `tok.defer("Tag", [...] { ... })`
+     * pattern explicitly — bg_cb defers the *whole* call, so it trades minimum-bg-work
+     * for minimum-syntax-overhead.
+     *
+     * @tparam F  Callable invoked on the main thread when the wrapper fires
+     * @param tag  String literal identifying the caller (crash diagnostics)
+     * @param fn   The callback body — runs on main thread inside the defer
+     */
+    template <typename F>
+    auto bg_cb(const char* tag, F&& fn) {
+        auto gen = gen_;
+        auto snapshot = gen_->load(std::memory_order_acquire);
+        return [gen, snapshot, tag,
+                fn = std::forward<F>(fn)](auto&&... args) mutable {
+            // Decay args into a value-tuple so the deferred body can't observe
+            // references that died with the bg-thread stack frame.
+            auto args_tuple =
+                std::make_tuple(std::decay_t<decltype(args)>(std::forward<decltype(args)>(args))...);
+            helix::ui::queue_update(
+                tag, [gen, snapshot, tag, fn, t = std::move(args_tuple)]() mutable {
+                    if (gen->load(std::memory_order_acquire) != snapshot) {
+                        spdlog::trace("[AsyncLifetimeGuard] Skipped expired bg_cb: {}",
+                                      tag ? tag : "unknown");
+                        return;
+                    }
+                    std::apply(
+                        [&fn](auto&&... a) {
+                            fn(std::forward<decltype(a)>(a)...);
+                        },
+                        std::move(t));
+                });
+        };
     }
 
   private:

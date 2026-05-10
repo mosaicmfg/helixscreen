@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <pthread.h>
 
@@ -32,6 +33,12 @@ namespace {
 /// the brief early-init window.
 std::atomic<bool> g_main_thread_set{false};
 pthread_t g_main_thread_id;
+
+/// Strict mode: abort instead of just warning when the bg-thread anti-pattern
+/// fires. Enabled by setting `HELIX_STRICT_BG_THREAD_CHECK=1` in the env
+/// (CI runs export this; production never sets it). Resolved once at
+/// `set_main_thread_id()` time so the cost is one TLS-cache read at fire.
+std::atomic<bool> g_strict_bg_check{false};
 
 /// Per-thread first-fire seen-set: TLS array of LRs already reported by
 /// THIS thread. 64 slots × sizeof(void*) = 512 bytes per thread, linear
@@ -63,7 +70,17 @@ bool record_first_fire(void* lr) noexcept {
 void set_main_thread_id() noexcept {
     if (g_main_thread_set.load(std::memory_order_acquire)) return;
     g_main_thread_id = pthread_self();
+    // Resolve strict mode opt-in once. Test fixtures may call
+    // set_strict_bg_check(true) explicitly; CI exports the env var.
+    if (const char* v = std::getenv("HELIX_STRICT_BG_THREAD_CHECK");
+        v != nullptr && (v[0] == '1' || v[0] == 't' || v[0] == 'T' || v[0] == 'y' || v[0] == 'Y')) {
+        g_strict_bg_check.store(true, std::memory_order_release);
+    }
     g_main_thread_set.store(true, std::memory_order_release);
+}
+
+void set_strict_bg_check(bool enabled) noexcept {
+    g_strict_bg_check.store(enabled, std::memory_order_release);
 }
 
 bool on_main_thread() noexcept {
@@ -105,6 +122,18 @@ bool on_main_thread() noexcept {
     spdlog::warn("[LifetimeToken] bg-thread expired() check while alive at lr={} — "
                  "likely missing tok.defer() wrap (cluster:pstat-async-delete Mechanism C)",
                  lr);
+
+    // Strict mode (CI / test fixtures): abort so any new instance of the
+    // anti-pattern fails the build instead of silently warning. Production
+    // stays at warn so we never crash a user over instrumentation.
+    if (g_strict_bg_check.load(std::memory_order_acquire)) {
+        std::fprintf(stderr,
+                     "\n[LifetimeToken] STRICT MODE: bg-thread expired() check at lr=%p — "
+                     "wrap the callback body in tok.defer(...) or use lifetime_.bg_cb(...). "
+                     "See include/async_lifetime_guard.h.\n",
+                     lr);
+        std::abort();
+    }
 }
 
 } // namespace helix::internal
