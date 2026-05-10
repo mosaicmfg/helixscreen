@@ -44,10 +44,21 @@ extern "C" void helix_lvgl_anomaly(const char* code, const char* context) {
     // semantically correct for LVGL/render-layer anomalies. Per-category rate
     // limit (1/5min) applies, so we share the budget with other display errors.
     std::string ctx;
-    ctx.reserve(256);
+    ctx.reserve(384);
     if (context && *context) {
         ctx = context;
         ctx += " | ";
+    }
+    // Stable anchor: runtime address of helix_lvgl_anomaly itself.
+    // Python-side resolver uses this to compute load_base directly
+    // (base = runtime_anchor - file_offset_of_helix_lvgl_anomaly), avoiding
+    // the heuristic guesswork that fails on PIE binaries. Backwards-compat:
+    // pre-fix bundles lack this field and the resolver falls back to raw hex.
+    {
+        char anchor_buf[40];
+        std::snprintf(anchor_buf, sizeof(anchor_buf), "runtime_anchor=0x%lx | ",
+                      reinterpret_cast<unsigned long>(&helix_lvgl_anomaly));
+        ctx += anchor_buf;
     }
     ctx += "bt=";
     ctx += capture_backtrace_hex();
