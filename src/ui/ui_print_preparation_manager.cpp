@@ -1102,19 +1102,13 @@ void PrintPreparationManager::modify_and_print_streaming(
     // Step 1: Download file to disk (streaming, not memory)
     api_->transfers().download_file_to_path(
         "gcodes", file_path, local_download_path,
-        // Download success - NOTE: runs on HTTP thread
+        // Download success - NOTE: runs on HTTP thread.
+        // L081 Mechanism C: bg-safe work (gcode modification + filesystem
+        // cleanup) runs locally; the `this->` accesses (printer_state_,
+        // api_->) are wrapped in token.defer().
         [this, token, file_path, display_filename, ops_to_disable, macro_skip_params, mod_names,
          scan_result, local_download_path, remote_temp_path, on_navigate_to_status,
          use_plugin](const std::string& /*dest_path*/) {
-            // Check if manager was destroyed before this callback executed
-            if (token.expired()) {
-                spdlog::debug("[PrintPreparationManager] Skipping streaming download callback - "
-                              "manager destroyed");
-                // Clean up download file since we're bailing out
-                std::error_code ec;
-                std::filesystem::remove(local_download_path, ec);
-                return;
-            }
             spdlog::info("[PrintPreparationManager] Downloaded to disk, applying streaming "
                          "modification");
 
@@ -1137,7 +1131,8 @@ void PrintPreparationManager::modify_and_print_streaming(
 
             auto result = modifier.apply_streaming(local_download_path);
 
-            // Clean up download file (no longer needed)
+            // Clean up download file (no longer needed) — bg-safe filesystem op,
+            // runs even if owner is destroyed.
             std::error_code ec;
             std::filesystem::remove(local_download_path, ec);
             if (ec) {
@@ -1147,8 +1142,12 @@ void PrintPreparationManager::modify_and_print_streaming(
 
             if (!result.success) {
                 NOTIFY_ERROR(lv_tr("Failed to modify G-code: {}"), result.error_message);
-                if (printer_state_)
-                    printer_state_->set_print_in_progress(false);
+                // Defer this-> access to main thread.
+                token.defer("PrintPreparationManager::modify_fail_clear_progress",
+                            [this]() {
+                                if (printer_state_)
+                                    printer_state_->set_print_in_progress(false);
+                            });
                 return;
             }
 
@@ -1157,11 +1156,18 @@ void PrintPreparationManager::modify_and_print_streaming(
                          result.lines_modified, result.modified_path);
             helix::MemoryMonitor::log_now("print_modification_done", spdlog::level::debug);
 
-            // Step 3: Upload modified file from disk
+            // Step 3: Upload modified file from disk — defer the api_-> kick-off
+            // to main thread (touches this->api_).
             std::string modified_path = result.modified_path; // Copy for lambda
+            token.defer(
+                "PrintPreparationManager::modify_upload_kickoff",
+                [this, token, modified_path, display_filename, remote_temp_path, file_path,
+                 mod_names, on_navigate_to_status, use_plugin]() {
             api_->transfers().upload_file_from_path(
                 "gcodes", remote_temp_path, modified_path,
-                // Upload success - NOTE: runs on HTTP thread, defer LVGL ops
+                // Upload success - NOTE: runs on HTTP thread, defer LVGL ops.
+                // L081 Mechanism C: filesystem cleanup runs locally; `this->`
+                // (api_->) work is deferred to main.
                 [this, token, modified_path, display_filename, remote_temp_path, file_path,
                  mod_names, on_navigate_to_status, use_plugin]() {
                     // Clean up local modified file (safe - filesystem op, always do it)
@@ -1173,119 +1179,123 @@ void PrintPreparationManager::modify_and_print_streaming(
                             ec.message());
                     }
 
-                    // Check if manager was destroyed before this callback executed
-                    if (token.expired()) {
-                        spdlog::debug("[PrintPreparationManager] Skipping upload callback - "
-                                      "manager destroyed");
-                        return;
-                    }
-
                     spdlog::info("[PrintPreparationManager] Modified file uploaded, starting "
                                  "print (use_plugin={})",
                                  use_plugin);
                     helix::MemoryMonitor::log_now("print_start_dispatched", spdlog::level::debug);
 
-                    // Step 4: Start print with modified file
-                    // If plugin available, use path-based API for symlink/history patching
-                    // Otherwise, use standard start_print
+                    // Step 4: Start print with modified file — defer api_-> kick-off
+                    // to main thread. The on_print_success / on_print_error lambdas
+                    // are constructed/captured here (no `this` deref), then dispatched.
+                    token.defer(
+                        "PrintPreparationManager::start_print_kickoff",
+                        [this, token, display_filename, remote_temp_path, file_path, mod_names,
+                         on_navigate_to_status, use_plugin]() {
+                            // If plugin available, use path-based API for
+                            // symlink/history patching. Otherwise, use standard
+                            // start_print.
 
-                    // Define common callbacks to avoid code duplication
-                    auto on_print_success = [this, on_navigate_to_status, display_filename,
-                                             file_path]() {
-                        spdlog::info("[PrintPreparationManager] Print started with "
-                                     "modified G-code (streaming, original: {})",
-                                     display_filename);
+                            // Define common callbacks to avoid code duplication
+                            auto on_print_success = [this, on_navigate_to_status, display_filename,
+                                                     file_path]() {
+                                spdlog::info("[PrintPreparationManager] Print started with "
+                                             "modified G-code (streaming, original: {})",
+                                             display_filename);
 
-                        // Clear in-progress flag on success
-                        if (printer_state_) {
-                            printer_state_->set_print_in_progress(false);
-                        }
-
-                        // Defer LVGL operations to main thread
-                        struct PrintStartedData {
-                            std::string display_filename; // For display purposes
-                            std::string original_path;    // Full path for metadata lookup
-                            NavigateToStatusCallback navigate_cb;
-                        };
-                        helix::ui::queue_update<PrintStartedData>(
-                            std::make_unique<PrintStartedData>(PrintStartedData{
-                                display_filename, file_path, on_navigate_to_status}),
-                            [](PrintStartedData* d) {
-                                // Hide overlay now that print is starting
-                                BusyOverlay::hide();
-
-                                // Set thumbnail source override for modified temp files
-                                // Uses original_path (e.g., usb/flowrate_0.gcode) for metadata
-                                // lookup
-                                // - Panel: local gcode viewer and thumbnail display
-                                // - Manager: shared subjects for HomePanel
-                                get_global_print_status_panel().set_thumbnail_source(
-                                    d->original_path);
-                                helix::get_active_print_media_manager().set_thumbnail_source(
-                                    d->original_path);
-
-                                if (d->navigate_cb) {
-                                    d->navigate_cb();
+                                // Clear in-progress flag on success
+                                if (printer_state_) {
+                                    printer_state_->set_print_in_progress(false);
                                 }
-                            });
-                    };
 
-                    auto on_print_error = [this, token,
-                                           remote_temp_path](const MoonrakerError& error) {
-                        // Hide overlay on error (defer to main thread)
-                        helix::ui::async_call([](void*) { BusyOverlay::hide(); }, nullptr);
+                                // Defer LVGL operations to main thread
+                                struct PrintStartedData {
+                                    std::string display_filename; // For display purposes
+                                    std::string original_path;    // Full path for metadata lookup
+                                    NavigateToStatusCallback navigate_cb;
+                                };
+                                helix::ui::queue_update<PrintStartedData>(
+                                    std::make_unique<PrintStartedData>(PrintStartedData{
+                                        display_filename, file_path, on_navigate_to_status}),
+                                    [](PrintStartedData* d) {
+                                        // Hide overlay now that print is starting
+                                        BusyOverlay::hide();
 
-                        NOTIFY_ERROR(lv_tr("Failed to start print: {}"), error.message);
-                        LOG_ERROR_INTERNAL(
-                            "[PrintPreparationManager] Print start failed for {}: {}",
-                            remote_temp_path, error.message);
+                                        // Set thumbnail source override for modified temp
+                                        // files. Uses original_path (e.g.,
+                                        // usb/flowrate_0.gcode) for metadata lookup
+                                        // - Panel: local gcode viewer and thumbnail display
+                                        // - Manager: shared subjects for HomePanel
+                                        get_global_print_status_panel().set_thumbnail_source(
+                                            d->original_path);
+                                        helix::get_active_print_media_manager()
+                                            .set_thumbnail_source(d->original_path);
 
-                        // Clear in-progress flag on error
-                        if (printer_state_) {
-                            printer_state_->set_print_in_progress(false);
-                        }
+                                        if (d->navigate_cb) {
+                                            d->navigate_cb();
+                                        }
+                                    });
+                            };
 
-                        // Check if manager still valid before cleanup
-                        if (token.expired()) {
-                            spdlog::debug(
-                                "[PrintPreparationManager] Skipping remote cleanup - manager "
-                                "destroyed");
-                            return;
-                        }
+                            auto on_print_error = [this, token, remote_temp_path](
+                                                      const MoonrakerError& error) {
+                                // Hide overlay on error (defer to main thread)
+                                helix::ui::async_call([](void*) { BusyOverlay::hide(); }, nullptr);
 
-                        // Clean up remote temp file on failure
-                        // Moonraker's delete_file requires full path including root
-                        std::string full_path = "gcodes/" + remote_temp_path;
-                        api_->files().delete_file(
-                            full_path,
-                            []() {
-                                spdlog::debug("[PrintPreparationManager] Cleaned up "
-                                              "remote temp file after print failure");
-                            },
-                            [](const MoonrakerError& /*del_err*/) {
-                                // Ignore delete errors - file may not exist or cleanup
-                                // isn't critical
-                            });
-                    };
+                                NOTIFY_ERROR(lv_tr("Failed to start print: {}"), error.message);
+                                LOG_ERROR_INTERNAL(
+                                    "[PrintPreparationManager] Print start failed for {}: {}",
+                                    remote_temp_path, error.message);
 
-                    if (use_plugin) {
-                        // Plugin path: Use path-based API (v2.0)
-                        // The plugin will create symlink, patch history, and start print
-                        api_->job().start_modified_print(
-                            file_path,        // Original filename for history
-                            remote_temp_path, // Path to uploaded modified file
-                            mod_names,
-                            [on_print_success](const ModifiedPrintResult& result) {
-                                spdlog::info("[PrintPreparationManager] Plugin accepted print: "
-                                             "{} -> {}",
-                                             result.original_filename, result.print_filename);
-                                on_print_success();
-                            },
-                            on_print_error);
-                    } else {
-                        // Standard path: Just start print with modified file
-                        api_->job().start_print(remote_temp_path, on_print_success, on_print_error);
-                    }
+                                // Clear in-progress flag on error
+                                if (printer_state_) {
+                                    printer_state_->set_print_in_progress(false);
+                                }
+
+                                // L081 Mechanism C: defer remote cleanup (api_->) to
+                                // main thread. start_print_* error cb fires on HTTP bg.
+                                token.defer(
+                                    "PrintPreparationManager::start_print_error_cleanup",
+                                    [this, remote_temp_path]() {
+                                        // Clean up remote temp file on failure
+                                        // Moonraker's delete_file requires full path
+                                        // including root
+                                        std::string full_path = "gcodes/" + remote_temp_path;
+                                        api_->files().delete_file(
+                                            full_path,
+                                            []() {
+                                                spdlog::debug(
+                                                    "[PrintPreparationManager] Cleaned up "
+                                                    "remote temp file after print failure");
+                                            },
+                                            [](const MoonrakerError& /*del_err*/) {
+                                                // Ignore delete errors - file may not exist
+                                                // or cleanup isn't critical
+                                            });
+                                    });
+                            };
+
+                            if (use_plugin) {
+                                // Plugin path: Use path-based API (v2.0)
+                                // The plugin will create symlink, patch history, and start
+                                // print
+                                api_->job().start_modified_print(
+                                    file_path,        // Original filename for history
+                                    remote_temp_path, // Path to uploaded modified file
+                                    mod_names,
+                                    [on_print_success](const ModifiedPrintResult& result) {
+                                        spdlog::info(
+                                            "[PrintPreparationManager] Plugin accepted print: "
+                                            "{} -> {}",
+                                            result.original_filename, result.print_filename);
+                                        on_print_success();
+                                    },
+                                    on_print_error);
+                            } else {
+                                // Standard path: Just start print with modified file
+                                api_->job().start_print(remote_temp_path, on_print_success,
+                                                        on_print_error);
+                            }
+                        });
                 },
                 // Upload error - clean up local file
                 [this, modified_path](const MoonrakerError& error) {
@@ -1316,6 +1326,7 @@ void PrintPreparationManager::modify_and_print_streaming(
                         },
                         reinterpret_cast<void*>(static_cast<uintptr_t>(pct * 100.0f)));
                 });
+                }); // close PrintPreparationManager::modify_upload_kickoff defer
         },
         // Download error - clean up partial download
         [this, file_path, local_download_path](const MoonrakerError& error) {

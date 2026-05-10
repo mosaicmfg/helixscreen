@@ -409,72 +409,78 @@ void PrintStartEnhancer::apply_enhancements(MoonrakerAPI* api, const std::string
         api, config_file, backup_filename,
         [this, api, macro_name, config_file, approved, backup_filename, on_progress, on_complete,
          safe_error, token, op_flag]() {
-            if (token.expired()) {
-                if (op_flag)
-                    op_flag->store(false);
-                spdlog::debug("[PrintStartEnhancer] Destroyed during backup, aborting");
-                return;
-            }
+            // L081 Mechanism C: defer chained this-> work to main thread
+            // (create_backup cb fires on HTTP bg thread). If token is expired,
+            // the deferred lambda will be skipped — `this` is dead so op_flag
+            // is moot.
+            token.defer(
+                "PrintStartEnhancer::apply_modify_step",
+                [this, api, macro_name, config_file, approved, backup_filename, on_progress,
+                 on_complete, safe_error, token, op_flag]() {
+                    spdlog::debug("[PrintStartEnhancer] Backup created: {}", backup_filename);
 
-            spdlog::debug("[PrintStartEnhancer] Backup created: {}", backup_filename);
-
-            // Step 2: Download, modify, upload config
-            if (on_progress) {
-                on_progress("Modifying configuration", 2, 4);
-            }
-
-            modify_and_upload_config(
-                api, macro_name, config_file, approved,
-                [this, api, backup_filename, on_progress, on_complete, safe_error, token,
-                 op_flag](size_t ops, size_t lines) {
-                    if (token.expired()) {
-                        if (op_flag)
-                            op_flag->store(false);
-                        spdlog::debug("[PrintStartEnhancer] Destroyed during modify, aborting");
-                        return;
-                    }
-
-                    spdlog::debug("[PrintStartEnhancer] Config modified: {} ops, {} lines", ops,
-                                  lines);
-
-                    // Step 3: Restart Klipper
+                    // Step 2: Download, modify, upload config
                     if (on_progress) {
-                        on_progress("Restarting Klipper", 3, 4);
+                        on_progress("Modifying configuration", 2, 4);
                     }
 
-                    restart_klipper(
-                        api,
-                        [backup_filename, ops, lines, on_progress, on_complete, token, op_flag]() {
-                            // Clear operation flag on success
-                            if (op_flag)
-                                op_flag->store(false);
+                    modify_and_upload_config(
+                        api, macro_name, config_file, approved,
+                        [this, api, backup_filename, on_progress, on_complete, safe_error, token,
+                         op_flag](size_t ops, size_t lines) {
+                            // L081 Mechanism C: defer chained this-> work to main thread.
+                            token.defer(
+                                "PrintStartEnhancer::apply_restart_step",
+                                [this, api, backup_filename, ops, lines, on_progress, on_complete,
+                                 safe_error, token, op_flag]() {
+                                    spdlog::debug(
+                                        "[PrintStartEnhancer] Config modified: {} ops, {} lines",
+                                        ops, lines);
 
-                            if (token.expired()) {
-                                spdlog::debug(
-                                    "[PrintStartEnhancer] Destroyed during restart, aborting");
-                                return;
-                            }
+                                    // Step 3: Restart Klipper
+                                    if (on_progress) {
+                                        on_progress("Restarting Klipper", 3, 4);
+                                    }
 
-                            spdlog::info("[PrintStartEnhancer] Klipper restart initiated");
+                                    restart_klipper(
+                                        api,
+                                        [backup_filename, ops, lines, on_progress, on_complete,
+                                         token, op_flag]() {
+                                            // L081 Mechanism C: defer to main thread so
+                                            // op_flag (member pointer) and on_complete
+                                            // run safely.
+                                            token.defer(
+                                                "PrintStartEnhancer::apply_complete_step",
+                                                [backup_filename, ops, lines, on_progress,
+                                                 on_complete, op_flag]() {
+                                                    // Clear operation flag on success
+                                                    if (op_flag)
+                                                        op_flag->store(false);
 
-                            // Step 4: Complete
-                            if (on_progress) {
-                                on_progress("Complete", 4, 4);
-                            }
+                                                    spdlog::info("[PrintStartEnhancer] Klipper "
+                                                                 "restart initiated");
 
-                            EnhancementResult result;
-                            result.success = true;
-                            result.backup_filename = backup_filename;
-                            result.operations_enhanced = ops;
-                            result.lines_added = lines;
+                                                    // Step 4: Complete
+                                                    if (on_progress) {
+                                                        on_progress("Complete", 4, 4);
+                                                    }
 
-                            if (on_complete) {
-                                on_complete(result);
-                            }
+                                                    EnhancementResult result;
+                                                    result.success = true;
+                                                    result.backup_filename = backup_filename;
+                                                    result.operations_enhanced = ops;
+                                                    result.lines_added = lines;
+
+                                                    if (on_complete) {
+                                                        on_complete(result);
+                                                    }
+                                                });
+                                        },
+                                        safe_error);
+                                });
                         },
                         safe_error);
-                },
-                safe_error);
+                });
         },
         safe_error);
 }
@@ -507,10 +513,14 @@ void PrintStartEnhancer::restore_from_backup(MoonrakerAPI* api, const std::strin
     api->files().copy_file(
         "config/" + backup_filename, "config/printer.cfg",
         [this, api, on_complete, safe_error, token]() {
-            if (token.expired()) return;
-
-            spdlog::debug("[PrintStartEnhancer] Backup restored, restarting Klipper");
-            restart_klipper(api, on_complete, safe_error);
+            // L081 Mechanism C: defer chained this-> work to main thread
+            // (copy_file cb fires on HTTP bg thread).
+            token.defer("PrintStartEnhancer::restore_restart",
+                        [this, api, on_complete, safe_error]() {
+                            spdlog::debug(
+                                "[PrintStartEnhancer] Backup restored, restarting Klipper");
+                            restart_klipper(api, on_complete, safe_error);
+                        });
         },
         safe_error);
 }

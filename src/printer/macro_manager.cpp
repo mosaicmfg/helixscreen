@@ -144,26 +144,34 @@ void MacroManager::install(SuccessCallback on_success, ErrorCallback on_error) {
     // Step 1: Upload macro file
     upload_macro_file(
         [this, token, on_success, on_error]() {
-            if (token.expired())
-                return;
-            spdlog::info("[HelixMacroManager] Macro file uploaded, adding include...");
+            // L081 Mechanism C: defer chained this-> work to main thread
+            // (upload cb fires on HTTP bg thread).
+            token.defer("MacroManager::install_step2",
+                        [this, token, on_success, on_error]() {
+                            spdlog::info(
+                                "[HelixMacroManager] Macro file uploaded, adding include...");
 
-            // Step 2: Add include to printer.cfg
-            add_include_to_config(
-                [this, token, on_success, on_error]() {
-                    if (token.expired())
-                        return;
-                    spdlog::info("[HelixMacroManager] Include added, restarting Klipper...");
+                            // Step 2: Add include to printer.cfg
+                            add_include_to_config(
+                                [this, token, on_success, on_error]() {
+                                    token.defer(
+                                        "MacroManager::install_step3",
+                                        [this, on_success, on_error]() {
+                                            spdlog::info("[HelixMacroManager] Include added, "
+                                                         "restarting Klipper...");
 
-                    // Step 3: Restart Klipper
-                    restart_klipper(
-                        [on_success]() {
-                            spdlog::info("[HelixMacroManager] Installation complete!");
-                            on_success();
-                        },
-                        on_error);
-                },
-                on_error);
+                                            // Step 3: Restart Klipper
+                                            restart_klipper(
+                                                [on_success]() {
+                                                    spdlog::info("[HelixMacroManager] "
+                                                                 "Installation complete!");
+                                                    on_success();
+                                                },
+                                                on_error);
+                                        });
+                                },
+                                on_error);
+                        });
         },
         on_error);
 }
@@ -176,9 +184,10 @@ void MacroManager::update(SuccessCallback on_success, ErrorCallback on_error) {
     // Just upload the new file and restart
     upload_macro_file(
         [this, token, on_success, on_error]() {
-            if (token.expired())
-                return;
-            restart_klipper(on_success, on_error);
+            // L081 Mechanism C: defer chained this-> work to main thread
+            // (upload cb fires on HTTP bg thread).
+            token.defer("MacroManager::update_restart",
+                        [this, on_success, on_error]() { restart_klipper(on_success, on_error); });
         },
         on_error);
 }
@@ -191,17 +200,21 @@ void MacroManager::uninstall(SuccessCallback on_success, ErrorCallback on_error)
     // Step 1: Remove include from printer.cfg
     remove_include_from_config(
         [this, token, on_success, on_error]() {
-            if (token.expired())
-                return;
-            // Step 2: Delete macro file
-            delete_macro_file(
-                [this, token, on_success, on_error]() {
-                    if (token.expired())
-                        return;
-                    // Step 3: Restart Klipper
-                    restart_klipper(on_success, on_error);
-                },
-                on_error);
+            // L081 Mechanism C: defer chained this-> work to main thread
+            // (remove_include cb fires on HTTP bg thread).
+            token.defer("MacroManager::uninstall_step2",
+                        [this, token, on_success, on_error]() {
+                            // Step 2: Delete macro file
+                            delete_macro_file(
+                                [this, token, on_success, on_error]() {
+                                    token.defer("MacroManager::uninstall_step3",
+                                                [this, on_success, on_error]() {
+                                                    // Step 3: Restart Klipper
+                                                    restart_klipper(on_success, on_error);
+                                                });
+                                },
+                                on_error);
+                        });
         },
         on_error);
 }
@@ -265,10 +278,10 @@ void MacroManager::add_include_to_config(SuccessCallback on_success, ErrorCallba
     // Download printer.cfg
     api_.transfers().download_file(
         "config", "printer.cfg",
-        // Download success
+        // Download success — runs on HTTP bg thread.
+        // L081 Mechanism C: do pure parsing/construction locally on BG, then defer
+        // the api_-> kick-off to main thread.
         [this, token, on_success, on_error](const std::string& content) {
-            if (token.expired())
-                return;
             // Check if include line already exists
             std::string include_line = "[include " + std::string(HELIX_MACROS_FILENAME) + "]";
             if (content.find(include_line) != std::string::npos) {
@@ -312,24 +325,31 @@ void MacroManager::add_include_to_config(SuccessCallback on_success, ErrorCallba
                 spdlog::debug("[HelixMacroManager] Inserted at beginning of file");
             }
 
-            // Upload modified printer.cfg
-            api_.transfers().upload_file_with_name(
-                "config", "", "printer.cfg", modified_content,
-                // Upload success
-                [on_success]() {
-                    spdlog::info("[HelixMacroManager] Successfully added include to printer.cfg");
-                    if (on_success) {
-                        on_success();
-                    }
-                },
-                // Upload error
-                [on_error](const MoonrakerError& err) {
-                    spdlog::error("[HelixMacroManager] Failed to upload modified printer.cfg: {}",
-                                  err.message);
-                    if (on_error) {
-                        on_error(err);
-                    }
-                });
+            // Defer the upload kick-off to main thread (needs api_)
+            token.defer("MacroManager::add_include_upload",
+                        [this, on_success, on_error,
+                         modified_content = std::move(modified_content)]() mutable {
+                            // Upload modified printer.cfg
+                            api_.transfers().upload_file_with_name(
+                                "config", "", "printer.cfg", modified_content,
+                                // Upload success
+                                [on_success]() {
+                                    spdlog::info("[HelixMacroManager] Successfully added include "
+                                                 "to printer.cfg");
+                                    if (on_success) {
+                                        on_success();
+                                    }
+                                },
+                                // Upload error
+                                [on_error](const MoonrakerError& err) {
+                                    spdlog::error("[HelixMacroManager] Failed to upload modified "
+                                                  "printer.cfg: {}",
+                                                  err.message);
+                                    if (on_error) {
+                                        on_error(err);
+                                    }
+                                });
+                        });
         },
         // Download error
         [on_error](const MoonrakerError& err) {
@@ -348,10 +368,10 @@ void MacroManager::remove_include_from_config(SuccessCallback on_success, ErrorC
     // Download printer.cfg
     api_.transfers().download_file(
         "config", "printer.cfg",
-        // Download success
+        // Download success — runs on HTTP bg thread.
+        // L081 Mechanism C: do pure parsing/construction locally on BG, then defer
+        // the api_-> kick-off to main thread.
         [this, token, on_success, on_error](const std::string& content) {
-            if (token.expired())
-                return;
             std::string include_line = "[include " + std::string(HELIX_MACROS_FILENAME) + "]";
 
             // Check if include line exists
@@ -379,25 +399,31 @@ void MacroManager::remove_include_from_config(SuccessCallback on_success, ErrorC
             spdlog::debug("[HelixMacroManager] Removed include line at pos {}-{}", line_start,
                           line_end);
 
-            // Upload modified printer.cfg
-            api_.transfers().upload_file_with_name(
-                "config", "", "printer.cfg", modified_content,
-                // Upload success
-                [on_success]() {
-                    spdlog::info(
-                        "[HelixMacroManager] Successfully removed include from printer.cfg");
-                    if (on_success) {
-                        on_success();
-                    }
-                },
-                // Upload error
-                [on_error](const MoonrakerError& err) {
-                    spdlog::error("[HelixMacroManager] Failed to upload modified printer.cfg: {}",
-                                  err.message);
-                    if (on_error) {
-                        on_error(err);
-                    }
-                });
+            // Defer the upload kick-off to main thread (needs api_)
+            token.defer("MacroManager::remove_include_upload",
+                        [this, on_success, on_error,
+                         modified_content = std::move(modified_content)]() mutable {
+                            // Upload modified printer.cfg
+                            api_.transfers().upload_file_with_name(
+                                "config", "", "printer.cfg", modified_content,
+                                // Upload success
+                                [on_success]() {
+                                    spdlog::info("[HelixMacroManager] Successfully removed "
+                                                 "include from printer.cfg");
+                                    if (on_success) {
+                                        on_success();
+                                    }
+                                },
+                                // Upload error
+                                [on_error](const MoonrakerError& err) {
+                                    spdlog::error("[HelixMacroManager] Failed to upload modified "
+                                                  "printer.cfg: {}",
+                                                  err.message);
+                                    if (on_error) {
+                                        on_error(err);
+                                    }
+                                });
+                        });
         },
         // Download error
         [on_error](const MoonrakerError& err) {
