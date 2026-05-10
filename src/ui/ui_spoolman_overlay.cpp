@@ -922,41 +922,49 @@ void SpoolmanOverlay::remove_spoolman_config() {
     api_->transfers().download_file(
         "config", "helixscreen.conf",
         [this, token](const std::string& content) {
-            if (token.expired())
-                return;
+            // Build modified content on bg thread (pure string ops, no `this`).
             std::string modified =
                 helix::MoonrakerConfigManager::remove_section(content, "spoolman");
-            api_->transfers().upload_file(
-                "config", "helixscreen.conf", modified,
-                [this, token]() {
-                    if (token.expired())
-                        return;
-                    token.defer([this]() { set_setup_status(lv_tr("Restarting Moonraker...")); });
-                    EmergencyStopOverlay::instance().suppress_recovery_dialog(
-                        RecoverySuppression::LONG);
-                    api_->restart_moonraker(
-                        [this, token]() {
-                            if (token.expired())
-                                return;
-                            token.defer([this]() {
-                                ToastManager::instance().show(ToastSeverity::SUCCESS,
-                                                              lv_tr("Spoolman removed."), 3000);
-                            });
-                        },
-                        [this, token](const MoonrakerError&) {
-                            if (token.expired())
-                                return;
-                            token.defer([this]() {
-                                set_setup_status(lv_tr("Failed to restart Moonraker."), true);
-                            });
+            // Marshal upload call to main thread before touching api_.
+            token.defer("SpoolmanOverlay::remove_upload",
+                        [this, token, modified = std::move(modified)]() mutable {
+                            api_->transfers().upload_file(
+                                "config", "helixscreen.conf", modified,
+                                [this, token]() {
+                                    if (token.expired())
+                                        return;
+                                    token.defer([this]() {
+                                        set_setup_status(lv_tr("Restarting Moonraker..."));
+                                    });
+                                    EmergencyStopOverlay::instance().suppress_recovery_dialog(
+                                        RecoverySuppression::LONG);
+                                    api_->restart_moonraker(
+                                        [this, token]() {
+                                            if (token.expired())
+                                                return;
+                                            token.defer([this]() {
+                                                ToastManager::instance().show(
+                                                    ToastSeverity::SUCCESS,
+                                                    lv_tr("Spoolman removed."), 3000);
+                                            });
+                                        },
+                                        [this, token](const MoonrakerError&) {
+                                            if (token.expired())
+                                                return;
+                                            token.defer([this]() {
+                                                set_setup_status(
+                                                    lv_tr("Failed to restart Moonraker."), true);
+                                            });
+                                        });
+                                },
+                                [this, token](const MoonrakerError&) {
+                                    if (token.expired())
+                                        return;
+                                    token.defer([this]() {
+                                        set_setup_status(lv_tr("Failed to save config."), true);
+                                    });
+                                });
                         });
-                },
-                [this, token](const MoonrakerError&) {
-                    if (token.expired())
-                        return;
-                    token.defer(
-                        [this]() { set_setup_status(lv_tr("Failed to save config."), true); });
-                });
         },
         [this, token](const MoonrakerError&) {
             if (token.expired())

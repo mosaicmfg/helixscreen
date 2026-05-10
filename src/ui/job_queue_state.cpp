@@ -155,10 +155,10 @@ void JobQueueState::subscribe_to_notifications() {
     auto token = lifetime_.token();
     client_->register_method_callback("notify_job_queue_changed", "JobQueueState",
                                       [this, token](const nlohmann::json& /*data*/) {
-                                          if (token.expired())
-                                              return;
-                                          // Re-fetch full queue status on any change notification
-                                          fetch();
+                                          // Re-fetch full queue status on any change notification.
+                                          // Marshal to main thread before touching api_/lifetime_.
+                                          token.defer("JobQueueState::notify_changed",
+                                                      [this]() { fetch(); });
                                       });
 
     spdlog::debug("[JobQueueState] Subscribed to notify_job_queue_changed");

@@ -399,13 +399,12 @@ void TimelapseInstallOverlay::download_and_modify_config() {
             api_->transfers().download_file(
                 "config", "helixscreen.conf",
                 [this, tok, moonraker_content](const std::string& helix_content) {
-                    if (tok.expired() || !wizard_active_)
-                        return;
-                    // Check if helixscreen.conf already has [timelapse]
+                    // Check if helixscreen.conf already has [timelapse] (pure
+                    // function on local strings — safe on bg thread)
                     if (helix::MoonrakerConfigManager::has_section(helix_content, "timelapse")) {
                         spdlog::info("[{}] helixscreen.conf already has [timelapse] section",
                                      get_name());
-                        tok.defer([this]() {
+                        tok.defer("TimelapseInstallOverlay::already_present", [this]() {
                             if (!wizard_active_)
                                 return;
                             set_status(lv_tr("Configuration already present."));
@@ -413,19 +412,28 @@ void TimelapseInstallOverlay::download_and_modify_config() {
                         });
                         return;
                     }
-                    write_timelapse_config(helix_content, moonraker_content);
+                    tok.defer("TimelapseInstallOverlay::write_helix_with_moonraker",
+                              [this, helix = helix_content,
+                               moonraker = moonraker_content]() mutable {
+                                  if (!wizard_active_)
+                                      return;
+                                  write_timelapse_config(helix, moonraker);
+                              });
                 },
                 [this, tok, moonraker_content](const MoonrakerError& err) {
-                    if (tok.expired() || !wizard_active_)
-                        return;
                     if (err.type == MoonrakerErrorType::FILE_NOT_FOUND) {
                         // helixscreen.conf doesn't exist yet — start fresh
                         spdlog::info("[{}] helixscreen.conf not found, creating new", get_name());
-                        write_timelapse_config("", moonraker_content);
+                        tok.defer("TimelapseInstallOverlay::write_fresh_helix",
+                                  [this, moonraker = moonraker_content]() mutable {
+                                      if (!wizard_active_)
+                                          return;
+                                      write_timelapse_config("", moonraker);
+                                  });
                     } else {
                         spdlog::error("[{}] Failed to download helixscreen.conf: {}", get_name(),
                                       err.message);
-                        tok.defer([this]() {
+                        tok.defer("TimelapseInstallOverlay::helix_download_err", [this]() {
                             if (!wizard_active_)
                                 return;
                             set_status(lv_tr(
@@ -446,17 +454,22 @@ void TimelapseInstallOverlay::download_and_modify_config() {
                 api_->transfers().download_file(
                     "config", "helixscreen.conf",
                     [this, tok](const std::string& helix_content) {
-                        if (tok.expired() || !wizard_active_)
-                            return;
-                        write_timelapse_config(helix_content, "");
+                        tok.defer("TimelapseInstallOverlay::write_helix_no_moonraker",
+                                  [this, helix = helix_content]() mutable {
+                                      if (!wizard_active_)
+                                          return;
+                                      write_timelapse_config(helix, "");
+                                  });
                     },
                     [this, tok](const MoonrakerError& err2) {
-                        if (tok.expired() || !wizard_active_)
-                            return;
                         if (err2.type == MoonrakerErrorType::FILE_NOT_FOUND) {
-                            write_timelapse_config("", "");
+                            tok.defer("TimelapseInstallOverlay::write_empty", [this]() {
+                                if (!wizard_active_)
+                                    return;
+                                write_timelapse_config("", "");
+                            });
                         } else {
-                            tok.defer([this]() {
+                            tok.defer("TimelapseInstallOverlay::read_config_err", [this]() {
                                 if (!wizard_active_)
                                     return;
                                 set_status(lv_tr("Failed to read config."));

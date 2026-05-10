@@ -332,9 +332,10 @@ void PrintExcludeObjectManager::exclude_undo_timer_cb(lv_timer_t* timer) {
                 // diverges from what it told us via gcode.script return.
             },
             [self, token, object_name](const MoonrakerError& err) {
-                if (token.expired())
-                    return;
-                self->on_exclude_rpc_error(object_name, err);
+                token.defer("PrintExcludeObjectManager::dispatch_rpc_error",
+                            [self, object_name, err]() {
+                                self->on_exclude_rpc_error(object_name, err);
+                            });
             });
     } else {
         spdlog::warn("[PrintExcludeObjectManager] No API available - simulating exclusion");

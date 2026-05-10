@@ -535,15 +535,15 @@ void SpoolEditModal::handle_save() {
         api_->spoolman().update_spoolman_spool(
             spool_id, spool_patch,
             [this, token, filament_id, filament_patch, on_all_saved, on_error]() {
-                if (token.expired()) {
-                    return;
-                }
-                if (!filament_patch.empty() && filament_id > 0) {
-                    api_->spoolman().update_spoolman_filament(filament_id, filament_patch,
-                                                              on_all_saved, on_error);
-                } else {
-                    on_all_saved();
-                }
+                token.defer("SpoolEditModal::after_spool_patch",
+                            [this, token, filament_id, filament_patch, on_all_saved, on_error]() {
+                                if (!filament_patch.empty() && filament_id > 0) {
+                                    api_->spoolman().update_spoolman_filament(
+                                        filament_id, filament_patch, on_all_saved, on_error);
+                                } else {
+                                    on_all_saved();
+                                }
+                            });
             },
             on_error);
     } else if (!filament_patch.empty() && filament_id > 0) {

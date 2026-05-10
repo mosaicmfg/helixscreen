@@ -312,8 +312,9 @@ void CameraStream::stream_thread_func() {
         auto cb_token = lifetime_.token();
         req->http_cb = [this, cb_token](HttpMessage* resp, http_parser_state state,
                               const char* data, size_t size) {
-            // Check lifetime first — object may be destroyed or shutting down
-            if (cb_token.expired()) return;
+            // Check lifetime first — object may be destroyed or shutting down.
+            // L081_OK: dtor joins libhv handler; buf+boundary exclusive to stream-thread.
+            if (cb_token.expired()) return; // L081_OK
 
             if (!running_.load()) {
                 // Cancel the request from within the callback
@@ -418,7 +419,7 @@ void CameraStream::stream_thread_func() {
     spdlog::debug("[CameraStream] Stream thread exiting");
     } catch (const std::bad_alloc& e) {
         spdlog::error("[CameraStream] Out of memory in stream thread: {}", e.what());
-        if (!thread_token.expired()) {
+        if (!thread_token.expired()) { // L081_OK: stream_thread_ dtor-joined; recv_buf_ thread-exclusive
             recv_buf_.clear();
             recv_buf_.shrink_to_fit();
             report_error(thread_token, "Out of memory");
@@ -911,12 +912,20 @@ bool CameraStream::decode_jpeg_stb(const uint8_t* data, size_t len) {
 // ============================================================================
 
 void CameraStream::report_error(const helix::LifetimeToken& token, const char* message) {
-    ErrorCallback err_cb;
-    if (!token.expired()) {
-        std::lock_guard<std::mutex> lock(cb_mutex_);
-        err_cb = on_error_;
-    }
-    if (err_cb) err_cb(message);
+    // Defer cb_mutex_ + on_error_ access to main thread to satisfy the L081
+    // detector and to guarantee `this` validity (the worker thread is
+    // dtor-joined, but the lifetime instrumentation flags any bg-thread
+    // member access reached via tok.expired()).
+    std::string msg = message ? message : "";
+    token.defer("CameraStream::report_error",
+                [this, msg = std::move(msg)]() mutable {
+                    ErrorCallback err_cb;
+                    {
+                        std::lock_guard<std::mutex> lock(cb_mutex_);
+                        err_cb = on_error_;
+                    }
+                    if (err_cb) err_cb(msg.c_str());
+                });
 }
 
 // ============================================================================

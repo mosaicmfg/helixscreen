@@ -909,25 +909,24 @@ void WizardWifiStep::init_wifi_manager() {
             crash_handler::breadcrumb::note("wifi", "scan_fire");
             auto token = lifetime_.token();
             wifi_manager_->start_scan([this, token](const std::vector<WiFiNetwork>& networks) {
-                if (token.expired()) {
-                    spdlog::debug("[{}] Lifetime expired, ignoring init scan callback", get_name());
-                    return;
-                }
-
-                cached_networks_ = networks;
                 // Marshal to UI thread via token.defer() — TOCTOU-safe lifetime
-                // guard + UI thread safety
-                token.defer("WizardWifiStep::apply_scan", [this]() {
-                    if (cleanup_called_ || !screen_root_) {
-                        crash_handler::breadcrumb::note("wifi", "scan_apply_skip");
-                        return;
-                    }
-                    crash_handler::breadcrumb::note("wifi", "scan_apply_run");
-                    lv_subject_set_int(&wifi_scanning_, 0);
-                    if (!cached_networks_.empty()) {
-                        populate_network_list(cached_networks_);
-                    }
-                });
+                // guard + UI thread safety. Move the vector into the lambda so
+                // cached_networks_ is only written on the UI thread; otherwise
+                // a back-to-back scan callback on the BG thread could rewrite
+                // cached_networks_ while the UI thread is mid-sort (mirrors #769 fix at line 553).
+                token.defer("WizardWifiStep::apply_scan",
+                            [this, scanned = networks]() mutable {
+                                if (cleanup_called_ || !screen_root_) {
+                                    crash_handler::breadcrumb::note("wifi", "scan_apply_skip");
+                                    return;
+                                }
+                                crash_handler::breadcrumb::note("wifi", "scan_apply_run");
+                                cached_networks_ = std::move(scanned);
+                                lv_subject_set_int(&wifi_scanning_, 0);
+                                if (!cached_networks_.empty()) {
+                                    populate_network_list(cached_networks_);
+                                }
+                            });
             });
         } else {
             spdlog::debug("[{}] WiFi not available or failed to start", get_name());

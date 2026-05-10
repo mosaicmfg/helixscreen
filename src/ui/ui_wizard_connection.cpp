@@ -270,19 +270,13 @@ void WizardConnectionStep::handle_test_connection_clicked() {
         ws_url.c_str(),
         // On connected callback
         [this, tok]() {
-            if (tok.expired()) {
-                spdlog::debug("[Wizard Connection] Ignoring stale success callback");
-                return;
-            }
-            on_connection_success(tok);
+            tok.defer("WizardConnectionStep::dispatch_connection_success",
+                      [this, tok]() { on_connection_success(tok); });
         },
         // On disconnected callback
         [this, tok]() {
-            if (tok.expired()) {
-                spdlog::debug("[Wizard Connection] Ignoring stale failure callback");
-                return;
-            }
-            on_connection_failure(tok);
+            tok.defer("WizardConnectionStep::dispatch_connection_failure",
+                      [this, tok]() { on_connection_failure(tok); });
         });
 
     // Disable automatic reconnection for wizard testing
@@ -519,18 +513,12 @@ void WizardConnectionStep::attempt_auto_probe() {
     int result = client->connect(
         ws_url.c_str(),
         [this, tok]() {
-            if (tok.expired()) {
-                spdlog::debug("[Wizard Connection] Ignoring stale auto-probe success");
-                return;
-            }
-            on_auto_probe_success(tok);
+            tok.defer("WizardConnectionStep::dispatch_auto_probe_success",
+                      [this, tok]() { on_auto_probe_success(tok); });
         },
         [this, tok]() {
-            if (tok.expired()) {
-                spdlog::debug("[Wizard Connection] Ignoring stale auto-probe failure");
-                return;
-            }
-            on_auto_probe_failure(tok);
+            tok.defer("WizardConnectionStep::dispatch_auto_probe_failure",
+                      [this, tok]() { on_auto_probe_failure(tok); });
         });
 
     // Disable auto-reconnect for probe

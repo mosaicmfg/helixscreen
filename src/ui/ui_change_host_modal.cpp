@@ -200,18 +200,12 @@ void ChangeHostModal::handle_test_connection() {
     int result = client->connect(
         ws_url.c_str(),
         [this, token]() {
-            if (token.expired()) {
-                spdlog::debug("[ChangeHostModal] Ignoring stale success callback");
-                return;
-            }
-            on_test_success();
+            token.defer("ChangeHostModal::dispatch_test_success",
+                        [this]() { on_test_success(); });
         },
         [this, token]() {
-            if (token.expired()) {
-                spdlog::debug("[ChangeHostModal] Ignoring stale failure callback");
-                return;
-            }
-            on_test_failure();
+            token.defer("ChangeHostModal::dispatch_test_failure",
+                        [this]() { on_test_failure(); });
         });
 
     client->setReconnect(nullptr);
