@@ -98,6 +98,33 @@ REGISTER_CB_RE = re.compile(
     r'\b(?:register_method_callback|register_notify_update)\s*\('
 )
 
+# Mechanism D (HTTP variant): an HTTP request via the api_ wrapper. The
+# success callback runs on the HTTP worker thread, so a `tok.defer(...)`
+# inside it lands on UpdateQueue — and gets dropped during scoped_freeze.
+# When the HTTP fetch fires once at startup (first metadata, first history,
+# first WLED discovery, first PRINT_START analysis), the dropped result
+# strands the UI until the next user-triggered fetch — which for fire-once
+# bootstraps never comes. Confirmed regression sweep on 2026-05-11 found
+# 4 sites matching this pattern across PrintHistoryManager, PrintSelectPanel,
+# MacroModificationManager, and LedController.
+#
+# We match the most common entry shapes:
+#   api_->files().get_*(...) / get_metadata / metascan_file / etc.
+#   api_->history().get_*(...)
+#   api_->queue().get_*(...)
+#   api_->rest().get_*(...) / post_*
+#   api_->transfers().download_*(...)
+# plus a few helpers that themselves wrap api_ calls:
+#   analyzer_.analyze(api_, ...)
+#   wled_.fetch_*(...)
+HTTP_CB_ENTRY_RE = re.compile(
+    r'\b(?:api_|api)\s*->\s*(?:files|history|queue|rest|transfers|server|machine|'
+    r'authorization|database|update_manager|announcements|webcam|spoolman)'
+    r'\s*\(\s*\)\s*\.\s*\w+\s*\('
+    r'|\banalyzer_\s*\.\s*analyze\s*\('
+    r'|\bwled_\s*\.\s*fetch_\w+\s*\('
+)
+
 # Plain (non-critical) defer/queue_update inside a register lambda.
 # Match `tok.defer(`, `token.defer(`, `lifetime_.defer(`, and
 # `helix::ui::queue_update(` — but NOT their `_critical` variants. We
@@ -285,6 +312,73 @@ def scan_file_freeze_drop(path: Path) -> list[tuple[int, str]]:
     return hits
 
 
+def scan_file_http_cb_freeze_drop(path: Path) -> list[tuple[int, str]]:
+    """Return list of (line_no, snippet) for each Mechanism D (HTTP variant) site.
+
+    Pattern: an HTTP request via `api_->...()` whose success/error lambda body
+    uses plain `tok.defer(...)` / `queue_update(...)` (NOT `*_critical`). The
+    success callback runs on the HTTP worker thread, so the defer routes
+    through UpdateQueue and gets dropped during `scoped_freeze()`. For first-
+    fire baseline-state fetches (metadata, history, WLED discovery, PRINT_START
+    analysis) that drop permanently strands the UI.
+
+    Unlike the subscription-callback variant, we DON'T require a subject
+    mutation in the deferred body — most HTTP cb defers mutate member state
+    that backs widgets indirectly (file_list_, cached_analysis_, etc.) rather
+    than touching subjects directly. The lint surface is wider as a result;
+    use per-line opt-out for sites where the work is genuinely safe to drop
+    (user-initiated retry-on-demand, etc.).
+
+    Per-line opt-out: `// L081_FREEZE_OK: <reason>` on the defer/queue_update
+    line.
+
+    Heuristic with intentional false-positive tolerance.
+    """
+    lines = file_lines(path)
+    if not lines:
+        return []
+    hits: list[tuple[int, str]] = []
+    n = len(lines)
+    i = 0
+    while i < n:
+        line = lines[i]
+        if not HTTP_CB_ENTRY_RE.search(line):
+            i += 1
+            continue
+        # Scan forward for the matching ');' that closes this HTTP call.
+        end = min(i + FREEZE_OUTER_LOOKAHEAD, n)
+        depth = 0
+        saw_open = False
+        scanned_to = i
+        for j in range(i, end):
+            scanned_to = j
+            for ch in lines[j]:
+                if ch == '(':
+                    depth += 1
+                    saw_open = True
+                elif ch == ')':
+                    depth -= 1
+            if saw_open and depth <= 0 and ';' in lines[j]:
+                break
+        outer_end = scanned_to
+        # Within the call body (which contains the cb lambdas), look for
+        # plain (non-critical) defers.
+        k = i
+        while k <= outer_end:
+            defer_line = lines[k]
+            preceding_opt_out = any(
+                OPT_OUT_FREEZE in lines[m] for m in range(max(0, k - 3), k)
+            )
+            if (PLAIN_DEFER_RE.search(defer_line)
+                    and OPT_OUT_FREEZE not in defer_line
+                    and not preceding_opt_out):
+                snippet = '\n  '.join(lines[k:min(k + 4, n)])
+                hits.append((k + 1, snippet))
+            k += 1
+        i = outer_end + 1
+    return hits
+
+
 def staged_files() -> list[Path]:
     try:
         out = subprocess.run(
@@ -338,6 +432,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--staged-only', action='store_true',
                         help='Check only staged-for-commit files (for pre-commit hook)')
+    parser.add_argument('--http-cb-audit', action='store_true',
+                        help='Also run the HTTP response callback freeze-drop audit '
+                             '(broad heuristic — surfaces candidates that may need '
+                             'defer_critical or an L081_FREEZE_OK opt-out). Opt-in '
+                             'because it returns ~100 hits today; intended for '
+                             'periodic manual review, not as a CI gate.')
     parser.add_argument('files', nargs='*', help='Files to check (default: scan src/)')
     args = parser.parse_args()
 
@@ -375,6 +475,24 @@ def main() -> int:
                   f"or use `lifetime_.bg_cb(\"Class::method\", [this](...) {{ ... }})`.")
             print(f"    Opt-out (only if you really need bg-thread `expired()`): "
                   f"add `// {OPT_OUT}: <reason>` on the same line.")
+            print()
+            total += 1
+
+    http_files = freeze_files if args.http_cb_audit else []
+    for f in http_files:
+        http_hits = scan_file_http_cb_freeze_drop(f)
+        for line_no, snippet in http_hits:
+            print(f"{f}:{line_no}: L081 Mechanism D (HTTP variant): plain "
+                  f"defer/queue_update inside an HTTP response callback")
+            for ln in snippet.split('\n'):
+                print(f"    {ln}")
+            print(f"    Fix: if this is a first-fire baseline-state fetch (metadata, "
+                  f"history, queue, discovery, etc.), use `tok.defer_critical(...)`. "
+                  f"Plain defer routes through UpdateQueue and is dropped during "
+                  f"the splash→home `scoped_freeze()` window — see "
+                  f"feedback_freeze_drop_telemetry_audit.md.")
+            print(f"    Opt-out (user-initiated retry-on-demand, etc.): "
+                  f"add `// {OPT_OUT_FREEZE}: <reason>` on the defer line.")
             print()
             total += 1
 
