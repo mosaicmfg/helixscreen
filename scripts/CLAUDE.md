@@ -63,6 +63,7 @@ Build, asset generation, deployment, and developer tooling for HelixScreen.
 | `telemetry-backfill.sh` | Backfill Analytics Engine from R2 (90-day retention limit) |
 | `resolve-backtrace.sh` | Resolve raw backtrace addresses using `.sym` files from R2 |
 | `debug-bundle.sh` | Fetch and display debug bundles from `crash.helixscreen.org` |
+| `freeze-drops.sh` | Aggregate L081 Mechanism D `DROPPED (frozen)` events across device logs / debug bundles / files; cross-references each tag to source location and notes whether it's already using `defer_critical`. Use proactively to catch first-fire-callback regressions before users hit them: `./scripts/freeze-drops.sh --ssh root@192.168.1.74 --ssh root@192.168.30.103` |
 
 #### Printer Hardware Profile Pipeline
 
