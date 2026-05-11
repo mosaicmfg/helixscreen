@@ -15,7 +15,10 @@
 # HelixScreen now has its own fd on the device.
 #
 # Stock UI: /usr/bin/gui (started by S99screen init script)
-# Camera: /usr/bin/lmd (started by S90lmd)
+# Camera supervisor: /usr/bin/lmd (started by /etc/init.d/S99v4l2-mpp-mipi at
+#   boot — and *only* at boot; no fake-service auto-restart). lmd forks
+#   /usr/bin/unisrv which subscribes to MQTT topic camera/request and answers
+#   Klipper's TIMELAPSE_START / camera.take_a_photo RPCs.
 # Touch: TLSC6x capacitive controller (tlsc6x_touch on /dev/input/event0)
 # Display: 480x320 32bpp rockchipdrmfb (/dev/fb0)
 # SSH access: root@<ip> (password: snapmaker) via extended firmware
@@ -61,10 +64,14 @@ platform_stop_competing_uis() {
         echo "DRM keepalive: background process PID $DRM_KEEPALIVE_PID"
     fi
 
-    # Kill stock UI and camera processes directly.
+    # Kill stock UI processes only. unisrv (proprietary camera/MQTT daemon
+    # handling Klipper's TIMELAPSE_START) and lmd (its supervisor) are NOT UIs
+    # and must keep running for timelapse to work. Killing lmd permanently
+    # disables camera RPC until reboot — lmd has no supervisor of its own and
+    # /etc/init.d/S99v4l2-mpp-mipi only starts it at boot.
     # NOTE: Do NOT call /etc/init.d/S99screen stop — on the U1, S99screen is
     # patched to delegate to helixscreen.init, which would cause infinite recursion.
-    for ui in gui unisrv lmd snapmaker-ui snapmaker-screen KlipperScreen klipperscreen; do
+    for ui in gui snapmaker-ui snapmaker-screen KlipperScreen klipperscreen; do
         if command -v killall >/dev/null 2>&1; then
             killall "$ui" 2>/dev/null || true
         else
@@ -96,10 +103,45 @@ platform_wait_for_services() {
     return 0
 }
 
+# Ensure lmd (camera/MQTT supervisor) is running. lmd is started once at boot
+# by /etc/init.d/S99v4l2-mpp-mipi with no auto-restart wrapper, so if it ever
+# dies — historically because older helixscreen builds killed it in
+# platform_stop_competing_uis — Klipper's TIMELAPSE_START hits a 5-second MQTT
+# timeout and pauses the print. We re-launch lmd with the same imposter env
+# the stock init uses; lmd then forks unisrv as its child.
+ensure_lmd_running() {
+    if pidof lmd >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ ! -x /usr/bin/lmd ]; then
+        return 0
+    fi
+    if [ ! -e /tmp/capture-mipi-raw.sock ]; then
+        # Capture pipeline not up yet; lmd would just fail to attach. Let
+        # S99v4l2-mpp-mipi finish its sequence on its own.
+        return 0
+    fi
+    echo "lmd not running — restarting camera supervisor"
+    rm -f /var/run/unisrv.pid
+    (
+        export LD_PRELOAD=/usr/local/lib/libv4l2-imposter.so
+        export V4L2_IMPOSTER_SOCKET_PATH=/tmp/capture-mipi-raw.sock
+        export V4L2_IMPOSTER_DEVICE=/dev/video11
+        export V4L2_IMPOSTER_WIDTH=1920
+        export V4L2_IMPOSTER_HEIGHT=1080
+        export V4L2_IMPOSTER_FORMAT=nv12
+        start-stop-daemon -S -b -q -m -p /var/run/unisrv.pid -x /usr/bin/lmd
+    )
+}
+
 platform_pre_start() {
     export HELIX_CACHE_DIR="/userdata/helixscreen/cache"
     # Force DRM device — skip auto-detection which may race with connector state
     export HELIX_DRM_DEVICE="/dev/dri/card0"
+
+    # Recover the camera supervisor if a prior helixscreen build killed it.
+    # Idempotent: no-op when lmd is already alive.
+    ensure_lmd_running
 
     # Restore saved WiFi credentials into wpa_supplicant.
     # The stock Snapmaker app saves WiFi config to /oem/printer_data/gui/
