@@ -642,6 +642,9 @@ void ProbeOverlay::handle_probe_accuracy() {
             auto z_pos = line.find(" is z=");
             if (z_pos != std::string::npos && line.find("probe at ") != std::string::npos) {
                 std::string z_val = line.substr(z_pos + 6); // After " is z="
+                // L081_FREEZE_OK: handler is registered when the user taps Probe
+                // Accuracy (post-startup); samples are a high-frequency stream where
+                // a dropped progress tick is harmless.
                 helix::ui::queue_update([z_val]() {
                     auto& overlay = get_global_probe_overlay();
                     overlay.probe_acc_sample_count_++;

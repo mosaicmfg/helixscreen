@@ -1312,26 +1312,26 @@ void AmsState::on_backend_event(int backend_index, const std::string& event,
     spdlog::trace("[AMS State] Received event '{}' data='{}' from backend {}", event, data,
                   backend_index);
 
-    // Use ui_queue_update to post updates to LVGL's main thread
-    // This is required because backend events may come from background threads
-    // and LVGL is not thread-safe
-
-    // Helper to safely queue async call using RAII pattern
+    // queue_critical (not queue_update): backend events update foundational
+    // slot state that widgets observe. If the FIRST event lands during a
+    // scoped_freeze, plain queue_update is dropped and observers stay stale
+    // forever — slot data isn't periodically re-emitted (L081 freeze-drop;
+    // Snapmaker U1 filament panel showed empty bars on every boot until fixed).
     auto queue_sync = [backend_index](bool full_sync, int slot_index) {
-        auto sync_data =
-            std::make_unique<AsyncSyncData>(AsyncSyncData{backend_index, full_sync, slot_index});
-        helix::ui::queue_update<AsyncSyncData>(std::move(sync_data), [](AsyncSyncData* d) {
-            // Skip if shutdown is in progress - AmsState singleton may be destroyed
-            if (s_shutdown_flag.load(std::memory_order_acquire)) {
-                return;
-            }
+        helix::ui::queue_critical(
+            "AmsState::on_backend_event",
+            [backend_index, full_sync, slot_index]() {
+                // Skip if shutdown is in progress - AmsState singleton may be destroyed
+                if (s_shutdown_flag.load(std::memory_order_acquire)) {
+                    return;
+                }
 
-            if (d->full_sync) {
-                AmsState::instance().sync_backend(d->backend_index);
-            } else {
-                AmsState::instance().update_slot_for_backend(d->backend_index, d->slot_index);
-            }
-        });
+                if (full_sync) {
+                    AmsState::instance().sync_backend(backend_index);
+                } else {
+                    AmsState::instance().update_slot_for_backend(backend_index, slot_index);
+                }
+            });
     };
 
     if (event == AmsBackend::EVENT_STATE_CHANGED) {

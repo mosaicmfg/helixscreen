@@ -576,8 +576,11 @@ int MoonrakerClient::connect(const char* url, std::function<void()> on_connected
                 else if (method == "notify_klippy_shutdown") {
                     spdlog::warn("[Moonraker Client] Klipper entered shutdown state");
 
-                    // Update klippy state in PrinterState
-                    get_printer_state().set_klippy_state(KlippyState::SHUTDOWN);
+                    // queue_critical: klippy state is event-only and observed by
+                    // nearly every panel. L081 freeze-drop.
+                    helix::ui::queue_critical("MoonrakerClient::notify_klippy_shutdown", []() {
+                        get_printer_state().set_klippy_state_sync(KlippyState::SHUTDOWN);
+                    });
 
                     // Emit event for UI layer — recovery dialog will show
                     emit_event(MoonrakerEventType::KLIPPY_SHUTDOWN,
@@ -595,8 +598,10 @@ int MoonrakerClient::connect(const char* url, std::function<void()> on_connected
                 else if (method == "notify_klippy_ready") {
                     spdlog::info("[Moonraker Client] Klipper ready");
 
-                    // Update klippy state in PrinterState (READY = firmware ready)
-                    get_printer_state().set_klippy_state(KlippyState::READY);
+                    // queue_critical: see notify_klippy_shutdown above (L081 freeze-drop).
+                    helix::ui::queue_critical("MoonrakerClient::notify_klippy_ready", []() {
+                        get_printer_state().set_klippy_state_sync(KlippyState::READY);
+                    });
 
                     // Emit event for UI layer to show success toast
                     emit_event(MoonrakerEventType::KLIPPY_READY, "Klipper ready", false);

@@ -91,10 +91,11 @@ void JobQueueState::fetch() {
         [this, token](const JobQueueStatus& status) {
             // Clear guard on the BG thread so a freeze-drop doesn't strand us.
             is_fetching_.store(false);
-            // L081 Mechanism C: marshal directly via tok.defer instead of
-            // calling on_queue_fetched (which used lifetime_.defer from bg —
-            // a #707 race between tok-alive check and lifetime_ access).
-            token.defer("JobQueueState::on_queue_fetched", [this, status]() {
+            // defer_critical: queue state is event-only. A first-fetch result
+            // dropped during scoped_freeze leaves the panel showing "Queue
+            // empty" until a future external mutation. L081 freeze-drop.
+            // (Direct defer also avoids #707 — bg-thread lifetime_ access.)
+            token.defer_critical("JobQueueState::on_queue_fetched", [this, status]() {
                 on_queue_fetched(status);
             });
         },
@@ -153,13 +154,12 @@ void JobQueueState::subscribe_to_notifications() {
         return;
 
     auto token = lifetime_.token();
-    client_->register_method_callback("notify_job_queue_changed", "JobQueueState",
-                                      [this, token](const nlohmann::json& /*data*/) {
-                                          // Re-fetch full queue status on any change notification.
-                                          // Marshal to main thread before touching api_/lifetime_.
-                                          token.defer("JobQueueState::notify_changed",
-                                                      [this]() { fetch(); });
-                                      });
+    client_->register_method_callback(
+        "notify_job_queue_changed", "JobQueueState",
+        [this, token](const nlohmann::json& /*data*/) {
+            // defer_critical: event-only notification (L081 freeze-drop).
+            token.defer_critical("JobQueueState::notify_changed", [this]() { fetch(); });
+        });
 
     spdlog::debug("[JobQueueState] Subscribed to notify_job_queue_changed");
 }
