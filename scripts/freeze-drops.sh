@@ -58,10 +58,16 @@ agg="$TMPDIR/all.txt"
 for src in "${inputs[@]}"; do
     case "$mode" in
         ssh)
-            # Try /tmp/helixscreen.log first, fall back to /var/log/messages
+            # Helix-screen logs land in one of three places depending on platform:
+            #   - /tmp/helixscreen.log (Snapmaker, AD5M, most file-mode platforms)
+            #   - /var/log/messages   (Tina Linux SysV — AD5M syslog mirror)
+            #   - logread             (OpenWrt/Tina busybox in-memory syslog — K2, CC1)
+            # Collect from all three so the script doesn't silently miss a platform.
             ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "$src" \
-                "grep 'DROPPED (frozen)' /tmp/helixscreen.log 2>/dev/null || \
-                 grep 'DROPPED (frozen)' /var/log/messages 2>/dev/null || true" \
+                "grep 'DROPPED (frozen)' /tmp/helixscreen.log 2>/dev/null; \
+                 grep 'DROPPED (frozen)' /var/log/messages 2>/dev/null; \
+                 logread 2>/dev/null | grep 'DROPPED (frozen)' 2>/dev/null; \
+                 true" \
                 2>/dev/null | sed "s|^|[$src] |" >> "$agg" || \
                 echo "WARN: could not fetch from $src" >&2
             ;;
