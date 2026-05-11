@@ -335,6 +335,52 @@ static int32_t get_slot_x(const FilamentPathData* data, int slot_index, int32_t 
     return slot_width / 2 + slot_index * slot_spacing;
 }
 
+// ============================================================================
+// Geometry
+// ============================================================================
+
+// Canvas dimensions + pre-computed per-slot X positions, shared across all
+// topology renderers. Computed once per draw to avoid the repeated
+// get_slot_x() calls each topology was doing inside its phase loops (MIXED
+// alone called it three times per slot across its three phases).
+struct BaseGeometry {
+    int32_t x_off = 0;  // canvas left edge (absolute display coords)
+    int32_t y_off = 0;  // canvas top edge
+    int32_t width = 0;
+    int32_t height = 0;
+    int slot_count = 0;
+    int32_t slot_x[FilamentPathData::MAX_SLOTS] = {}; // absolute X per slot
+    int32_t center_x = 0; // midpoint between first and last slot, or canvas mid
+};
+
+static BaseGeometry compute_base_geometry(lv_obj_t* obj, const FilamentPathData* data) {
+    BaseGeometry g;
+    lv_area_t obj_coords;
+    lv_obj_get_coords(obj, &obj_coords);
+    g.x_off = obj_coords.x1;
+    g.y_off = obj_coords.y1;
+    g.width = lv_area_get_width(&obj_coords);
+    g.height = lv_area_get_height(&obj_coords);
+    g.slot_count = data->slot_count;
+
+    int count = LV_MIN(g.slot_count, FilamentPathData::MAX_SLOTS);
+    for (int i = 0; i < count; i++) {
+        g.slot_x[i] = g.x_off + get_slot_x(data, i, g.x_off);
+    }
+
+    // Center X: prefer midpoint of slot bounds so hub/selector/nozzle stay
+    // aligned with the spool grid even when the grid is narrower than the
+    // canvas (e.g. environment indicator present).
+    if (g.slot_count >= 2) {
+        g.center_x = (g.slot_x[0] + g.slot_x[g.slot_count - 1]) / 2;
+    } else if (g.slot_count == 1) {
+        g.center_x = g.slot_x[0];
+    } else {
+        g.center_x = g.x_off + g.width / 2;
+    }
+    return g;
+}
+
 // Check if a segment should be drawn as "active" (filament present at or past it)
 static bool is_segment_active(PathSegment segment, PathSegment filament_segment) {
     return static_cast<int>(segment) <= static_cast<int>(filament_segment) &&
@@ -1484,12 +1530,9 @@ static void draw_heat_glow(lv_layer_t* layer, int32_t cx, int32_t cy, int32_t ra
 
 static void draw_parallel_topology(lv_obj_t* obj, lv_layer_t* layer, FilamentPathData* data) {
 
-    // Get widget dimensions
-    lv_area_t obj_coords;
-    lv_obj_get_coords(obj, &obj_coords);
-    int32_t height = lv_area_get_height(&obj_coords);
-    int32_t x_off = obj_coords.x1;
-    int32_t y_off = obj_coords.y1;
+    BaseGeometry g = compute_base_geometry(obj, data);
+    int32_t height = g.height;
+    int32_t y_off = g.y_off;
 
     // Layout ratios for parallel topology (adjusted for per-slot toolheads)
     constexpr float ENTRY_Y = -0.12f;   // Top entry (connects to spool)
@@ -1511,7 +1554,7 @@ static void draw_parallel_topology(lv_obj_t* obj, lv_layer_t* layer, FilamentPat
 
     // Draw each tool as an independent column
     for (int i = 0; i < data->slot_count; i++) {
-        int32_t slot_x = x_off + get_slot_x(data, i, x_off);
+        int32_t slot_x = g.slot_x[i];
         bool is_mounted = (i == data->active_slot);
 
         // Determine filament reach for this slot from per-slot state
@@ -1662,12 +1705,10 @@ static void draw_parallel_topology(lv_obj_t* obj, lv_layer_t* layer, FilamentPat
 
 static void draw_mixed_topology(lv_obj_t* obj, lv_layer_t* layer, FilamentPathData* data) {
 
-    // Get widget dimensions
-    lv_area_t obj_coords;
-    lv_obj_get_coords(obj, &obj_coords);
-    int32_t height = lv_area_get_height(&obj_coords);
-    int32_t x_off = obj_coords.x1;
-    int32_t y_off = obj_coords.y1;
+    BaseGeometry g = compute_base_geometry(obj, data);
+    int32_t height = g.height;
+    int32_t x_off = g.x_off;
+    int32_t y_off = g.y_off;
 
     // Layout ratios — more vertical spread than parallel to fit hub + nozzles
     constexpr float ENTRY_Y = -0.12f;   // Top entry (connects to spool)
@@ -1701,7 +1742,7 @@ static void draw_mixed_topology(lv_obj_t* obj, lv_layer_t* layer, FilamentPathDa
 
     for (int i = 0; i < data->slot_count; i++) {
         if (data->slot_is_hub_routed[i]) {
-            int32_t sx = x_off + get_slot_x(data, i, x_off);
+            int32_t sx = g.slot_x[i];
             hub_x_sum += sx;
             hub_count++;
             if (first_hub_lane < 0)
@@ -1715,7 +1756,7 @@ static void draw_mixed_topology(lv_obj_t* obj, lv_layer_t* layer, FilamentPathDa
 
     // Phase 2: Draw entry lines and sensor dots for ALL lanes
     for (int i = 0; i < data->slot_count; i++) {
-        int32_t slot_x = x_off + get_slot_x(data, i, x_off);
+        int32_t slot_x = g.slot_x[i];
 
         // Determine filament state for this slot
         lv_color_t tool_color = idle_color;
@@ -1764,7 +1805,7 @@ static void draw_mixed_topology(lv_obj_t* obj, lv_layer_t* layer, FilamentPathDa
     bool hub_nozzle_drawn = false;
 
     for (int i = 0; i < data->slot_count; i++) {
-        int32_t slot_x = x_off + get_slot_x(data, i, x_off);
+        int32_t slot_x = g.slot_x[i];
         bool is_hub = data->slot_is_hub_routed[i];
         bool is_mounted = (i == data->active_slot);
 
@@ -2242,13 +2283,11 @@ static void filament_path_draw_cb(lv_event_t* e) {
 
 static void filament_path_render(lv_obj_t* obj, lv_layer_t* layer, FilamentPathData* data) {
 
-    // Get widget dimensions
-    lv_area_t obj_coords;
-    lv_obj_get_coords(obj, &obj_coords);
-    int32_t width = lv_area_get_width(&obj_coords);
-    int32_t height = lv_area_get_height(&obj_coords);
-    int32_t x_off = obj_coords.x1;
-    int32_t y_off = obj_coords.y1;
+    BaseGeometry g = compute_base_geometry(obj, data);
+    int32_t width = g.width;
+    int32_t height = g.height;
+    int32_t x_off = g.x_off;
+    int32_t y_off = g.y_off;
 
     // Calculate Y positions
     int32_t entry_y = y_off + (int32_t)(height * ENTRY_Y_RATIO);
@@ -2260,17 +2299,7 @@ static void filament_path_render(lv_obj_t* obj, lv_layer_t* layer, FilamentPathD
     int32_t output_y = hub_y + hub_h / 2;
     int32_t toolhead_y = y_off + (int32_t)(height * TOOLHEAD_Y_RATIO);
     int32_t nozzle_y = y_off + (int32_t)(height * NOZZLE_Y_RATIO);
-    // Center X: prefer midpoint of actual slot positions over canvas center,
-    // so hub/selector/nozzle align with the spool grid even when the grid
-    // is narrower than the canvas (e.g. environment indicator present).
-    int32_t center_x = x_off + width / 2;
-    if (data->slot_count >= 2) {
-        int32_t first_x = x_off + get_slot_x(data, 0, x_off);
-        int32_t last_x = x_off + get_slot_x(data, data->slot_count - 1, x_off);
-        center_x = (first_x + last_x) / 2;
-    } else if (data->slot_count == 1) {
-        center_x = x_off + get_slot_x(data, 0, x_off);
-    }
+    int32_t center_x = g.center_x;
 
     // Buffer geometry — shared by drawing and flow dot paths
     int32_t buffer_y = y_off + (int32_t)(height * BUFFER_Y_RATIO);
@@ -2312,7 +2341,7 @@ static void filament_path_render(lv_obj_t* obj, lv_layer_t* layer, FilamentPathD
     // LINEAR: output exits beneath the active slot, not center
     int32_t output_x = center_x; // default for HUB
     if (data->topology == 0 && data->active_slot >= 0) {
-        int32_t target_x = x_off + get_slot_x(data, data->active_slot, x_off);
+        int32_t target_x = g.slot_x[data->active_slot];
         // Use animated position if available, otherwise snap
         if (data->output_x_anim_active) {
             output_x = data->output_x_current;
@@ -2388,7 +2417,7 @@ static void filament_path_render(lv_obj_t* obj, lv_layer_t* layer, FilamentPathD
     ActiveFilamentPath active_path;
 
     for (int i = 0; i < data->slot_count; i++) {
-        int32_t slot_x = x_off + get_slot_x(data, i, x_off);
+        int32_t slot_x = g.slot_x[i];
         bool is_active_slot = (i == data->active_slot);
 
         // Determine line color and width for this slot's lane
@@ -2668,12 +2697,12 @@ static void filament_path_render(lv_obj_t* obj, lv_layer_t* layer, FilamentPathD
         const char* hub_label = (data->topology == 0) ? "SELECTOR" : "HUB";
 
         // For LINEAR topology, hub box spans the full slot area width.
-        // get_slot_x returns slot centers, so we need to add half a slot width
-        // on each side to cover the full visual extent of the outermost slots.
+        // slot_x values are slot centers, so we add half a slot width on each
+        // side to cover the full visual extent of the outermost slots.
         int32_t hub_w = data->hub_width;
         if (data->topology == 0 && data->slot_count > 1) {
-            int32_t first_slot_x = x_off + get_slot_x(data, 0, x_off);
-            int32_t last_slot_x = x_off + get_slot_x(data, data->slot_count - 1, x_off);
+            int32_t first_slot_x = g.slot_x[0];
+            int32_t last_slot_x = g.slot_x[data->slot_count - 1];
             int32_t slot_pad = LV_MAX(data->slot_width, sensor_r * 4);
             hub_w = (last_slot_x - first_slot_x) + slot_pad;
         }
