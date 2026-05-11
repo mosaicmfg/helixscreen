@@ -502,9 +502,18 @@ void PrintSelectPanel::setup(lv_obj_t* panel, lv_obj_t* parent_screen) {
                         f = std::move(old);
                         f.modified_timestamp = new_modified;
                         f.file_size_bytes = new_size;
+                    } else {
+                        // Carry-forward declined (size changed OR retry-missing-
+                        // thumbnail kicked in). The provider already preserved this
+                        // entry's metadata_fetched=true / thumbnail_path before our
+                        // decision ran, so without an explicit reset here the next
+                        // fetch_metadata_range would short-circuit on the stale
+                        // metadata_fetched flag and the placeholder would persist
+                        // (the bug the retry-on-activate flag was meant to fix —
+                        // 8dc2f8fde). Force a fresh fetch.
+                        f.metadata_fetched = false;
+                        f.thumbnail_path.clear();
                     }
-                    // Else: size changed OR retry-missing-thumbnail kicked in — let
-                    // metadata re-fetch populate this entry fresh.
                 }
             }
 
@@ -1043,13 +1052,21 @@ void PrintSelectPanel::fetch_metadata_range(size_t start, size_t end) {
                     return;
                 }
 
-                token.defer("PrintSelectPanel::metadata_process",
-                            [self, i, filename, captured_gen, metadata]() {
-                                if (self->nav_generation_.load() != captured_gen) {
-                                    return;
-                                }
-                                self->process_metadata_result(i, filename, metadata);
-                            });
+                // defer_critical: first-fire metadata response. fetch_metadata_range
+                // marks file_list_[i].metadata_fetched=true EAGERLY before the HTTP
+                // request to dedupe rapid poll cycles. If the defer is dropped during
+                // the splash→home scoped_freeze, that flag becomes a lie — the
+                // metadata never arrives but subsequent fetch_metadata_range calls
+                // skip the file forever (placeholder thumbnails stuck). The carry-
+                // forward retry-on-activate handles other transient failures but
+                // can't compensate for a freeze-drop on every startup. Mechanism D.
+                token.defer_critical("PrintSelectPanel::metadata_process",
+                                     [self, i, filename, captured_gen, metadata]() {
+                                         if (self->nav_generation_.load() != captured_gen) {
+                                             return;
+                                         }
+                                         self->process_metadata_result(i, filename, metadata);
+                                     });
             },
             // Metadata error callback. Same pattern: nav-gen check moves into the defer body.
             [self, i, filename, file_path, captured_gen,
