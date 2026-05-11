@@ -117,6 +117,7 @@ class AmsOperationSidebar {
     ObserverGuard action_observer_;
     ObserverGuard current_slot_observer_;
     ObserverGuard extruder_temp_observer_;
+    ObserverGuard extruder_target_observer_;
     ObserverGuard color_observer_;
 
     // Bypass-after-unload state
@@ -136,12 +137,20 @@ class AmsOperationSidebar {
     StepOperationType current_operation_type_ = StepOperationType::LOAD_FRESH;
     int current_step_count_ = 4;
     int target_load_slot_ = -1;
+    bool heat_label_showing_temp_ = false;
 
     // Step progress methods
     void setup_step_progress();
     void recreate_step_progress_for_operation(StepOperationType op_type);
     void update_step_progress(AmsAction action);
     int get_step_index_for_action(AmsAction action, StepOperationType op_type);
+
+    // Re-evaluate step display when extruder temp/target changes (called by observers).
+    // Physical heating state overrides AmsAction for step indicator: backends emit
+    // LOADING optimistically at gcode dispatch (CFS, ACE, AD5x), and even firmware-driven
+    // backends can fire the next phase before the printer leaves heating.
+    void refresh_heat_step_display();
+    bool is_extruder_below_target() const;
 
     // Preheat methods
     int get_load_temp_for_slot(int slot_index);

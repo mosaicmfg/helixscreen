@@ -245,13 +245,24 @@ void AmsOperationSidebar::init_observers() {
             }
         });
 
-    // Extruder temp observer: checks pending preheat load
+    // Extruder temp observer: checks pending preheat load + refreshes heat step
     extruder_temp_observer_ = observe_int_sync<AmsOperationSidebar>(
         printer_state_.get_active_extruder_temp_subject(), this,
         [](AmsOperationSidebar* self, int /*temp_centi*/) {
             if (!self->active_)
                 return;
             self->check_pending_load();
+            self->refresh_heat_step_display();
+        });
+
+    // Extruder target observer: refreshes heat step when target temp changes
+    // (the macro raises the target before any visible action change)
+    extruder_target_observer_ = observe_int_sync<AmsOperationSidebar>(
+        printer_state_.get_active_extruder_target_subject(), this,
+        [](AmsOperationSidebar* self, int /*target_centi*/) {
+            if (!self->active_)
+                return;
+            self->refresh_heat_step_display();
         });
 }
 
@@ -377,6 +388,7 @@ void AmsOperationSidebar::recreate_step_progress_for_operation(StepOperationType
 
     // Delete existing step progress widget if any
     safe_delete_obj(step_progress_);
+    heat_label_showing_temp_ = false; // fresh widget has plain "Heat nozzle" label
 
     current_operation_type_ = op_type;
 
@@ -574,13 +586,56 @@ void AmsOperationSidebar::update_step_progress(AmsAction action) {
     } else {
         lv_obj_add_flag(step_progress_container_, LV_OBJ_FLAG_HIDDEN);
         target_load_slot_ = -1;
+        if (heat_label_showing_temp_) {
+            ui_step_progress_set_label(step_progress_, 0, lv_tr("Heat nozzle"));
+            heat_label_showing_temp_ = false;
+        }
         return;
     }
 
     int step_index = get_step_index_for_action(action, current_operation_type_);
+
+    // Physical-state anchor: backends emit LOADING/UNLOADING/etc. at gcode dispatch,
+    // before the printer physically leaves the heating phase. Hold the indicator at
+    // step 0 with a live "X / Y°C" label until the extruder reaches its target.
+    if (is_extruder_below_target()) {
+        step_index = 0;
+        int current_centi = lv_subject_get_int(printer_state_.get_active_extruder_temp_subject());
+        int target_centi = lv_subject_get_int(printer_state_.get_active_extruder_target_subject());
+        char temp_buf[32];
+        temperature::format_temperature_pair(current_centi / 10, target_centi / 10, temp_buf,
+                                             sizeof(temp_buf));
+        char label_buf[64];
+        snprintf(label_buf, sizeof(label_buf), "%s %s", lv_tr("Heat nozzle"), temp_buf);
+        ui_step_progress_set_label(step_progress_, 0, label_buf);
+        heat_label_showing_temp_ = true;
+    } else if (heat_label_showing_temp_) {
+        ui_step_progress_set_label(step_progress_, 0, lv_tr("Heat nozzle"));
+        heat_label_showing_temp_ = false;
+    }
+
     if (step_index >= 0) {
         ui_step_progress_set_current(step_progress_, step_index);
     }
+}
+
+bool AmsOperationSidebar::is_extruder_below_target() const {
+    int target_centi = lv_subject_get_int(printer_state_.get_active_extruder_target_subject());
+    if (target_centi <= 0) {
+        return false;
+    }
+    int current_centi = lv_subject_get_int(printer_state_.get_active_extruder_temp_subject());
+    // 5°C threshold matches check_pending_load() at line ~795
+    constexpr int TEMP_THRESHOLD_CENTI = 50;
+    return current_centi < (target_centi - TEMP_THRESHOLD_CENTI);
+}
+
+void AmsOperationSidebar::refresh_heat_step_display() {
+    if (!active_ || !step_progress_) {
+        return;
+    }
+    int action_int = lv_subject_get_int(AmsState::instance().get_ams_action_subject());
+    update_step_progress(static_cast<AmsAction>(action_int));
 }
 
 // ============================================================================
