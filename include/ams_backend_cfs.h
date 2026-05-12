@@ -251,6 +251,42 @@ class AmsBackendCfs : public AmsSubscriptionBackend {
     // observation not yet made (or only sentinel / no-tag values seen so
     // far). All access under mutex_.
     std::unordered_map<int, std::string> last_rfid_uid_;
+
+    // Sub-phase synthesis: CFS sets system_info_.action=LOADING/UNLOADING once
+    // at gcode dispatch and leaves it there through cut/retract/feed/purge.
+    // The step indicator therefore parks on the wrong sub-step (#Task #2).
+    // We synthesize CUTTING / UNLOADING / LOADING / PURGING transitions from
+    // physical signals — filament-sensor edges and extruder-target rises —
+    // and overwrite system_info_.action so the UI's existing step mapping
+    // shows the correct phase. All access under mutex_.
+    struct PhaseTracker {
+        bool active = false;                  // true between dispatch and on_complete/on_error
+        bool started_with_filament = false;   // filament_detected at op start
+        bool seen_filament_drop = false;      // true→false transition (cut completed)
+        bool seen_filament_rise = false;      // false→true transition after a drop (new filament fed)
+        bool reached_target_once = false;     // current_temp ever within 5°C of target this op
+        bool seen_purge_signal = false;       // target jumped >10°C above baseline after reaching it
+        int  baseline_target_centi = 0;       // extruder target when heating first completed
+    };
+    PhaseTracker phase_tracker_;
+    int last_extruder_target_centi_ = 0;
+    int last_extruder_temp_centi_ = 0;
+    bool last_filament_detected_ = false;
+
+    // Capture op-start state (filament + extruder target). Sets phase_tracker_.active.
+    // Caller must hold mutex_.
+    void begin_phase_tracking();
+
+    // Reset phase tracker on op completion. Caller must hold mutex_.
+    void end_phase_tracking();
+
+    // Drive phase machine on signal changes. Caller must hold mutex_.
+    void on_filament_transition_locked(bool new_detected);
+    void on_extruder_temp_change_locked(int new_temp_centi, int new_target_centi);
+
+    // Recompute system_info_.action from phase_tracker_ state.
+    // Caller must hold mutex_.
+    void apply_synthesized_action_locked();
 };
 
 } // namespace helix::printer

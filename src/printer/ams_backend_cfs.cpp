@@ -306,6 +306,8 @@ void AmsBackendCfs::on_started() {
     objects_to_query["box"] = nullptr;
     objects_to_query["motor_control"] = nullptr;
     objects_to_query["filament_switch_sensor filament_sensor"] = nullptr;
+    // Phase synthesis (Task #2) needs target rises to detect purge phase
+    objects_to_query["extruder"] = nlohmann::json::array({"target", "temperature"});
 
     nlohmann::json params = {{"objects", objects_to_query}};
 
@@ -689,8 +691,39 @@ void AmsBackendCfs::handle_status_update(const nlohmann::json& notification) {
             // semantics live in `dispatch_action_script`'s gcode-script
             // success callback, which fires when Klipper drains the *entire*
             // script. We just mirror the live filament-present flag.
+
+            // Drive phase synthesis off the transition (Task #2).
+            if (detected != last_filament_detected_) {
+                on_filament_transition_locked(detected);
+            }
+            last_filament_detected_ = detected;
         }
         changed = true;
+    }
+
+    if (params.contains("extruder")) {
+        const auto& extr = params["extruder"];
+        bool action_transitioned = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (extr.contains("target") && extr["target"].is_number()) {
+                last_extruder_target_centi_ =
+                    static_cast<int>(extr["target"].get<double>() * 10);
+            }
+            if (extr.contains("temperature") && extr["temperature"].is_number()) {
+                last_extruder_temp_centi_ =
+                    static_cast<int>(extr["temperature"].get<double>() * 10);
+            }
+            AmsAction before = system_info_.action;
+            on_extruder_temp_change_locked(last_extruder_temp_centi_,
+                                           last_extruder_target_centi_);
+            action_transitioned = (system_info_.action != before);
+        }
+        // Extruder telemetry is high-frequency; only emit when action
+        // actually moved, otherwise we'd thrash the UI on every temp tick.
+        if (action_transitioned) {
+            changed = true;
+        }
     }
 
     if (params.contains("motor_control")) {
@@ -784,6 +817,8 @@ AmsError AmsBackendCfs::load_filament(int slot_index) {
         std::lock_guard<std::mutex> lock(mutex_);
         system_info_.action = AmsAction::LOADING;
         system_info_.current_slot = slot_index;
+        begin_phase_tracking();
+        apply_synthesized_action_locked();
     }
     return dispatch_action_script(std::move(gcode));
 }
@@ -794,6 +829,8 @@ AmsError AmsBackendCfs::unload_filament(int) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         system_info_.action = AmsAction::UNLOADING;
+        begin_phase_tracking();
+        apply_synthesized_action_locked();
     }
     return dispatch_action_script(unload_gcode());
 }
@@ -822,6 +859,8 @@ AmsError AmsBackendCfs::change_tool(int tool) {
         std::lock_guard<std::mutex> lock(mutex_);
         system_info_.action = AmsAction::LOADING;
         system_info_.current_slot = tool;
+        begin_phase_tracking();
+        apply_synthesized_action_locked();
     }
     return dispatch_action_script(std::move(gcode));
 }
@@ -1104,6 +1143,7 @@ AmsError AmsBackendCfs::dispatch_action_script(std::string gcode) {
             spdlog::info("[AMS CFS] Action script complete — action {} -> IDLE",
                          static_cast<int>(system_info_.action));
             system_info_.action = AmsAction::IDLE;
+            end_phase_tracking();
             PostOpCooldownManager::instance().schedule();
         }
     };
@@ -1118,6 +1158,7 @@ AmsError AmsBackendCfs::dispatch_action_script(std::string gcode) {
             spdlog::error("[AMS CFS] Action script failed: {}", err.message);
             std::lock_guard<std::mutex> lock(mutex_);
             system_info_.action = AmsAction::IDLE;
+            end_phase_tracking();
         });
     };
 
@@ -1174,6 +1215,106 @@ AmsError AmsBackendCfs::dispatch_action_script(std::string gcode) {
         on_error);
 
     return AmsErrorHelper::success();
+}
+
+// ============================================================================
+// Sub-phase synthesis (Task #2)
+//
+// CFS macros decompose into Heat → Cut → Retract → Feed → Purge but the
+// backend sets system_info_.action once at dispatch and leaves it until the
+// gcode-script completion callback. We synthesize per-phase transitions from
+// physical signals so the UI's step indicator advances correctly:
+//
+//   - filament_switch_sensor edge true→false  ⇒ cut just completed
+//   - filament_switch_sensor edge false→true  ⇒ new filament reached extruder
+//   - extruder.target rising >10°C above the post-heat baseline ⇒ purge phase
+//
+// Heat anchoring lives in the UI (AmsOperationSidebar) and overrides any
+// action we publish here while current_temp < target - 5°C.
+// ============================================================================
+
+void AmsBackendCfs::begin_phase_tracking() {
+    phase_tracker_ = PhaseTracker{};
+    phase_tracker_.active = true;
+    phase_tracker_.started_with_filament = system_info_.filament_loaded;
+    // Don't latch baseline_target until heating completes — the macro raises
+    // target as its first act, and that rise is not a purge signal.
+}
+
+void AmsBackendCfs::end_phase_tracking() {
+    phase_tracker_ = PhaseTracker{};
+}
+
+void AmsBackendCfs::on_filament_transition_locked(bool new_detected) {
+    if (!phase_tracker_.active) return;
+    if (last_filament_detected_ && !new_detected) {
+        phase_tracker_.seen_filament_drop = true;
+    } else if (!last_filament_detected_ && new_detected &&
+               phase_tracker_.seen_filament_drop) {
+        phase_tracker_.seen_filament_rise = true;
+    } else if (!last_filament_detected_ && new_detected &&
+               !phase_tracker_.started_with_filament) {
+        // Fresh-load case: filament arrives without a prior drop. Treat the
+        // rise as the start of the post-feed phase.
+        phase_tracker_.seen_filament_rise = true;
+    }
+    apply_synthesized_action_locked();
+}
+
+void AmsBackendCfs::on_extruder_temp_change_locked(int new_temp_centi,
+                                                    int new_target_centi) {
+    if (!phase_tracker_.active) return;
+
+    if (new_target_centi > 0 &&
+        new_temp_centi >= (new_target_centi - 50 /* 5°C centi */)) {
+        if (!phase_tracker_.reached_target_once) {
+            phase_tracker_.reached_target_once = true;
+            phase_tracker_.baseline_target_centi = new_target_centi;
+            spdlog::debug("[AMS CFS] Phase: reached target {}°C, baseline latched",
+                          new_target_centi / 10);
+        }
+    }
+
+    // Purge detection: after heating completes, target rises >10°C above the
+    // baseline to flush_max_temp (the K2 jumps print-temp → flush_max_temp,
+    // e.g. 220→240, right before CR_BOX_WASTE/FLUSH).
+    if (phase_tracker_.reached_target_once &&
+        phase_tracker_.baseline_target_centi > 0 &&
+        new_target_centi > phase_tracker_.baseline_target_centi + 100 /* 10°C centi */ &&
+        !phase_tracker_.seen_purge_signal) {
+        phase_tracker_.seen_purge_signal = true;
+        spdlog::info("[AMS CFS] Phase: purge detected (target {}°C > baseline {}°C + 10)",
+                     new_target_centi / 10, phase_tracker_.baseline_target_centi / 10);
+    }
+
+    apply_synthesized_action_locked();
+}
+
+void AmsBackendCfs::apply_synthesized_action_locked() {
+    if (!phase_tracker_.active) return;
+
+    AmsAction synth;
+    if (phase_tracker_.seen_purge_signal) {
+        synth = AmsAction::PURGING;
+    } else if (phase_tracker_.started_with_filament &&
+               !phase_tracker_.seen_filament_drop) {
+        // Swap or unload, before the cutter trips — Cut/Tip phase.
+        synth = AmsAction::CUTTING;
+    } else if (phase_tracker_.seen_filament_drop &&
+               !phase_tracker_.seen_filament_rise) {
+        // After cut, before new filament arrives (or whole unload retract).
+        synth = AmsAction::UNLOADING;
+    } else {
+        // Fresh-load feed, post-feed swap, or post-purge tail.
+        synth = AmsAction::LOADING;
+    }
+
+    if (system_info_.action != synth && system_info_.action != AmsAction::IDLE) {
+        spdlog::info("[AMS CFS] Phase synth: {} -> {}",
+                     ams_action_to_string(system_info_.action),
+                     ams_action_to_string(synth));
+        system_info_.action = synth;
+    }
 }
 
 std::string AmsBackendCfs::reset_gcode() {
