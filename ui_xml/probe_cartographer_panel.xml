@@ -14,7 +14,7 @@
              style_flex_cross_place="center" style_pad_gap="#space_md">
       <icon src="thermometer" size="sm" variant="secondary"/>
       <text_body text="Coil Temperature" translation_tag="Coil Temperature" flex_grow="1"/>
-      <text_body bind_text="probe_carto_coil_temp" style_text_color="#text_accent"/>
+      <text_body bind_text="probe_carto_coil_temp" style_text_color="#primary"/>
     </ui_card>
 
     <!-- Action buttons — 2 equal-width -->

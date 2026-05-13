@@ -28,25 +28,25 @@
       <lv_obj width="100%" height="content" flex_flow="column" style_pad_gap="#space_xs">
         <text_small text="Source" translation_tag="Source" style_text_color="#text_muted"/>
         <lv_obj width="100%" height="content" flex_flow="row" style_pad_gap="#space_xs">
-          <ui_button name="btn_source_auto" text="Auto" size="sm" flex_grow="1"
+          <ui_button name="btn_source_auto" text="Auto" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_src_auto_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_src_auto_active" ref_value="0"/>
             <event_cb trigger="clicked" callback="on_clog_source_auto"/>
           </ui_button>
-          <ui_button name="btn_source_encoder" text="Encoder" size="sm" flex_grow="1"
+          <ui_button name="btn_source_encoder" text="Encoder" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_src_encoder_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_src_encoder_active" ref_value="0"/>
             <event_cb trigger="clicked" callback="on_clog_source_encoder"/>
           </ui_button>
-          <ui_button name="btn_source_flowguard" text="Flowguard" size="sm" flex_grow="1"
+          <ui_button name="btn_source_flowguard" text="Flowguard" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_src_flowguard_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_src_flowguard_active" ref_value="0"/>
             <event_cb trigger="clicked" callback="on_clog_source_flowguard"/>
           </ui_button>
-          <ui_button name="btn_source_afc" text="AFC" size="sm" flex_grow="1"
+          <ui_button name="btn_source_afc" text="AFC" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_src_afc_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_src_afc_active" ref_value="0"/>
@@ -59,13 +59,13 @@
       <lv_obj width="100%" height="content" flex_flow="column" style_pad_gap="#space_xs">
         <text_small text="Detection Mode" translation_tag="Detection Mode" style_text_color="#text_muted"/>
         <lv_obj width="100%" height="content" flex_flow="row" style_pad_gap="#space_xs">
-          <ui_button name="btn_mode_auto" text="Auto" size="sm" flex_grow="1"
+          <ui_button name="btn_mode_auto" text="Auto" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_mode_auto_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_mode_auto_active" ref_value="0"/>
             <event_cb trigger="clicked" callback="on_clog_mode_auto"/>
           </ui_button>
-          <ui_button name="btn_mode_manual" text="Manual" size="sm" flex_grow="1"
+          <ui_button name="btn_mode_manual" text="Manual" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_mode_manual_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_mode_manual_active" ref_value="0"/>
@@ -82,7 +82,7 @@
                 flex_flow="column" style_pad_gap="#space_xs"
                 style_opa-disabled="128">
           <bind_state_if_eq subject="clog_cfg_mode" state="disabled" ref_value="2"/>
-          <lv_obj width="100%" height="content" flex_flow="row" style_flex_main_place="space-between">
+          <lv_obj width="100%" height="content" flex_flow="row" style_flex_main_place="space_between">
             <text_small text="Detection Length" translation_tag="Detection Length" style_text_color="#text_muted"/>
             <text_small name="det_length_label" text="" bind_text="clog_cfg_det_length_text" style_text_color="#text_muted"/>
           </lv_obj>
@@ -101,7 +101,7 @@
         <!-- Danger threshold -->
         <lv_obj width="1" flex_grow="1" height="content"
                 flex_flow="column" style_pad_gap="#space_xs">
-          <lv_obj width="100%" height="content" flex_flow="row" style_flex_main_place="space-between">
+          <lv_obj width="100%" height="content" flex_flow="row" style_flex_main_place="space_between">
             <text_small text="Danger Zone" translation_tag="Danger Zone" style_text_color="#text_muted"/>
             <text_small name="threshold_label" text="" bind_text="clog_cfg_threshold_text" style_text_color="#text_muted"/>
           </lv_obj>

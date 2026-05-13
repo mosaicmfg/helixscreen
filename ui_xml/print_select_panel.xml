@@ -76,7 +76,7 @@
             style_pad_top="#space_xxs" style_pad_bottom="#space_xxs"
             hidden="true" scrollable="false">
       <text_small name="context_banner_text" text="Recently Printed" translation_tag="Recently Printed"
-                  variant="muted"/>
+                 />
     </lv_obj>
 
     <!-- Card view container (visible when view_mode == 0) -->

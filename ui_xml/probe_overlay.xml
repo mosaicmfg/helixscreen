@@ -32,7 +32,7 @@
           <lv_obj width="100%" height="content" style_pad_all="0" style_pad_top="#space_xs" flex_flow="row"
                   style_flex_cross_place="center" style_pad_gap="#space_sm" scrollable="false">
             <text_small text="Z Offset" translation_tag="Z Offset" style_text_color="#text_muted"/>
-            <text_body bind_text="probe_z_offset_display" style_text_color="#text_accent"/>
+            <text_body bind_text="probe_z_offset_display" style_text_color="#primary"/>
           </lv_obj>
         </lv_obj>
       </ui_card>

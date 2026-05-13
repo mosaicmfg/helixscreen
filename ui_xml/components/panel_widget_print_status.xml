@@ -24,7 +24,7 @@
               event_bubble="true">
         <bind_flag_if_eq subject="print_status_title_hidden" flag="hidden" ref_value="1"/>
         <text_small text="Print Library"
-                    translation_tag="Print Library" text_transform="uppercase" variant="muted" clickable="false"
+                    translation_tag="Print Library" text_transform="uppercase" clickable="false"
                     event_bubble="true"/>
         <divider_horizontal/>
       </lv_obj>
@@ -150,7 +150,7 @@
         </lv_obj>
       </lv_obj>
       <text_small name="display_message"
-                  width="100%" bind_text="display_message" variant="muted" style_text_align="center" long_mode="dots"
+                  width="100%" bind_text="display_message" style_text_align="center" long_mode="dots"
                   hidden="true" clickable="false" event_bubble="true">
         <bind_flag_if_eq subject="display_message_visible" flag="hidden" ref_value="0"/>
       </text_small>

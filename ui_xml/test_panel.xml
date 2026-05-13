@@ -188,9 +188,9 @@
     <!-- ============================================================ -->
     <text_heading text="Keyboard Test (Gboard-style)" translation_tag="Keyboard Test (Gboard-style)"/>
     <ui_card width="100%" height="120" style_pad_all="#space_lg">
-      <lv_textarea name="keyboard_test_textarea"
-                   width="100%" height="100%" placeholder_text="Tap to show keyboard..."
-                   placeholder_tag="Tap to show keyboard..." translation_tag="Tap to show keyboard..." one_line="false"/>
+      <text_input name="keyboard_test_textarea"
+                  width="100%" height="100%" placeholder="Tap to show keyboard..."
+                  placeholder_tag="Tap to show keyboard..." multiline="true"/>
     </ui_card>
     <!-- Bottom spacer for scroll clearance -->
     <lv_obj height="#space_lg" style_bg_opa="0" style_border_width="0" style_pad_all="0"/>

@@ -33,7 +33,7 @@
 
           <!-- Description -->
           <text_small name="hh_description" bind_text="buf_description" width="100%"
-                      style_text_long_mode="wrap"/>
+                      long_mode="wrap"/>
 
           <!-- Spool motor row -->
           <lv_obj name="espooler_row" width="100%" height="content"
@@ -77,14 +77,14 @@
 
           <!-- State row -->
           <text_small name="afc_state_label" bind_text="buf_afc_state" width="100%"
-                      style_text_long_mode="wrap"/>
+                      long_mode="wrap"/>
 
           <!-- Distance row -->
           <lv_obj name="distance_row" width="100%" height="content"
                   flex_flow="row" style_pad_gap="#space_sm">
             <bind_flag_if_eq subject="buf_show_distance" flag="hidden" ref_value="0"/>
             <text_small name="afc_distance_label" bind_text="buf_afc_distance" width="100%"
-                        style_text_long_mode="wrap"/>
+                        long_mode="wrap"/>
           </lv_obj>
 
           <!-- Clog detection row -->

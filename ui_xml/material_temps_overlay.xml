@@ -48,17 +48,17 @@
           <!-- Nozzle Min column -->
           <lv_obj flex_grow="1" flex_flow="column" style_pad_all="0" scrollable="false">
             <text_body style_pad_bottom="#space_xs" text="Nozzle Min (°C)" translation_tag="Nozzle Min (°C)"/>
-            <text_input name="edit_nozzle_min" width="120" input_type="number" max_length="4"/>
+            <text_input name="edit_nozzle_min" width="120" keyboard_hint="numeric" max_length="4"/>
           </lv_obj>
           <!-- Nozzle Max column -->
           <lv_obj flex_grow="1" flex_flow="column" style_pad_all="0" scrollable="false">
             <text_body style_pad_bottom="#space_xs" text="Nozzle Max (°C)" translation_tag="Nozzle Max (°C)"/>
-            <text_input name="edit_nozzle_max" width="120" input_type="number" max_length="4"/>
+            <text_input name="edit_nozzle_max" width="120" keyboard_hint="numeric" max_length="4"/>
           </lv_obj>
           <!-- Bed Temp column -->
           <lv_obj flex_grow="1" flex_flow="column" style_pad_all="0" scrollable="false">
             <text_body style_pad_bottom="#space_xs" text="Bed Temp (°C)" translation_tag="Bed Temp (°C)"/>
-            <text_input name="edit_bed_temp" width="120" input_type="number" max_length="4"/>
+            <text_input name="edit_bed_temp" width="120" keyboard_hint="numeric" max_length="4"/>
           </lv_obj>
         </lv_obj>
         <!-- Preheat Macro section -->

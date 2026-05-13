@@ -155,7 +155,7 @@
                         height="content" style_pad_top="#space_md" style_pad_bottom="#space_md"
                         style_pad_left="#space_lg" style_pad_right="#space_md" flex_flow="row"
                         style_flex_cross_place="center" style_pad_gap="#space_md" scrollable="false"
-                        style_clip_content="false">
+                        >
                   <lv_slider name="fan_speed_slider" flex_grow="1" min_value="0" max_value="100" value="0"/>
                   <lv_label name="fan_speed_label"
                             width="40" text="0%" style_text_font="#font_small" style_text_align="right"

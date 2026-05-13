@@ -1465,6 +1465,9 @@
         "placeholder": {
           "type": "string"
         },
+        "placeholder_tag": {
+          "type": "string"
+        },
         "max_length": {
           "type": "int"
         },
@@ -2957,6 +2960,12 @@
     "fan_name_max_width_large",
     "fan_name_max_width_medium",
     "fan_name_max_width_small",
+    "filament_ams_row_h",
+    "filament_ams_row_h_large",
+    "filament_ams_row_h_medium",
+    "filament_ams_row_h_micro",
+    "filament_ams_row_h_small",
+    "filament_ams_row_h_tiny",
     "filament_error",
     "filament_hub_bg_dark",
     "filament_hub_bg_light",
@@ -3177,6 +3186,7 @@
     "primary",
     "print_column_width",
     "printer_column_width",
+    "row_height",
     "screen_bg",
     "screw_indicator_height",
     "screw_indicator_height_large",
@@ -3347,9 +3357,25 @@
     "temp_card_height_tiny",
     "temp_card_height_xlarge",
     "temp_card_height_xxlarge",
+    "temp_card_spacing",
+    "temp_card_spacing_large",
+    "temp_card_spacing_medium",
+    "temp_card_spacing_small",
+    "temp_card_spacing_tiny",
     "temp_gradient_cold",
     "temp_gradient_hot",
     "temp_gradient_warm",
+    "temp_graph_bed_dark",
+    "temp_graph_bed_light",
+    "temp_graph_chamber_dark",
+    "temp_graph_chamber_light",
+    "temp_graph_nozzle_dark",
+    "temp_graph_nozzle_light",
+    "temp_preset_btn_spacing",
+    "temp_preset_btn_spacing_large",
+    "temp_preset_btn_spacing_medium",
+    "temp_preset_btn_spacing_small",
+    "temp_preset_btn_spacing_tiny",
     "tertiary",
     "test_label_font",
     "test_label_large_font",
@@ -3371,6 +3397,7 @@
     "tray_bg",
     "tray_border",
     "tray_default_height",
-    "warning"
+    "warning",
+    "wizard_button_width"
   ]
 }

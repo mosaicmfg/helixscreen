@@ -28,7 +28,7 @@
     <!-- Scrollable param list — flex_grow fills remaining space between header and buttons -->
     <lv_obj name="param_list" width="100%" flex_grow="1"
             flex_flow="column" style_pad_all="#space_lg" style_pad_gap="#space_sm"
-            scrollable="true" style_overflow="scroll"/>
+            scrollable="true"/>
     <!-- Button row — always pinned at bottom -->
     <modal_button_row primary_text="Run" primary_callback="macro_param_modal_run_cb"
                       secondary_text="Cancel" secondary_callback="macro_param_modal_cancel_cb"/>

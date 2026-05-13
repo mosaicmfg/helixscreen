@@ -14,7 +14,7 @@
             style_radius="#border_radius" style_clip_corner="true"
             flex_flow="column" style_flex_cross_place="center"
             style_layout="flex" style_flex_main_place="center" style_flex_track_place="center"
-            style_gap_row="#space_sm"
+            style_pad_row="#space_sm"
             clickable="false" event_bubble="true">
       <icon name="camera_icon" src="video" size="lg" variant="secondary"
             align="center" clickable="false" event_bubble="true"/>

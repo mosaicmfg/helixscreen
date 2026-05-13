@@ -72,7 +72,7 @@
                   flex_grow="1" style_pad_all="0" flex_flow="column" style_pad_gap="#space_xxs" scrollable="false">
             <text_small text="Remaining (g)" translation_tag="Remaining (g)"/>
             <text_input name="field_remaining"
-                        width="100%" input_mode="number" keyboard_hint="numeric" placeholder="1000" max_length="8">
+                        width="100%" keyboard_hint="numeric" placeholder="1000" max_length="8">
               <event_cb trigger="value_changed" callback="spoolman_edit_field_changed_cb"/>
             </text_input>
           </lv_obj>
@@ -80,7 +80,7 @@
                   flex_grow="1" style_pad_all="0" flex_flow="column" style_pad_gap="#space_xxs" scrollable="false">
             <text_small text="Spool wt (g)" translation_tag="Spool wt (g)"/>
             <text_input name="field_spool_weight"
-                        width="100%" input_mode="number" keyboard_hint="numeric" placeholder="0" max_length="8">
+                        width="100%" keyboard_hint="numeric" placeholder="0" max_length="8">
               <event_cb trigger="value_changed" callback="spoolman_edit_field_changed_cb"/>
             </text_input>
           </lv_obj>
@@ -88,7 +88,7 @@
                   flex_grow="1" style_pad_all="0" flex_flow="column" style_pad_gap="#space_xxs" scrollable="false">
             <text_small text="Price" translation_tag="Price"/>
             <text_input name="field_price"
-                        width="100%" input_mode="number" keyboard_hint="numeric" placeholder="0.00" max_length="10">
+                        width="100%" keyboard_hint="numeric" placeholder="0.00" max_length="10">
               <event_cb trigger="value_changed" callback="spoolman_edit_field_changed_cb"/>
             </text_input>
           </lv_obj>

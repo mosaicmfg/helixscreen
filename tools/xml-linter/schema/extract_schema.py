@@ -1061,6 +1061,7 @@ CPP_WIDGET_FILES: dict[str, dict[str, Any]] = {
         "inherits": "lv_textarea",
         "extra_attrs": {
             "placeholder": {"type": "string"},
+            "placeholder_tag": {"type": "string"},
             "max_length": {"type": "int"},
             "multiline": {"type": "bool"},
             "bind_text": {"type": "string"},
@@ -1396,8 +1397,9 @@ def _add_cpp_enums(schema: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 # Responsive suffixes used by the theme system
+# Must mirror skip_suffixes in src/ui/theme_manager.cpp:793
 _RESPONSIVE_SUFFIXES = [
-    "_tiny", "_small", "_medium", "_large", "_xlarge", "_xxlarge",
+    "_micro", "_tiny", "_small", "_medium", "_large", "_xlarge", "_xxlarge",
 ]
 
 
@@ -1407,7 +1409,7 @@ _RESPONSIVE_SUFFIXES = [
 # startup and registers any <px>/<color>/<string> regardless of nesting, so we
 # treat all occurrences as constants.
 _CONST_TAGS = frozenset(
-    {"px", "color", "string", "int", "percentage", "font", "tiny_ttf", "bin"}
+    {"px", "color", "string", "int", "percentage", "font", "tiny_ttf", "bin", "const"}
 )
 
 
@@ -1421,7 +1423,13 @@ def extract_runtime_constants(xml_roots: list[Path]) -> set[str]:
     - Base names with responsive suffixes stripped (e.g. `chip_height_small`
       → also adds `chip_height`).
     """
+    import re
     import xml.etree.ElementTree as ET
+
+    # Mirrors helix_xml_linter.xml_parser._preprocess_state_qualifiers:
+    # rewrites attribute names like 'style_text_color:checked="..."' so
+    # ElementTree doesn't reject them as unbound XML namespace prefixes.
+    state_qualifier_re = re.compile(r"(\b\w+):(\w+\s*=\s*[\"'])")
 
     constants: set[str] = set()
 
@@ -1430,10 +1438,14 @@ def extract_runtime_constants(xml_roots: list[Path]) -> set[str]:
             continue
         for xml_file in xml_root.rglob("*.xml"):
             try:
-                tree = ET.parse(xml_file)
+                raw = xml_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            preprocessed = state_qualifier_re.sub(r"\1__\2", raw)
+            try:
+                root = ET.fromstring(preprocessed)
             except ET.ParseError:
                 continue
-            root = tree.getroot()
             for elem in root.iter():
                 if elem.tag not in _CONST_TAGS:
                     continue

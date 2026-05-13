@@ -37,7 +37,7 @@
             <text_small text="Port" translation_tag="Port"/>
             <text_input name="spoolman_port_input"
                         width="100%" placeholder_text="7912" max_length="5"
-                        input_mode="number" keyboard_hint="numeric" text="7912"/>
+                        keyboard_hint="numeric" text="7912"/>
           </lv_obj>
         </lv_obj>
         <!-- Status text (for errors/progress) -->

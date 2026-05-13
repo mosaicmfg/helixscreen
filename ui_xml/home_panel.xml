@@ -17,7 +17,7 @@
     <!-- Floating E-Stop FAB: visible while printing -->
     <ui_button name="estop_fab"
                width="#button_height" height="#button_height"
-               align="top_right" flag_floating="true"
+               align="top_right" floating="true"
                style_radius="9999" variant="danger" focusable="false"
                style_translate_x="-20" style_translate_y="20"
                hidden="true">

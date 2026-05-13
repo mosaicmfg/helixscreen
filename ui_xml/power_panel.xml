@@ -22,7 +22,7 @@
                     long_mode="wrap" style_text_color="#text_muted"/>
         <lv_obj name="power_chip_container" width="100%" height="content"
                 style_pad_left="#space_lg" style_pad_right="#space_lg" style_pad_top="#space_xs"
-                style_pad_bottom="#space_sm" flex_flow="row" style_flex_wrap="wrap"
+                style_pad_bottom="#space_sm" flex_flow="row_wrap"
                 style_pad_gap="#space_sm" scrollable="false"/>
       </lv_obj>
       <!-- Divider between chip selector and device list -->

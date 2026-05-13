@@ -25,7 +25,7 @@
       <!-- SSH instructions (hidden by default, shown in Step 3) -->
       <lv_obj name="ssh_instructions_container"
               width="100%" height="content" style_pad_all="#space_md" style_bg_color="#card_bg"
-              style_radius="#border_radius" style_bg_opa="255" flags="hidden">
+              style_radius="#border_radius" style_bg_opa="255" hidden="true">
         <lv_obj width="100%" height="content" flex_flow="column" style_pad_row="#space_sm" style_bg_opa="0">
           <text_body width="100%"
                      text="Connect to your printer via SSH and run:" translation_tag="Connect to your printer via SSH and run:" style_text_color="#text_muted" long_mode="wrap"/>
@@ -45,7 +45,7 @@
 
       <!-- Action button (hidden by default, shown contextually) -->
       <ui_button name="action_button"
-                 width="100%" text="Check Again" translation_tag="Check Again" variant="primary" flags="hidden">
+                 width="100%" text="Check Again" translation_tag="Check Again" variant="primary" hidden="true">
         <event_cb trigger="clicked" callback="on_timelapse_install_action"/>
       </ui_button>
 

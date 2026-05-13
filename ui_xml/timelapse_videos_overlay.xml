@@ -24,7 +24,7 @@
           <text_small text=" frames" translation_tag=" frames" style_text_color="#text_muted"/>
           <text_small text=" · " style_text_color="#text_muted" width="content"/>
           <text_small name="capture_info_label" bind_text="timelapse_capture_info"
-                      style_text_color="#text_muted" flex_grow="1" long_mode="dot"/>
+                      style_text_color="#text_muted" flex_grow="1" long_mode="dots"/>
         </lv_obj>
         <!-- Render progress bar with inline status - hidden when not rendering -->
         <lv_obj name="render_progress_container" width="100%" height="content" scrollable="false"
@@ -44,7 +44,7 @@
                    style_radius="#border_radius" style_pad_all="#space_sm">
           <event_cb trigger="clicked" callback="on_timelapse_render_now"/>
           <text_body text="Render Now" translation_tag="Render Now"
-                     style_text_color="#on_primary" style_text_align="center" width="100%"
+                     style_text_color="#text" style_text_align="center" width="100%"
                      clickable="false" event_bubble="true"/>
         </lv_button>
       </lv_obj>

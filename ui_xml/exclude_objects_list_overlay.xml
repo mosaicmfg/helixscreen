@@ -12,12 +12,12 @@
       <!-- Empty state: shown when the print has no defined objects (slicer didn't label
            or Klipper's [exclude_object] module isn't configured). The "Objects" button
            upstream is usually gated, but this covers race/edge cases. -->
-      <text_body name="objects_empty_state"
+      <text_muted name="objects_empty_state"
                  width="100%" text="No objects defined for this print"
-                 translation_tag="No objects defined for this print" variant="muted" style_text_align="center"
+                 translation_tag="No objects defined for this print" style_text_align="center"
                  style_pad_top="#space_md" style_pad_bottom="#space_md">
         <bind_flag_if_not_eq subject="defined_objects_count" flag="hidden" ref_value="0"/>
-      </text_body>
+      </text_muted>
     </lv_obj>
   </view>
 </component>

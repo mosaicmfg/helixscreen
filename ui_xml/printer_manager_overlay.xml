@@ -55,7 +55,7 @@
             <bind_flag_if_eq subject="pm_name_editing" flag="hidden" ref_value="1"/>
             <event_cb trigger="clicked" callback="pm_printer_name_clicked"/>
             <text_heading name="pm_printer_name"
-                          flex_grow="1" style_text_overflow="ellipsis" one_line="true" bind_text="printer_manager_name"
+                          flex_grow="1" long_mode="dots" bind_text="printer_manager_name"
                           style_text_align="center" clickable="false" event_bubble="true"/>
             <icon src="pencil" size="xs" variant="tertiary" clickable="false" event_bubble="true"/>
           </lv_obj>

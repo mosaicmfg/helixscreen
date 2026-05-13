@@ -259,7 +259,7 @@
               style_flex_cross_place="center" style_pad_all="0" scrollable="false">
         <bind_flag_if_not_eq subject="edit_picker_state" flag="hidden" ref_value="0"/>
         <lv_spinner width="32"
-                    height="32" style_arc_width_indicator="2" style_arc_color="#primary" style_arc_opa_main="0"/>
+                    height="32" style_arc_width-indicator="2" style_arc_color="#primary" style_arc_opa-main="0"/>
         <text_body text="Loading spools..." translation_tag="Loading spools..." style_pad_top="#space_sm"/>
       </lv_obj>
 
