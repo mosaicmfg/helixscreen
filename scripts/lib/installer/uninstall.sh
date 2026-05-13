@@ -10,6 +10,54 @@
 [ -n "${_HELIX_UNINSTALL_SOURCED:-}" ] && return 0
 _HELIX_UNINSTALL_SOURCED=1
 
+# Sentinel paths checked by helixscreen-update.service so it refuses to fire
+# while an uninstall is in progress (closes a race where the update path unit
+# could trigger a restart between stop_service and rm -rf $INSTALL_DIR).
+# Two locations cover both systemd-with-StateDirectory and the bare fallback;
+# both live outside $INSTALL_DIR so they survive its removal.  Both are swept
+# by clean_helix_state_dirs at the end of uninstall and by the EXIT/INT/TERM
+# trap if an uninstall aborts before reaching the sweep (otherwise a stuck
+# sentinel silently blocks every future update.service firing).
+#
+# Honors $HELIX_STATE_VAR_LIB so this stays consistent with the env-override
+# the BATS suite uses to redirect clean_helix_state_dirs away from real
+# /var/lib.  Production callers leave it unset; the systemd unit hardcodes
+# /var/lib/helixscreen/.uninstalling because @@HELIX_STATE_VAR_LIB@@ isn't a
+# template var.
+_uninstalling_sentinel_paths() {
+    echo "${HELIX_STATE_VAR_LIB:-/var/lib/helixscreen}/.uninstalling"
+    if [ -n "${INSTALL_DIR:-}" ]; then
+        local _parent
+        _parent=$(dirname "$INSTALL_DIR" 2>/dev/null || true)
+        case "$_parent" in
+            /|.|"") : ;;
+            *) echo "${_parent}/.helixscreen/.uninstalling" ;;
+        esac
+    fi
+}
+
+_drop_uninstalling_sentinel() {
+    local _p _dir
+    _uninstalling_sentinel_paths | while IFS= read -r _p; do
+        [ -z "$_p" ] && continue
+        _dir=$(dirname "$_p")
+        $SUDO mkdir -p "$_dir" 2>/dev/null || true
+        $SUDO touch "$_p" 2>/dev/null || true
+    done
+}
+
+# Sweep sentinel files.  Wired to EXIT/INT/TERM in uninstall() so an aborted
+# run doesn't leave a stuck sentinel blocking helixscreen-update.service.
+# On a successful uninstall this is a no-op — clean_helix_state_dirs already
+# removed them — but the trap fires either way.
+_sweep_uninstalling_sentinel() {
+    local _p
+    _uninstalling_sentinel_paths 2>/dev/null | while IFS= read -r _p; do
+        [ -z "$_p" ] && continue
+        $SUDO rm -f "$_p" 2>/dev/null || true
+    done
+}
+
 # Re-enable services that were disabled during installation
 # Reads the state file and reverses each recorded disable action
 reenable_disabled_services() {
@@ -45,6 +93,26 @@ uninstall() {
     local platform=${1:-}
 
     log_info "Uninstalling HelixScreen..."
+
+    # Drop sentinel BEFORE any destructive work.  helixscreen-update.service
+    # checks for it and refuses to fire while uninstall is running, closing
+    # the race where Moonraker's path unit could re-trigger a restart between
+    # stop_service and rm -rf.  Swept at the end by clean_helix_state_dirs;
+    # the trap covers the abort case so a stuck sentinel can't silently block
+    # future update.service firings.
+    trap '_sweep_uninstalling_sentinel' EXIT INT TERM
+    _drop_uninstalling_sentinel
+
+    # Remove the [update_manager helixscreen] section FIRST, before any files
+    # disappear.  If Moonraker auto-refreshes (or someone clicks "Update" in
+    # Mainsail mid-uninstall), having the section gone before we start
+    # dismantling files prevents a re-extract from racing us.  Moonraker's
+    # in-memory updater object survives until Moonraker is reloaded, but
+    # type:web only extracts on explicit user trigger so the on-disk edit is
+    # the effective fix; no moonraker restart needed.
+    if type remove_update_manager_section >/dev/null 2>&1; then
+        remove_update_manager_section || true
+    fi
 
     # Detect init system first
     detect_init_system
@@ -225,13 +293,9 @@ uninstall() {
         remove_config_symlink || true
     fi
 
-    # Sweep state dirs holding rolling config backups (out-of-INSTALL_DIR by design)
+    # Sweep state dirs holding rolling config backups (out-of-INSTALL_DIR by
+    # design).  Also sweeps the .uninstalling sentinel dropped at the top.
     clean_helix_state_dirs
-
-    # Remove update_manager section from moonraker.conf (if present)
-    if type remove_update_manager_section >/dev/null 2>&1; then
-        remove_update_manager_section || true
-    fi
 
     # Strip the legacy [shell_command helix_recover] block from moonraker.conf
     # (dead since v0.99.61 — kept around on already-installed K2s until they

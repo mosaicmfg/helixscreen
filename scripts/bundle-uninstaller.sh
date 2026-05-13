@@ -335,6 +335,34 @@ remove_installation() {
     clean_helix_state_dirs
 }
 
+# Refuse to run if $0 lives inside $INSTALL_DIR — we're about to delete
+# that directory and would yank the script out from under ourselves mid-run.
+# Tell the user how to re-invoke from /tmp.  Called from main() after
+# set_install_paths so $INSTALL_DIR is populated.  Normalizes a trailing
+# slash so an INSTALL_DIR override like "/opt/helixscreen/" still matches.
+guard_self_delete() {
+    [ -n "${INSTALL_DIR:-}" ] || return 0
+
+    local _script_dir _script_abs _install_norm
+    _script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || return 0
+    _script_abs="${_script_dir}/$(basename "$0")"
+    _install_norm="${INSTALL_DIR%/}"
+
+    case "$_script_abs" in
+        "$_install_norm"/*|"$_install_norm")
+            log_error "Refusing to run: uninstall script is inside \$INSTALL_DIR"
+            log_error "  script:      $_script_abs"
+            log_error "  INSTALL_DIR: $INSTALL_DIR"
+            log_error ""
+            log_error "This script is about to delete its own directory.  Copy it"
+            log_error "out first, then re-run from the copy:"
+            log_error "  cp '$_script_abs' /tmp/uninstall.sh"
+            log_error "  sh /tmp/uninstall.sh $*"
+            exit 1
+            ;;
+    esac
+}
+
 # Main uninstall
 main() {
     force=false
@@ -380,6 +408,9 @@ main() {
     fi
     set_install_paths "$platform" "$AD5M_FIRMWARE"
 
+    # Refuse to self-delete (must be after set_install_paths)
+    guard_self_delete "$@"
+
     # Check for root
     check_permissions "$platform"
 
@@ -411,12 +442,24 @@ main() {
         echo ""
     fi
 
-    # Perform uninstall
+    # Perform uninstall.  Order matters:
+    #   1. Drop .uninstalling sentinel so helixscreen-update.service refuses
+    #      to fire while we're working.  Trap on EXIT/INT/TERM covers an
+    #      aborted run so a stuck sentinel doesn't silently block all future
+    #      update.service firings.
+    #   2. Edit moonraker.conf FIRST.  If anything races us (auto-refresh,
+    #      a user clicking Update in Mainsail), having the section gone
+    #      before we start dismantling files is the on-disk defense; the
+    #      systemd path-unit defense (sentinel) covers the in-process side.
+    #   3. Stop, remove, sweep — sweep also clears the sentinel via
+    #      clean_helix_state_dirs.
+    trap '_sweep_uninstalling_sentinel' EXIT INT TERM
+    _drop_uninstalling_sentinel
+    remove_update_manager_section || true
     stop_helixscreen
     remove_service
     remove_installation
     reenable_previous_ui
-    remove_update_manager_section || true
 
     echo ""
     echo "${GREEN}========================================${NC}"

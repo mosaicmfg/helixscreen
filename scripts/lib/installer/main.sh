@@ -186,8 +186,42 @@ main() {
 
     # Handle uninstall (doesn't need all checks)
     if [ "$uninstall_mode" = true ]; then
+        # Refuse to run uninstall from a script sitting inside the dir we're
+        # about to delete.  The release tarball ships scripts/install.sh into
+        # $INSTALL_DIR for offline --local updates; users sometimes invoke
+        # that copy with --uninstall, which works on Linux only because the
+        # kernel keeps the inode open after rm.  Force the user to copy out.
+        local _script_dir _script_abs _install_norm
+        _script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || _script_dir=""
+        if [ -n "$_script_dir" ] && [ -n "${INSTALL_DIR:-}" ]; then
+            _script_abs="${_script_dir}/$(basename "$0")"
+            _install_norm="${INSTALL_DIR%/}"
+            case "$_script_abs" in
+                "$_install_norm"/*|"$_install_norm")
+                    log_error "Refusing to run --uninstall from inside \$INSTALL_DIR"
+                    log_error "  script:      $_script_abs"
+                    log_error "  INSTALL_DIR: $INSTALL_DIR"
+                    log_error ""
+                    log_error "Copy the script out first, then re-run:"
+                    log_error "  cp '$_script_abs' /tmp/install.sh"
+                    log_error "  sh /tmp/install.sh --uninstall"
+                    exit 1
+                    ;;
+            esac
+        fi
+
         uninstall "$platform"
         exit 0
+    fi
+
+    # Defensive: if uninstall_mode is still true at this point, the early
+    # exit above is broken — fail loudly rather than running the install
+    # path, which is the failure mode that caused user reports of
+    # "--uninstall reinstalled HelixScreen".
+    if [ "$uninstall_mode" = true ]; then
+        log_error "internal error: install path entered with uninstall_mode=true"
+        log_error "please report at https://github.com/prestonbrown/helixscreen/issues"
+        exit 99
     fi
 
     # Pre-flight checks

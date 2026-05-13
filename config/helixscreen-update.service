@@ -49,6 +49,19 @@ ExecStartPre=/bin/sh -c '\
     fi; \
   done'
 
+# Skip restart if an uninstall is in progress.  The uninstaller drops this
+# sentinel before any destructive work and clean_helix_state_dirs sweeps it
+# at the end; while it exists we must not respawn helixscreen out from under
+# the uninstall flow.
+ExecStartPre=/bin/sh -c '\
+  for f in /var/lib/helixscreen/.uninstalling \
+           "@@INSTALL_PARENT@@/.helixscreen/.uninstalling"; do \
+    if [ -f "$$f" ]; then \
+      echo "Skipping: uninstall in progress ($$f)"; \
+      exit 1; \
+    fi; \
+  done'
+
 # Refresh systemd units from the newly extracted install dir.
 # The template logic lives in a script so Moonraker's extraction
 # updates it — avoids the chicken-and-egg where the installer's
