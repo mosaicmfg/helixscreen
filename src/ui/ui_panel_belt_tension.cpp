@@ -107,8 +107,6 @@ void ui_panel_belt_tension_register_callbacks() {
          [](lv_event_t* /*e*/) { get_global_belt_tension_panel().handle_start_clicked(); }},
         {"belt_tension_cancel_cb",
          [](lv_event_t* /*e*/) { get_global_belt_tension_panel().handle_cancel_clicked(); }},
-        {"belt_tension_show_graph_cb",
-         [](lv_event_t* /*e*/) { get_global_belt_tension_panel().handle_show_graph_clicked(); }},
         {"belt_tension_strobe_cb",
          [](lv_event_t* /*e*/) { get_global_belt_tension_panel().handle_strobe_clicked(); }},
         {"belt_tension_strobe_freq_up_cb",
@@ -508,13 +506,6 @@ void BeltTensionPanel::handle_cancel_clicked() {
         calibrator_->reset();
     }
     set_view_state(ViewState::START);
-}
-
-void BeltTensionPanel::handle_show_graph_clicked() {
-    spdlog::info("[BeltTension] Show graph clicked");
-    // Graph display is handled via chart widget visibility in XML
-    // For MVP, toast that the feature is coming
-    ToastManager::instance().show(ToastSeverity::INFO, "Frequency response graph coming soon");
 }
 
 void BeltTensionPanel::handle_strobe_clicked() {

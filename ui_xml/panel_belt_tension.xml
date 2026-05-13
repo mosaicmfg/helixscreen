@@ -149,11 +149,6 @@
         <!-- Action buttons row -->
         <lv_obj width="100%" height="content" style_pad_all="0" flex_flow="row"
                 style_pad_gap="#space_md" scrollable="false">
-          <ui_button name="btn_show_graph" flex_grow="1" height="#button_height"
-                     icon="waveform" text="Freq Graph" translation_tag="Freq Graph"
-                     variant="secondary">
-            <event_cb trigger="clicked" callback="belt_tension_show_graph_cb"/>
-          </ui_button>
           <ui_button name="btn_strobe" flex_grow="1" height="#button_height"
                      icon="sine_wave" text="Fine-Tune" translation_tag="Fine-Tune"
                      variant="secondary">

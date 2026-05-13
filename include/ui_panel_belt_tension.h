@@ -87,7 +87,6 @@ class BeltTensionPanel : public OverlayBase {
 
     void handle_start_clicked();
     void handle_cancel_clicked();
-    void handle_show_graph_clicked();
     void handle_strobe_clicked();
     void handle_strobe_freq_up();
     void handle_strobe_freq_down();

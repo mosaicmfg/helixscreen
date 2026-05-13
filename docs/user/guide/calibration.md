@@ -221,7 +221,6 @@ Use the **Lock A** and **Lock B** buttons to record the resonant frequency you f
 - **Tap "Test Again"** on the results screen to re-run without leaving the panel
 - **Path A corresponds to the 1,1 diagonal** on CoreXY printers (both motors moving the same direction). Path B is the 1,-1 diagonal (motors moving opposite directions). Check your printer's documentation for which tensioner adjusts which path
 - **Temperature matters** — belt tension can change slightly with temperature. Run the check at your typical operating temperature for the most accurate results
-- **The frequency chart** (coming soon) will show the full frequency response curves for both paths, making it easier to spot issues like secondary peaks or broad resonance
 
 ---
 
