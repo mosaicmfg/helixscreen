@@ -337,7 +337,7 @@
         <event_cb trigger="clicked" callback="on_theme_save_as_clicked"/>
       </ui_button>
       <ui_button name="btn_save" text="Save" translation_tag="Save" variant="primary"
-                 height="#button_height_sm" flex_grow="1" state="disabled">
+                 height="#button_height_sm" flex_grow="1" disabled="true">
         <event_cb trigger="clicked" callback="on_theme_save_clicked"/>
       </ui_button>
     </lv_obj>

@@ -15,6 +15,7 @@
     <prop name="callback" type="string" default=""/>
     <prop name="disabled" type="string" default=""/>
     <prop name="dropdown_width" type="string" default="33%"/>
+    <prop name="hide_description" type="string" default="false"/>
   </api>
   <styles>
     <style name="label_enabled" text_color="#text"/>
@@ -39,9 +40,9 @@
         <bind_style name="label_enabled" subject="$disabled" ref_value="0"/>
         <bind_style name="label_disabled" subject="$disabled" ref_value="1"/>
       </text_body>
-      <!-- Description: hidden on micro/tiny by default -->
+      <!-- Description: hidden on micro/tiny by default; hidden everywhere if hide_description="true" -->
       <text_small name="description" text="$description" translation_tag="$description_tag"
-                  long_mode="wrap" width="100%">
+                  long_mode="wrap" width="100%" hidden_if_prop_eq="$hide_description|true">
         <bind_flag_if_lt subject="ui_breakpoint" flag="hidden" ref_value="2"/>
       </text_small>
     </lv_obj>

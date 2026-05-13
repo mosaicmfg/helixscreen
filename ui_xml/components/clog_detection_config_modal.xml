@@ -28,25 +28,25 @@
       <lv_obj width="100%" height="content" flex_flow="column" style_pad_gap="#space_xs">
         <text_small text="Source" translation_tag="Source" style_text_color="#text_muted"/>
         <lv_obj width="100%" height="content" flex_flow="row" style_pad_gap="#space_xs">
-          <ui_button name="btn_source_auto" text="Auto" size="sm" flex_grow="1"
+          <ui_button name="btn_source_auto" text="Auto" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_src_auto_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_src_auto_active" ref_value="0"/>
             <event_cb trigger="clicked" callback="on_clog_source_auto"/>
           </ui_button>
-          <ui_button name="btn_source_encoder" text="Encoder" size="sm" flex_grow="1"
+          <ui_button name="btn_source_encoder" text="Encoder" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_src_encoder_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_src_encoder_active" ref_value="0"/>
             <event_cb trigger="clicked" callback="on_clog_source_encoder"/>
           </ui_button>
-          <ui_button name="btn_source_flowguard" text="Flowguard" size="sm" flex_grow="1"
+          <ui_button name="btn_source_flowguard" text="Flowguard" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_src_flowguard_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_src_flowguard_active" ref_value="0"/>
             <event_cb trigger="clicked" callback="on_clog_source_flowguard"/>
           </ui_button>
-          <ui_button name="btn_source_afc" text="AFC" size="sm" flex_grow="1"
+          <ui_button name="btn_source_afc" text="AFC" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_src_afc_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_src_afc_active" ref_value="0"/>
@@ -59,13 +59,13 @@
       <lv_obj width="100%" height="content" flex_flow="column" style_pad_gap="#space_xs">
         <text_small text="Detection Mode" translation_tag="Detection Mode" style_text_color="#text_muted"/>
         <lv_obj width="100%" height="content" flex_flow="row" style_pad_gap="#space_xs">
-          <ui_button name="btn_mode_auto" text="Auto" size="sm" flex_grow="1"
+          <ui_button name="btn_mode_auto" text="Auto" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_mode_auto_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_mode_auto_active" ref_value="0"/>
             <event_cb trigger="clicked" callback="on_clog_mode_auto"/>
           </ui_button>
-          <ui_button name="btn_mode_manual" text="Manual" size="sm" flex_grow="1"
+          <ui_button name="btn_mode_manual" text="Manual" flex_grow="1"
                      clickable="true">
             <bind_style name="clog_btn_selected" subject="clog_mode_manual_active" ref_value="1"/>
             <bind_style name="clog_btn_unselected" subject="clog_mode_manual_active" ref_value="0"/>
