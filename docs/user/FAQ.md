@@ -13,8 +13,8 @@ HelixScreen is a touchscreen interface for Klipper 3D printers. It connects to y
 **Key features:**
 - 30+ panels, 20+ overlays, and a customizable multi-page widget dashboard
 - 3D G-code preview, bed mesh visualization, frequency response charts
-- 6 multi-material backends (AFC, Happy Hare, ACE, AD5X IFS, CFS, tool changers) with Spoolman integration
-- First-run wizard with auto-detection of 70+ printer models
+- 7 multi-material backends (AFC, Happy Hare, ACE, AD5X IFS, CFS, Snapmaker U1, tool changers) with Spoolman integration
+- First-run wizard with auto-detection of 80+ printer models
 - Theme editor with 17 presets (dark and light), 9 languages
 - Sound system, timelapse integration, label printing, exclude objects
 - Auto-detecting layout system for displays from 480x320 to 1920x480
@@ -36,6 +36,9 @@ HelixScreen works with any Klipper-based printer running Moonraker. Tested and s
 | FlashForge AD5X | **Tested** | IFS filament system integrated |
 | SOVOL SV06 / SV08 | **Tested** | Community reports welcome |
 | Elegoo Centauri Carbon 1 | **Tested** | Requires [OpenCentauri COSMOS](https://docs.opencentauri.cc/klipper-conversion/cosmos/) firmware; ships with factory white-balance calibration |
+| Snapmaker U1 (SnapSwap toolchanger) | **Tested** | Native four-head support with RFID spool recognition; extended firmware required |
+| Artillery M1 Pro | **Tested** | |
+| Zero G Mercury / Nebula / Hydra | **Tested** | Multiple variants supported |
 | Other Klipper printers | **Should work** | Any printer with Moonraker API access |
 
 > **Note:** "Tested" means the HelixScreen team has verified the platform. "Untested" means binaries exist but haven't been verified on real hardware. See the [Installation Guide](INSTALL.md) for platform-specific instructions.
@@ -78,9 +81,9 @@ If you test on hardware not listed above, please let us know your results!
 **HelixScreen advantages:**
 - Low memory footprint (~15MB on embedded targets vs ~50MB for KlipperScreen on the same hardware)
 - Declarative XML layouts (change UI without recompiling)
-- Modern reactive architecture with 6 multi-material backends
+- Modern reactive architecture with 7 multi-material backends
 - 3D visualizations (G-code preview, bed mesh)
-- 70+ printer auto-detection database
+- 80+ printer auto-detection database
 - 9 languages (English, German, Spanish, French, Italian, Japanese, Portuguese, Russian, Chinese)
 
 ---

@@ -29,10 +29,10 @@ Fast, beautiful, and frugal enough to run on hardware you already own — your p
 ## Why HelixScreen?
 
 - **Customizable dashboard** — Multi-page grid with drag-to-reposition, edge resize, and 30+ widgets including temperature graphs, fan arcs, and power toggles
-- **Every feature at your fingertips** — 30+ panels, 20+ overlays, 20+ modals, 280+ XML layouts
+- **Every feature at your fingertips** — 30+ panels, 20+ overlays, 20+ modals, 300+ XML layouts
 - **~15MB RAM on embedded targets, ~75MB disk** — sips memory on a Creality K1 or Flashforge AD5M; a few times more on 64-bit Pi, still well under what other touchscreen UIs need. Your printer's onboard SoC or an older Pi is plenty — no need to buy new hardware.
-- **70+ printers in the database** — Auto-detects your hardware and configures itself
-- **Multi-material ready** — AFC, Happy Hare, ACE, AD5X IFS, CFS, tool changers, Spoolman
+- **80+ printers in the database** — Auto-detects your hardware and configures itself
+- **Multi-material ready** — AFC, Happy Hare, ACE, AD5X IFS, CFS, Snapmaker U1, tool changers, Spoolman
 - **Exclude objects** — Tap-to-exclude overhead map view with object outlines during prints
 - **Looks great** — Light/dark themes with 17 presets, responsive layouts, GPU-accelerated blur
 - **First-run wizard** — Guided setup discovers your printer's capabilities
@@ -47,8 +47,8 @@ Fast, beautiful, and frugal enough to run on hardware you already own — your p
 | Declarative UI | Full XML with reactive bindings | C only | Python only |
 | RAM Usage | ~15MB (32-bit) | ~15-20MB | ~50MB |
 | Disk Size | ~75-115MB | ~60-80MB | ~50MB |
-| Multi-Material | 6 backends | Limited | Basic |
-| Printer Database | 70+ models | — | Manual config |
+| Multi-Material | 7 backends | Limited | Basic |
+| Printer Database | 80+ models | — | Manual config |
 | Display Layouts | Auto-detecting (tiny to ultrawide) | Fixed | Configurable |
 | Internationalization | 9 languages | — | 40+ languages |
 | Status | 1.0 (active) | Inactive | Mature (maintenance) |
@@ -101,7 +101,7 @@ See [docs/devel/GALLERY.md](docs/devel/GALLERY.md) for the full gallery.
 
 **Printer Control** — Print management with G-code preview, motion controls, temperature presets with per-material overrides, multi-fan control, Z-offset, speed/flow tuning, live filament consumption tracking, power device management.
 
-**Multi-Material** — 6 filament system backends: AFC (Box Turtle, ViViD), Happy Hare (ERCF, 3MS, Tradrack, Night Owl), ACE (Anycubic ACE Pro), AD5X IFS, Creality CFS, and tool changers. Multi-unit and multi-backend support. Full Spoolman integration with spool creation wizard.
+**Multi-Material** — 7 filament system backends: AFC (Box Turtle, ViViD), Happy Hare (ERCF, 3MS, Tradrack, Night Owl), ACE (Anycubic ACE Pro), AD5X IFS, Creality CFS, Snapmaker U1 (with RFID spool recognition), and tool changers. Multi-unit and multi-backend support. Full Spoolman integration with spool creation wizard.
 
 **Visualization** — 3D G-code layer preview with memory-aware geometry budgets, 3D bed mesh with async rendering, print thumbnails, frequency response charts, unified temperature graph.
 
@@ -111,20 +111,21 @@ See [docs/devel/GALLERY.md](docs/devel/GALLERY.md) for the full gallery.
 
 **Display** — Auto-detecting layout system (480x320 to 1920x480 ultrawide), display rotation (0/90/180/270) with auto-detection, light/dark themes with 17 presets and live theme editor, GPU-accelerated backdrop blur, screensavers.
 
-**System** — First-run wizard with guided hardware discovery, 70+ printer models with auto-detection, 9 languages, opt-in crash reporting with debug bundles, KIAUH installer, versioned config migration.
+**System** — First-run wizard with guided hardware discovery, 80+ printer models with auto-detection, 9 languages, opt-in crash reporting with debug bundles, KIAUH installer, versioned config migration.
 
 ## Supported Platforms
 
 | Platform | Architecture | Status |
 |----------|-------------|--------|
-| Raspberry Pi 4/5, CM4, Zero 2 W (64-bit) | aarch64 | Tested |
-| Raspberry Pi (32-bit) | armhf | Tested |
+| Raspberry Pi 3/4/5, CM4, Zero 2 W (64-bit) | aarch64 | Tested |
+| Raspberry Pi 3/4 (32-bit) | armhf | Tested |
 | BTT Pad / CB1 / CB2 / Manta | aarch64 | Tested |
 | Creality K1 / K1C / K1 Max | MIPS32 | Tested |
 | Creality K2 Max / K2 Plus | ARM (musl) | Tested |
 | Creality Sonic Pad | armhf | Tested |
 | Flashforge AD5M / AD5M Pro | armv7-a | Tested |
 | Flashforge AD5X | MIPS32 | Tested |
+| Snapmaker U1 (SnapSwap toolchanger) | aarch64 | Tested |
 | QIDI Q2, Plus 4, Max 4 | aarch64 | Supported¹ |
 | Sovol SV06 / SV08 | Pi build | Tested |
 | Elegoo Centauri Carbon | Dedicated build | Tested² |
@@ -180,7 +181,7 @@ make test-run
 
 **Controls:** Click navigation icons, press 'S' for screenshot, use `-v` (INFO), `-vv` (DEBUG), or `-vvv` (TRACE) for logging.
 
-**Test suite:** 6,000+ test cases across 400 test files covering printer state, UI components, XML parsing, multi-material, and more.
+**Test suite:** 5,000+ test cases across 460+ test files covering printer state, UI components, XML parsing, multi-material, and more.
 
 See [docs/devel/DEVELOPMENT.md](docs/devel/DEVELOPMENT.md) for detailed setup, cross-compilation, and contributing guidelines.
 
@@ -190,13 +191,13 @@ See [docs/devel/DEVELOPMENT.md](docs/devel/DEVELOPMENT.md) for detailed setup, c
 More features, far lower RAM use (~15MB on embedded targets vs ~50MB for KlipperScreen), and actively developed. The lighter footprint means the printer you have or a Pi you've owned for years is plenty — no need to chase new SBC hardware. See the [comparison table](#why-helixscreen).
 
 **Which printers are supported?**
-Any Klipper + Moonraker printer. 70+ models in the auto-detection database spanning Voron, Creality, QIDI, Anycubic, Flashforge, Sovol, RatRig, FLSUN, Elegoo, Prusa, and more. The wizard auto-discovers your printer's capabilities even if it's not in the database.
+Any Klipper + Moonraker printer. 80+ models in the auto-detection database spanning Voron, Creality, QIDI, Anycubic, Flashforge, Sovol, RatRig, FLSUN, Elegoo, Prusa, Snapmaker, and more. The wizard auto-discovers your printer's capabilities even if it's not in the database.
 
 **What screen sizes are supported?**
 480x320, 800x480, 1024x600, and 1920x480 (ultrawide) with auto-detecting layouts. Display rotation (0/90/180/270) with auto-detection.
 
 **What multi-material systems work?**
-AFC (Box Turtle, ViViD), Happy Hare (ERCF, 3MS, Tradrack, Night Owl), ACE (Anycubic ACE Pro), AD5X IFS, Creality CFS, and tool changers (viesturz/klipper-toolchanger). Full Spoolman integration for spool management.
+AFC (Box Turtle, ViViD), Happy Hare (ERCF, 3MS, Tradrack, Night Owl), ACE (Anycubic ACE Pro), AD5X IFS, Creality CFS, Snapmaker U1 (with RFID spool recognition), and tool changers (viesturz/klipper-toolchanger). Full Spoolman integration for spool management.
 
 See [docs/user/FAQ.md](docs/user/FAQ.md) for the full FAQ.
 

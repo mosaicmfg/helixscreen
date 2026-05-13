@@ -46,9 +46,9 @@
   >
   > Features:
   > • 30+ panels: dashboard, temperature graphs, motion control, bed mesh 3D view, console, macros, and more
-  > • Multi-material support for AFC, Happy Hare, ACE, AD5X IFS, CFS, and tool changers
+  > • Multi-material support for AFC, Happy Hare, ACE, AD5X IFS, CFS, Snapmaker U1, and tool changers
   > • Exclude objects mid-print — tap the failing part on an overhead map
-  > • 70+ printer models auto-detected with first-run wizard
+  > • 80+ printer models auto-detected with first-run wizard
   > • Calibration suite: input shaper, PID tuning, Z-offset, firmware retraction
   > • 17 themes with light/dark mode
   > • 9 languages

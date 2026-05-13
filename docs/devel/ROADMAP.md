@@ -1,6 +1,6 @@
 # HelixScreen Development Roadmap
 
-**Last Updated:** 2026-02-18 | **Status:** Beta - Seeking Testers
+**Last Updated:** 2026-05-13 | **Status:** 1.0 (active)
 
 ---
 
@@ -8,16 +8,16 @@
 
 | Area | Status |
 |------|--------|
-| **Production UI** | 30 panels, 19 overlays, 13 modals, 187 XML layouts |
+| **Production UI** | 30+ panels, 19+ overlays, 13+ modals, 300+ XML layouts |
 | **First-Run Wizard** | 13-step guided setup (touch cal, WiFi, probe, input shaper, telemetry) |
 | **Moonraker API** | 116 methods, abstraction boundary enforced |
-| **Multi-Material (AMS)** | 6 backends, multi-unit, multi-backend, error visualization |
+| **Multi-Material (AMS)** | 7 backends, multi-unit, multi-backend, error visualization |
 | **Tool Abstraction** | ToolState with tool-backend mapping, multi-extruder temps |
 | **Spoolman** | 23 API methods, full CRUD, Spool Wizard, virtualized list with search |
 | **Plugin System** | Core infrastructure complete |
-| **Test Suite** | 131 test files (99 C++, 32 shell), ~3,400 test cases, 17,600+ assertions |
-| **Platforms** | Pi, AD5M, K1, QIDI, Snapmaker U1, macOS, Linux |
-| **Printer Database** | 71 printer models with auto-detection |
+| **Test Suite** | 460+ test files, 5,300+ test cases, 12,000+ Catch2 sections |
+| **Platforms** | Pi 3/4/5, AD5M, AD5X, K1, K2, QIDI, Snapmaker U1, Centauri Carbon, macOS, Linux |
+| **Printer Database** | 82 printer models with auto-detection |
 | **Filament Database** | 48 materials with temp/drying/compatibility data |
 | **Theme System** | Dynamic JSON themes with live preview |
 | **Layout System** | Auto-detection for ultrawide (1920x480) and small (480x320) displays |
@@ -119,7 +119,7 @@ Remaining items for production readiness:
 ## What's Complete
 
 ### Core Architecture
-- LVGL 9.5 with declarative XML layouts via `lib/helix-xml/` (187 XML files)
+- LVGL 9.5 with declarative XML layouts via `lib/helix-xml/` (300+ XML files)
 - Reactive Subject-Observer data binding
 - Design token system (no hardcoded colors/spacing)
 - RAII lifecycle management (PanelBase, ObserverGuard, SubscriptionGuard)
@@ -154,7 +154,7 @@ Remaining items for production readiness:
 
 ### Multi-Material (AMS) & Tool Abstraction
 
-**6 backend implementations** supporting diverse hardware:
+**7 backend implementations** supporting diverse hardware:
 
 | Backend | Hardware | Topology | Slots | Key Capabilities |
 |---------|----------|----------|-------|-----------------|
@@ -164,6 +164,7 @@ Remaining items for production readiness:
 | **ACE** | Anycubic ACE Pro (ValgACE/BunnyACE/DuckACE) | Hub | 4 | Integrated dryer control (temp/duration/fan), REST polling |
 | **AD5X IFS** | FlashForge Adventurer 5X | Hub | 4 | Intelligent Filament Switching, ZMOD firmware |
 | **CFS** | Creality K2 series (RS-485) | Hub | 4-20 | Creality Filament System, multi-unit |
+| **Snapmaker U1** | Snapmaker U1 SnapSwap toolchanger | Parallel | 4 | RFID spool recognition, four-head tool switching |
 | **Mock** | Development simulation | All | Config | Simulates all backend types with realistic multi-phase operations |
 
 **Multi-backend architecture:**

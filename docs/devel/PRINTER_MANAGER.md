@@ -356,7 +356,7 @@ Capability chips are pill-shaped UI elements displayed in a flow-wrapped contain
 | Probe | `printer_has_probe` | No | -- |
 | Bed Mesh | `printer_has_bed_mesh` | Yes | BedMeshPanel |
 | Heated Bed | `printer_has_heater_bed` | No | -- |
-| LEDs | `printer_has_led` | Yes | (toast: coming soon) |
+| LEDs | `printer_has_led` | Yes | LED Settings Overlay |
 | ADXL | `printer_has_accelerometer` | Yes | InputShaperPanel |
 | QGL | `printer_has_qgl` | No | -- |
 | Z-Tilt | `printer_has_z_tilt` | No | -- |
