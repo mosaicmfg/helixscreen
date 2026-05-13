@@ -20,6 +20,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -192,21 +193,22 @@ class UpdateChecker {
     /// candidate met the free-space threshold, so callers can build a
     /// useful error message.
     struct DownloadPathDiag {
-        std::string best_dir;        // best candidate found (regardless of threshold)
-        size_t best_free_bytes = 0;  // its free space
-        size_t threshold_bytes = 0;  // threshold required
+        std::string best_dir;          // best candidate found (regardless of threshold)
+        uint64_t best_free_bytes = 0;  // its free space (uint64_t — on 32-bit
+                                       // platforms a 46 GiB rootfs wraps size_t)
+        uint64_t threshold_bytes = 0;  // threshold required
     };
     /// @param diag Optional diagnostic out-param (for error reporting)
-    /// @param threshold_bytes Required free bytes; 0 → use a 200 MB default
+    /// @param threshold_bytes Required free bytes; 0 → use a 120 MB default
     ///        for callers without a known download size.
     std::string get_download_path(DownloadPathDiag* diag = nullptr,
-                                  size_t threshold_bytes = 0) const;
+                                  uint64_t threshold_bytes = 0) const;
 
     /// Compute the disk-space threshold for an in-app download.
     /// Returns 1.2x download_bytes + a small buffer when known, else a fixed
     /// default sized for current release archives. Always honors a 50 MB
     /// safety floor.
-    static size_t required_download_space_bytes(size_t download_bytes);
+    static uint64_t required_download_space_bytes(uint64_t download_bytes);
 
     std::string get_platform_asset_name() const;
 

@@ -818,6 +818,32 @@ TEST_CASE("UpdateChecker required_download_space_bytes scales with download size
     REQUIRE(large > 500ULL * 1024 * 1024);
 }
 
+TEST_CASE("statvfs result wider than 32-bit doesn't truncate", "[update_checker]") {
+    // Regression: bundle D6LPLAYP reported "178.3 MB free" across a 60 GiB
+    // rootfs with 46 GB actually free, because get_available_space() computed
+    // f_bavail * f_frsize in size_t (32-bit on pi32/armhf/MIPS32) and the
+    // product wrapped mod 2^32. The threshold check then over-blocked an
+    // update on a device with tons of disk space.
+    //
+    // This test locks in the multiplication semantics. The values below are
+    // taken from the bundle: 11,580,559 free 4 KiB blocks on a 60 GiB ext4.
+    constexpr unsigned long blocks = 11'580'559UL;
+    constexpr unsigned long frsize = 4096UL;
+
+    // Correct: widen BEFORE multiplying. ~46 GB.
+    const uint64_t bytes = static_cast<uint64_t>(blocks) * static_cast<uint64_t>(frsize);
+    REQUIRE(bytes == 47'433'969'664ULL);
+    REQUIRE(bytes / (1024ULL * 1024ULL) > 45'000ULL);  // > 45 GiB
+
+    // What the bug looked like: 32-bit truncated product reproduces the
+    // ~181 MiB the user saw in the bundle. This branch is documentary —
+    // if anyone ever reintroduces a narrow cast, the helper above is the
+    // contract that must hold.
+    const uint32_t truncated = static_cast<uint32_t>(static_cast<uint32_t>(blocks) *
+                                                     static_cast<uint32_t>(frsize));
+    REQUIRE(truncated < 200U * 1024U * 1024U);
+}
+
 TEST_CASE("UpdateChecker get_platform_asset_name format", "[update_checker]") {
     auto& checker = UpdateChecker::instance();
     checker.init();

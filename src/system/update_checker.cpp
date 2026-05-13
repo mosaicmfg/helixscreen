@@ -796,13 +796,13 @@ std::string UpdateChecker::get_download_error() const {
 // Safety floor: even if the remote claims a tiny size, never accept a
 // candidate dir below this. Small enough to allow CI fixtures to pass while
 // large enough that a near-full embedded device doesn't slip through.
-static constexpr size_t DOWNLOAD_SPACE_FLOOR_BYTES = 50ULL * 1024 * 1024;
+static constexpr uint64_t DOWNLOAD_SPACE_FLOOR_BYTES = 50ULL * 1024 * 1024;
 
 // Used when the caller doesn't know the remote size (manifest schemas that
 // omit size/zip_size, or any parse failure). Sized to cover the largest
 // current platform tarball (~75 MB on x86) with ~1.6× safety margin without
 // over-blocking users on tight rootfs. Bump in lockstep if archives grow.
-static constexpr size_t DOWNLOAD_SPACE_DEFAULT_BYTES = 120ULL * 1024 * 1024;
+static constexpr uint64_t DOWNLOAD_SPACE_DEFAULT_BYTES = 120ULL * 1024 * 1024;
 
 // The filename used to stage the downloaded archive in TMP_DIR. The name
 // matches whatever format the release URL points at: zips keep a .zip
@@ -814,13 +814,17 @@ static const char* const DOWNLOAD_FILENAME = "helixscreen-update.tar.gz";
 static const char* const DOWNLOAD_FILENAME_ZIP = "helixscreen-update.zip";
 
 // Check if a directory is writable and return available bytes (0 on failure)
-static size_t get_available_space(const std::string& dir) {
+static uint64_t get_available_space(const std::string& dir) {
     struct statvfs stat{};
     if (statvfs(dir.c_str(), &stat) != 0) {
         return 0;
     }
-    // Use f_bavail (blocks available to unprivileged users) * fragment size
-    return static_cast<size_t>(stat.f_bavail) * stat.f_frsize;
+    // Cast BOTH operands to uint64_t before multiplying. On 32-bit platforms
+    // (pi32/armhf, MIPS32, etc.) size_t and unsigned long are 32-bit, and the
+    // product for any filesystem larger than ~4 GiB wraps. Bundle D6LPLAYP
+    // reported "178.3 MB free" across a 60 GiB rootfs because 11.58M blocks ×
+    // 4096 = 47.4 GB wraps mod 2^32 to ~181 MB.
+    return static_cast<uint64_t>(stat.f_bavail) * static_cast<uint64_t>(stat.f_frsize);
 }
 
 // Check if we can actually write to a directory
@@ -828,20 +832,20 @@ static bool is_writable_dir(const std::string& dir) {
     return access(dir.c_str(), W_OK) == 0;
 }
 
-size_t UpdateChecker::required_download_space_bytes(size_t download_bytes) {
+uint64_t UpdateChecker::required_download_space_bytes(uint64_t download_bytes) {
     // 20% headroom over the wire size + a small fixed buffer for the .partial
     // tail and filesystem overhead. install.sh runs its own ≥100 MB check
     // before extracting, so we don't need to oversize the staging here.
-    constexpr size_t FIXED_BUFFER = 10ULL * 1024 * 1024;
+    constexpr uint64_t FIXED_BUFFER = 10ULL * 1024 * 1024;
     if (download_bytes == 0) {
         return DOWNLOAD_SPACE_DEFAULT_BYTES;
     }
-    size_t need = (download_bytes * 6 / 5) + FIXED_BUFFER;
+    uint64_t need = (download_bytes * 6 / 5) + FIXED_BUFFER;
     return need < DOWNLOAD_SPACE_FLOOR_BYTES ? DOWNLOAD_SPACE_FLOOR_BYTES : need;
 }
 
 std::string UpdateChecker::get_download_path(DownloadPathDiag* diag,
-                                             size_t threshold_bytes) const {
+                                             uint64_t threshold_bytes) const {
     if (threshold_bytes == 0) {
         threshold_bytes = DOWNLOAD_SPACE_DEFAULT_BYTES;
     } else if (threshold_bytes < DOWNLOAD_SPACE_FLOOR_BYTES) {
@@ -901,9 +905,9 @@ std::string UpdateChecker::get_download_path(DownloadPathDiag* diag,
     // Track best across all writable dirs (even those below threshold) so we
     // can produce an actionable error message when no candidate qualifies.
     std::string best_dir;            // best dir meeting threshold (used for return)
-    size_t best_space = 0;
+    uint64_t best_space = 0;
     std::string best_dir_overall;    // best writable dir regardless of threshold (for diag)
-    size_t best_space_overall = 0;
+    uint64_t best_space_overall = 0;
 
     for (const auto& dir : candidates) {
         if (!is_writable_dir(dir)) {
