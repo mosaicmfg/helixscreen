@@ -1810,6 +1810,25 @@ bool Application::run_wizard() {
         force_touch_calibration_step(true);
     }
 
+    // Touch-calibration force must work even when the first-run wizard is
+    // pending. Without this, the wizard's step-0 auto-skip (already-calibrated
+    // check) wins and the request is silently ignored — the standalone
+    // overlay in create_overlays() is unreachable while m_wizard_active is
+    // true. Pin the wizard to step 0 and disable the skip so users can
+    // recalibrate from a stale-affine state. Mirror the three sources the
+    // standalone-overlay handler accepts: --calibrate-touch CLI, the env
+    // var, and the /input/force_calibration config option.
+    const char* env_force_cal = std::getenv("HELIX_TOUCH_CALIBRATE");
+    bool config_force_cal = m_config && m_config->get<bool>("/input/force_calibration", false);
+    if (m_args.calibrate_touch || env_force_cal != nullptr || config_force_cal) {
+        force_touch_calibration_step(true);
+        initial_step = 0;
+        spdlog::info("[Application] Forcing wizard touch-calibration step "
+                     "(calibrate_touch={}, env={}, config={})",
+                     m_args.calibrate_touch, env_force_cal ? "set" : "unset",
+                     config_force_cal);
+    }
+
     // If step 1 was explicitly requested, force-show language chooser (for visual testing)
     if (m_args.wizard_step == 1) {
         force_language_chooser_step(true);
