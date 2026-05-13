@@ -798,9 +798,11 @@ TEST_CASE("UpdateChecker required_download_space_bytes scales with download size
           "[update_checker]") {
     using UC = UpdateChecker;
 
-    // Unknown size → fixed default
+    // Unknown size → fixed default. Bounded both ways so the constant
+    // can't silently drift back up and over-block tight-rootfs devices.
     auto unknown = UC::required_download_space_bytes(0);
-    REQUIRE(unknown >= 200ULL * 1024 * 1024);
+    REQUIRE(unknown >= 120ULL * 1024 * 1024);
+    REQUIRE(unknown <= 130ULL * 1024 * 1024);
 
     // Tiny download → safety floor
     auto tiny = UC::required_download_space_bytes(1024);

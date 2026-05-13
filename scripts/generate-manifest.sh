@@ -126,14 +126,19 @@ for plat in "${PLATFORMS[@]}"; do
     FOUND_ANY=true
     filename=$(basename "$tarball")
     sha256=$($SHA256_CMD "$tarball" | awk '{print $1}')
+    # `wc -c` is portable across Linux/macOS/BSD (stat(1) flags differ:
+    # `-c '%s'` GNU vs `-f '%z'` BSD). The in-app updater reads `size` to
+    # compute the staging-directory free-space requirement (1.2× + small
+    # buffer); omitting it forces a conservative fixed-size fallback.
+    size=$(wc -c < "$tarball" | tr -d ' ')
     url="${BASE_URL}/${filename}"
 
-    # Add platform entry to assets JSON
     ASSETS_JSON=$(echo "$ASSETS_JSON" | jq \
         --arg plat "$plat" \
         --arg url "$url" \
         --arg sha256 "$sha256" \
-        '.[$plat] = {url: $url, sha256: $sha256}')
+        --argjson size "$size" \
+        '.[$plat] = {url: $url, sha256: $sha256, size: $size}')
 
     # Check for corresponding ZIP file (used by Moonraker type:zip updates).
     # Gated behind --include-zip until pre-v0.99.31 in-app updaters age out.
@@ -141,13 +146,15 @@ for plat in "${PLATFORMS[@]}"; do
         zipfile="$DIR/helixscreen-${plat}.zip"
         if [[ -f "$zipfile" ]]; then
             zip_sha256=$($SHA256_CMD "$zipfile" | awk '{print $1}')
+            zip_size=$(wc -c < "$zipfile" | tr -d ' ')
             zip_url="${BASE_URL}/helixscreen-${plat}.zip"
 
             ASSETS_JSON=$(echo "$ASSETS_JSON" | jq \
                 --arg plat "$plat" \
                 --arg zip_url "$zip_url" \
                 --arg zip_sha256 "$zip_sha256" \
-                '.[$plat] += {zip_url: $zip_url, zip_sha256: $zip_sha256}')
+                --argjson zip_size "$zip_size" \
+                '.[$plat] += {zip_url: $zip_url, zip_sha256: $zip_sha256, zip_size: $zip_size}')
         fi
     fi
 done

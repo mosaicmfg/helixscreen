@@ -799,9 +799,10 @@ std::string UpdateChecker::get_download_error() const {
 static constexpr size_t DOWNLOAD_SPACE_FLOOR_BYTES = 50ULL * 1024 * 1024;
 
 // Used when the caller doesn't know the remote size (manifest schemas that
-// omit zip_size, or any parse failure). Sized to cover current release
-// archives plus headroom; bump in lockstep if archives grow past this.
-static constexpr size_t DOWNLOAD_SPACE_DEFAULT_BYTES = 200ULL * 1024 * 1024;
+// omit size/zip_size, or any parse failure). Sized to cover the largest
+// current platform tarball (~75 MB on x86) with ~1.6× safety margin without
+// over-blocking users on tight rootfs. Bump in lockstep if archives grow.
+static constexpr size_t DOWNLOAD_SPACE_DEFAULT_BYTES = 120ULL * 1024 * 1024;
 
 // The filename used to stage the downloaded archive in TMP_DIR. The name
 // matches whatever format the release URL points at: zips keep a .zip
