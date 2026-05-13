@@ -192,13 +192,14 @@ void PrintHistoryManager::subscribe_to_notifications() {
 
     auto token = lifetime_.token();
 
+    // Bare expired() check on the bg thread is the L081 Mechanism C anti-pattern
+    // (detector hit on v0.99.60/ad5x telemetry). token.defer() runs its own
+    // expiration check atomically on the main thread, so the bg-side short-circuit
+    // gains nothing and trips the watchdog. Let defer handle it.
     client_->register_method_callback(
         "notify_history_changed", "PrintHistoryManager",
         [this, token](const nlohmann::json& /*data*/) {
-            if (token.expired())
-                return;
             spdlog::debug("[HistoryManager] Received notify_history_changed");
-
             token.defer("PrintHistoryManager::notify_history_changed", [this]() {
                 invalidate();
                 fetch();
