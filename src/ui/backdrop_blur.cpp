@@ -190,6 +190,11 @@ struct GpuBlurState {
     GLint a_position = -1;
 
     bool initialized = false;
+    // Sticky after init_gpu_blur() returns false. Without this every backdrop
+    // (modal open, overlay push) re-attempts EGL init and logs "Could not
+    // initialize EGL" again on devices that don't have a usable GL stack
+    // (Pi DSI dumb buffers, headless render nodes locked down by perms, etc.).
+    bool init_failed = false;
 };
 
 static GpuBlurState s_gpu;
@@ -486,7 +491,10 @@ static void destroy_gpu_blur() {
 /// Run 2-pass Gaussian blur on the GPU. Returns true on success.
 /// Input: ARGB8888 buffer. Output: same buffer, blurred.
 static bool gpu_blur(uint8_t* data, int width, int height) {
+    if (s_gpu.init_failed)
+        return false;
     if (!s_gpu.initialized && !init_gpu_blur()) {
+        s_gpu.init_failed = true;
         return false;
     }
 
