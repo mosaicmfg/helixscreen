@@ -16,17 +16,17 @@
 
     <!-- Full-screen touch capture overlay - captures touches anywhere during calibration -->
     <!-- Hidden in IDLE/VERIFY/COMPLETE states, shown during POINT_1/2/3 -->
-    <lv_obj name="touch_capture_overlay" width="100%" height="100%" align="top_left" hidden="true" flag_clickable="true">
+    <lv_obj name="touch_capture_overlay" width="100%" height="100%" align="top_left" hidden="true" clickable="true">
       <event_cb trigger="pressed" callback="on_touch_cal_screen_touched"/>
     </lv_obj>
 
     <!-- Crosshair target - positioned dynamically by C++ code -->
     <!-- Uses MDI target icon (U+F04FE) via icon_target constant -->
     <!-- Visual indicator only - touch capture is handled by overlay above -->
-    <!-- flag_floating=true takes it out of flex layout for absolute positioning -->
+    <!-- floating=true takes it out of flex layout for absolute positioning -->
     <lv_label name="crosshair"
               width="50" height="50" text="#icon_target" style_text_font="mdi_icons_48" style_text_color="#primary"
-              style_text_align="center" align="top_left" flag_floating="true" hidden="true"/>
+              style_text_align="center" align="top_left" floating="true" hidden="true"/>
 
     <!-- Test area container - shown in COMPLETE state for testing calibration -->
     <lv_obj name="test_area_container"
@@ -36,7 +36,7 @@
       <!-- Large touch test area - user taps here to verify calibration -->
       <lv_obj name="test_touch_area"
               height="100%" flex_grow="1" style_bg_color="#card_bg" style_bg_opa="255" style_border_width="1"
-              style_border_color="#border" style_radius="#border_radius" flag_clickable="true" scrollable="false">
+              style_border_color="#border" style_radius="#border_radius" clickable="true" scrollable="false">
         <event_cb trigger="pressed" callback="on_touch_cal_test_area_touched"/>
         <!-- Instruction label centered -->
         <text_body text="Touch anywhere to test calibration" translation_tag="Touch anywhere to test calibration" align="center"/>

@@ -441,7 +441,7 @@
       <!-- Custom tab content (hidden by default, C++ toggles via tab switching) -->
       <lv_obj name="custom_content" width="100%" height="content"
               style_pad_all="#space_md" flex_flow="row" style_pad_gap="#space_md"
-              style_flex_main_place="center" scrollable="false" flag_hidden="true">
+              style_flex_main_place="center" scrollable="false" hidden="true">
         <!-- LEFT: HSV picker -->
         <ui_hsv_picker name="hsv_picker_tiny" sv_size="#sv_size" hue_height="#hue_height" gap="#space_sm"/>
         <!-- RIGHT: Preview + hex input + color name stacked -->

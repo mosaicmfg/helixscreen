@@ -80,7 +80,7 @@
             <event_cb trigger="clicked" callback="on_bed_preset_abs_clicked"/>
           </ui_button>
           <!-- Dynamic spool preset (hidden by default, shown when active spool has novel material) -->
-          <ui_button name="preset_spool" width="100%" text="" flag_hidden="true">
+          <ui_button name="preset_spool" width="100%" text="" hidden="true">
             <event_cb trigger="clicked" callback="on_heater_preset_clicked"/>
             <lv_label name="spool_preset_label" text=""/>
           </ui_button>

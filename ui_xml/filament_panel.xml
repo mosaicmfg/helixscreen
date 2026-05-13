@@ -175,7 +175,7 @@
                 style_pad_all="0" scrollable="false"
                 flex_flow="row" style_flex_main_place="space_between" style_flex_cross_place="center"
                 style_pad_gap="#space_sm"
-                flags="hidden">
+                hidden="true">
 
           <!-- AMS mini status (auto-binds to AmsState, fills width, stretches to row height) -->
           <ams_mini_status flex_grow="1" height="100%"/>
@@ -189,7 +189,7 @@
           <lv_obj name="extruder_selector_group"
                   width="content" height="content" style_pad_all="0" scrollable="false"
                   flex_flow="column" style_flex_cross_place="start" style_pad_gap="2"
-                  flags="hidden">
+                  hidden="true">
           <text_small text="Tool" translation_tag="Tool"/>
           <lv_dropdown name="extruder_dropdown"
                        width="content" height="content" style_min_width="80"
@@ -204,7 +204,7 @@
                 style_pad_all="0" scrollable="false" clickable="true"
                 flex_flow="row" style_flex_main_place="center" style_flex_cross_place="center"
                 style_pad_gap="#space_sm"
-                flags="hidden">
+                hidden="true">
           <event_cb trigger="clicked" callback="on_external_spool_edit"/>
           <!-- Spool canvas container (C++ creates 48x48 canvas inside) -->
           <lv_obj name="external_spool_container" width="48" height="48"
@@ -280,7 +280,7 @@
             </ui_button>
             <ui_button name="preset_spool" height="content" flex_grow="1" layout="column"
                        state_trickle="true" style_pad_ver="#space_sm" style_pad_gap="#temp_preset_btn_spacing"
-                       flags="hidden">
+                       hidden="true">
               <event_cb trigger="clicked" callback="on_filament_preset_spool"/>
               <text_body name="spool_preset_label" text="" style_text_color:checked="#text"/>
               <text_small name="spool_preset_temps" text="" style_text_align="center"

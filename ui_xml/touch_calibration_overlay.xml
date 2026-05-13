@@ -35,7 +35,7 @@
 
       <!-- Touch capture overlay - invisible but captures all touches -->
       <!-- Visible during POINT_1/2/3 (calibration) and VERIFY (accuracy test) -->
-      <lv_obj name="touch_capture_overlay" width="100%" height="100%" align="top_left" flag_clickable="true">
+      <lv_obj name="touch_capture_overlay" width="100%" height="100%" align="top_left" clickable="true">
         <event_cb trigger="pressed" callback="on_touch_cal_overlay_touched"/>
         <!-- Hidden in VERIFY and COMPLETE states (visible in 1, 2, 3 for point capture) -->
         <!-- In VERIFY, buttons must be clickable; ripples go on content area directly -->

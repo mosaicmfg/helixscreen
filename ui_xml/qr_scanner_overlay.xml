@@ -52,7 +52,7 @@
 
     <!-- Floating close button (top-right, matches camera fullscreen style) -->
     <lv_obj name="close_btn"
-            align="top_right" flag_floating="true"
+            align="top_right" floating="true"
             width="#button_height" height="#button_height"
             style_translate_x="-24" style_translate_y="16"
             style_bg_color="#card_bg" style_bg_opa="120"
