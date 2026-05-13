@@ -53,17 +53,38 @@ done
 unset _env_path
 
 if [ -n "$_helix_env_file" ]; then
+    _lineno=0
     while IFS= read -r _line || [ -n "$_line" ]; do
+        _lineno=$((_lineno + 1))
+        _line=$(printf '%s' "$_line" | sed -e 's/\r$//' \
+                                            -e 's/^[ 	]*//' \
+                                            -e 's/[ 	]*$//' \
+                                            -e 's/^export[ 	][ 	]*//')
         case "$_line" in
             '#'*|'') continue ;;
         esac
+        case "$_line" in
+            [A-Za-z_]*=*) ;;
+            *)
+                echo "[helix-launcher] warning: ${_helix_env_file}:${_lineno}: ignored malformed line: $_line" >&2
+                continue
+                ;;
+        esac
         _var="${_line%%=*}"
-        eval "_existing=\"\${${_var}:-}\"" 2>/dev/null || continue
+        case "$_var" in
+            *[!A-Za-z0-9_]*)
+                echo "[helix-launcher] warning: ${_helix_env_file}:${_lineno}: invalid variable name '$_var'" >&2
+                continue
+                ;;
+        esac
+        eval "_existing=\"\${${_var}:-}\""
         if [ -z "$_existing" ]; then
-            eval "export $_line" 2>/dev/null || true
+            if ! eval "export $_line" 2>/dev/null; then
+                echo "[helix-launcher] warning: ${_helix_env_file}:${_lineno}: failed to export: $_line" >&2
+            fi
         fi
     done < "$_helix_env_file"
-    unset _line _var _existing
+    unset _line _var _existing _lineno
 fi
 unset _helix_env_file
 
@@ -283,4 +304,77 @@ EOF
     unset HELIX_AUTO_QUIT_MS
     result=$(MOCK_INSTALL="$MOCK_INSTALL" run_env_setup HELIX_AUTO_QUIT_MS)
     [ "$result" = "5000" ]
+}
+
+# =============================================================================
+# Tolerant parsing: common user typos that historically silently no-op'd
+# =============================================================================
+
+@test "env file accepts 'export VAR=value' (bash habit)" {
+    cat > "$MOCK_INSTALL/config/helixscreen.env" << 'EOF'
+export HELIX_TOUCH_CALIBRATE=1
+EOF
+    unset HELIX_TOUCH_CALIBRATE
+    result=$(MOCK_INSTALL="$MOCK_INSTALL" run_env_setup HELIX_TOUCH_CALIBRATE)
+    [ "$result" = "1" ]
+}
+
+@test "env file accepts leading whitespace before VAR=value" {
+    printf '    HELIX_TOUCH_CALIBRATE=1\n' > "$MOCK_INSTALL/config/helixscreen.env"
+    unset HELIX_TOUCH_CALIBRATE
+    result=$(MOCK_INSTALL="$MOCK_INSTALL" run_env_setup HELIX_TOUCH_CALIBRATE)
+    [ "$result" = "1" ]
+}
+
+@test "env file accepts trailing whitespace after value" {
+    printf 'MOONRAKER_HOST=localhost   \n' > "$MOCK_INSTALL/config/helixscreen.env"
+    unset MOONRAKER_HOST
+    result=$(MOCK_INSTALL="$MOCK_INSTALL" run_env_setup MOONRAKER_HOST)
+    [ "$result" = "localhost" ]
+}
+
+@test "env file accepts CRLF line endings" {
+    printf 'HELIX_TOUCH_CALIBRATE=1\r\nMOONRAKER_HOST=localhost\r\n' \
+        > "$MOCK_INSTALL/config/helixscreen.env"
+    unset HELIX_TOUCH_CALIBRATE MOONRAKER_HOST
+    result_cal=$(MOCK_INSTALL="$MOCK_INSTALL" run_env_setup HELIX_TOUCH_CALIBRATE)
+    result_host=$(MOCK_INSTALL="$MOCK_INSTALL" run_env_setup MOONRAKER_HOST)
+    [ "$result_cal" = "1" ]
+    [ "$result_host" = "localhost" ]
+}
+
+@test "env file tolerates 'export' + leading whitespace combined" {
+    printf '  export HELIX_TOUCH_CALIBRATE=1\n' > "$MOCK_INSTALL/config/helixscreen.env"
+    unset HELIX_TOUCH_CALIBRATE
+    result=$(MOCK_INSTALL="$MOCK_INSTALL" run_env_setup HELIX_TOUCH_CALIBRATE)
+    [ "$result" = "1" ]
+}
+
+@test "env file warns on malformed line without dropping later lines" {
+    cat > "$MOCK_INSTALL/config/helixscreen.env" << 'EOF'
+NOT A VAR
+MOONRAKER_HOST=localhost
+EOF
+    unset MOONRAKER_HOST
+    # Capture stderr to assert a warning fired
+    err_output=$(MOCK_INSTALL="$MOCK_INSTALL" sh -c \
+        ". \"$BATS_TEST_TMPDIR/env_setup.sh\" 2>&1 1>/dev/null; echo")
+    result=$(MOCK_INSTALL="$MOCK_INSTALL" run_env_setup MOONRAKER_HOST)
+    # Later valid line still loaded
+    [ "$result" = "localhost" ]
+    # Warning fired
+    echo "$err_output" | grep -q "warning.*ignored malformed line"
+}
+
+@test "env file warns on invalid variable name with special chars" {
+    cat > "$MOCK_INSTALL/config/helixscreen.env" << 'EOF'
+BAD-NAME=value
+MOONRAKER_HOST=localhost
+EOF
+    unset MOONRAKER_HOST
+    err_output=$(MOCK_INSTALL="$MOCK_INSTALL" sh -c \
+        ". \"$BATS_TEST_TMPDIR/env_setup.sh\" 2>&1 1>/dev/null; echo")
+    result=$(MOCK_INSTALL="$MOCK_INSTALL" run_env_setup MOONRAKER_HOST)
+    [ "$result" = "localhost" ]
+    echo "$err_output" | grep -qE "warning.*invalid variable name|warning.*ignored malformed line"
 }

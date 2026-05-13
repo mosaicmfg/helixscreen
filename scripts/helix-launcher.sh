@@ -188,20 +188,51 @@ done
 unset _env_path
 
 if [ -n "$_helix_env_file" ]; then
-    # Read each VAR=value line; only export if not already set
+    # Read each VAR=value line; only export if not already set.
+    # Tolerant of common typos so users don't get a silent no-op:
+    #   - CRLF line endings (env file edited on Windows)
+    #   - Leading/trailing whitespace
+    #   - `export VAR=value` (bash habit)
+    #   - `VAR = value` (spaces around the equals sign)
+    # Malformed lines emit a stderr warning instead of being dropped silently.
+    _lineno=0
     while IFS= read -r _line || [ -n "$_line" ]; do
-        # Skip comments and blank lines
+        _lineno=$((_lineno + 1))
+        # Normalize: strip CR, trim whitespace, drop optional `export ` prefix.
+        # Literal spaces+tabs in the bracket classes are deliberate (POSIX
+        # `[:space:]` is unreliable in busybox sed shipped on AD5X/K1/SonicPad).
+        _line=$(printf '%s' "$_line" | sed -e 's/\r$//' \
+                                            -e 's/^[ 	]*//' \
+                                            -e 's/[ 	]*$//' \
+                                            -e 's/^export[ 	][ 	]*//')
         case "$_line" in
             '#'*|'') continue ;;
         esac
+        # Require KEY=value with a valid POSIX identifier on the LHS.
+        case "$_line" in
+            [A-Za-z_]*=*) ;;
+            *)
+                echo "[helix-launcher] warning: ${_helix_env_file}:${_lineno}: ignored malformed line: $_line" >&2
+                continue
+                ;;
+        esac
         _var="${_line%%=*}"
-        # Only set if not already in environment
-        eval "_existing=\"\${${_var}:-}\"" 2>/dev/null || continue
+        case "$_var" in
+            *[!A-Za-z0-9_]*)
+                echo "[helix-launcher] warning: ${_helix_env_file}:${_lineno}: invalid variable name '$_var'" >&2
+                continue
+                ;;
+        esac
+        # Only set if not already in environment (systemd Environment= /
+        # exported parent shell vars win over the file).
+        eval "_existing=\"\${${_var}:-}\""
         if [ -z "$_existing" ]; then
-            eval "export $_line" 2>/dev/null || true
+            if ! eval "export $_line" 2>/dev/null; then
+                echo "[helix-launcher] warning: ${_helix_env_file}:${_lineno}: failed to export: $_line" >&2
+            fi
         fi
     done < "$_helix_env_file"
-    unset _line _var _existing
+    unset _line _var _existing _lineno
 fi
 unset _helix_env_file
 
