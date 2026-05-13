@@ -203,10 +203,33 @@ void init(const LogConfig& config) {
     LogTarget effective_target =
         (config.target == LogTarget::Auto) ? detect_best_target() : config.target;
 
-    // Console sink — always add when enabled. The enable_console flag defaults
-    // to true and callers can disable it for headless/service deployments.
-    // Skip on Android where stdout is invisible; the android_sink handles output.
-    if (config.enable_console && effective_target != LogTarget::Android) {
+    // Console sink — added when enabled AND the target benefits from it.
+    //
+    // Behavior by target:
+    //   - Console: console is the ONLY sink, always add.
+    //   - Android: stdout is invisible; android_sink handles output. Skip.
+    //   - Syslog/Journal/File: structured destination already captures output.
+    //     Add console ONLY when stdout is a TTY (interactive run from a shell),
+    //     so dev workstations and `ssh -t` sessions still see colored output.
+    //     Daemonized launches under SysV/systemd have stdout redirected to a
+    //     file or the journal — adding a stdout sink there double-logs every
+    //     line (was the root cause of the Snapmaker U1 tmpfs blowout where
+    //     /tmp/helixscreen.log grew to 498 MB at trace level).
+    bool add_console = false;
+    if (config.enable_console) {
+        switch (effective_target) {
+        case LogTarget::Console:
+            add_console = true;
+            break;
+        case LogTarget::Android:
+            add_console = false;
+            break;
+        default:
+            add_console = (isatty(STDOUT_FILENO) != 0);
+            break;
+        }
+    }
+    if (add_console) {
         sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
     }
 

@@ -33,7 +33,7 @@ enum class LogTarget {
  */
 struct LogConfig {
     spdlog::level::level_enum level = spdlog::level::warn;
-    bool enable_console = true;         ///< Always show console output
+    bool enable_console = true;         ///< Enable console sink (only attached when target is Console or stdout is a TTY)
     LogTarget target = LogTarget::Auto; ///< System log destination
     std::string file_path;              ///< Override file path (empty = auto)
 };
