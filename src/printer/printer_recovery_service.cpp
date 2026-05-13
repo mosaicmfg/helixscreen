@@ -73,6 +73,10 @@ void PrinterRecoveryService::recover(SuccessCallback on_success, ErrorCallback o
     }
 
     spdlog::info("[Recovery] Trying [shell_command helix_recover]…");
+    // silent=true: this is a probe — if the macro isn't defined the user shouldn't
+    // see a "Request Failed: Method not found" toast for it, because we then fall
+    // back to printer.firmware_restart whose own errors (if any) are surfaced.
+    // (Debug bundle VHXPB8A3 showed the scary toast on an AD5X without the macro.)
     api_->run_shell_command(
         "helix_recover",
         [on_success](const std::string& output) {
@@ -94,7 +98,8 @@ void PrinterRecoveryService::recover(SuccessCallback on_success, ErrorCallback o
             }
             spdlog::warn("[Recovery] helix_recover failed: {}", err.message);
             on_error(err);
-        });
+        },
+        /*silent=*/true);
 }
 
 } // namespace helix

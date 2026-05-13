@@ -318,10 +318,14 @@ class MoonrakerAPI : public IMoonrakerAPI {
      * @param name      shell_command name as declared in moonraker.conf
      * @param on_success Receives the command's stdout (may be empty)
      * @param on_error   Fires for unknown command, non-zero exit, or transport errors
+     * @param silent    If true, suppress the global RPC_ERROR event/toast on failure
+     *                  (callers like PrinterRecoveryService that probe optional
+     *                  shell_commands and fall back silently)
      */
     void run_shell_command(const std::string& name,
                            std::function<void(const std::string&)> on_success,
-                           ErrorCallback on_error);
+                           ErrorCallback on_error,
+                           bool silent = false);
 
     /**
      * @brief Restart the Moonraker service
