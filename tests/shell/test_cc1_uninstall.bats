@@ -13,7 +13,18 @@ setup() {
 
     log_info() { echo "INFO: $*"; }
     log_warn() { echo "WARN: $*"; }
-    export -f log_info log_warn
+    log_success() { echo "OK: $*"; }
+    # Stub helpers that the COSMOS-block extractor over-captures from lines
+    # after the actual block (the awk `^    fi$` count never reaches 4, so
+    # capture runs to EOF). These would normally be sourced from common.sh /
+    # file_sudo.sh in the real script; here we just need them callable so the
+    # extracted snippet doesn't abort with "command not found".
+    file_sudo() { echo ""; }
+    clean_helix_state_dirs() { :; }
+    remove_config_symlink() { :; }
+    remove_update_manager_section() { :; }
+    export -f log_info log_warn log_success file_sudo clean_helix_state_dirs \
+              remove_config_symlink remove_update_manager_section
 
     export MOCK_ROOT="$BATS_TEST_TMPDIR/cc1"
     mkdir -p "$MOCK_ROOT/etc/init.d" "$MOCK_ROOT/etc/klipper/config" "$MOCK_ROOT/usr/bin"

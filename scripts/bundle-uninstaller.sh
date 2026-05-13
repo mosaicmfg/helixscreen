@@ -329,6 +329,10 @@ remove_installation() {
     for pattern in /opt/._helixscreen /root/._helixscreen; do
         $SUDO rm -f "$pattern" 2>/dev/null || true
     done
+
+    # Sweep state dirs holding rolling config backups (out-of-INSTALL_DIR by design).
+    # Defined in lib/installer/common.sh; bundled into this script.
+    clean_helix_state_dirs
 }
 
 # Main uninstall
@@ -388,6 +392,7 @@ main() {
         echo "  - Stop HelixScreen"
         echo "  - Remove $INSTALL_DIR"
         echo "  - Remove service configuration"
+        echo "  - Remove rolling config backups (/var/lib/helixscreen + .helixscreen under the service user's home)"
         echo "  - Re-enable previous screen UI (if found)"
         if [ "$AD5M_FIRMWARE" = "forge_x" ]; then
             echo "  - Restore ForgeX display configuration (GuppyScreen)"

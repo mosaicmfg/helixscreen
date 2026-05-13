@@ -213,6 +213,75 @@ kill_process_by_name() {
     return 0
 }
 
+# Remove HelixScreen state directories that hold rolling config backups and
+# update markers. These survive a normal install because they live OUTSIDE
+# INSTALL_DIR by design — they need to survive Moonraker's rmtree of the
+# install dir during in-app updates (see app_constants.h: Update namespace).
+#
+# On --uninstall and --clean the user has signaled they want a clean slate,
+# so we sweep them here. Live config under printer_data/config/helixscreen/
+# is handled separately by remove_config_symlink / clean_old_installation.
+# The dot-prefix is the bright line: dotted = our state, undotted = live config.
+#
+# Paths swept (all are ours; we own these names):
+#   /var/lib/helixscreen          (systemd StateDirectory=helixscreen)
+#   $INSTALL_PARENT/.helixscreen  (self_restart_sentinel from helixscreen-update.service)
+#   $KLIPPER_HOME/.helixscreen    (HOME-based fallback when no StateDirectory)
+#   /root/.helixscreen            (always swept; service may have run as root
+#                                  on a prior install regardless of current user)
+#
+# Reads: INSTALL_DIR, KLIPPER_HOME, SUDO,
+#        HELIX_STATE_VAR_LIB (default /var/lib/helixscreen),
+#        HELIX_STATE_ROOT_HOME (default /root/.helixscreen)
+# Writes: (none)
+clean_helix_state_dirs() {
+    local install_parent
+    # The two hardcoded paths are env-overrideable so the BATS suite can
+    # redirect them at test-tmpdir paths instead of touching real /var/lib
+    # and /root content. Production callers leave them unset.
+    local state_var_lib="${HELIX_STATE_VAR_LIB:-/var/lib/helixscreen}"
+    local state_root_home="${HELIX_STATE_ROOT_HOME:-/root/.helixscreen}"
+
+    log_info "Removing HelixScreen state directories (rolling config backups)..."
+
+    # systemd StateDirectory= target
+    if [ -d "$state_var_lib" ]; then
+        $SUDO rm -rf "$state_var_lib"
+        log_success "Removed $state_var_lib"
+    fi
+
+    # $INSTALL_PARENT/.helixscreen — self_restart_sentinel (helixscreen-update.service).
+    # Skip when INSTALL_DIR is unset or dirname would resolve to "/" or "." (defensive
+    # against misuse from outside our normal install flow; current HELIX_INSTALL_DIRS
+    # all have a real parent dir).
+    if [ -n "${INSTALL_DIR:-}" ]; then
+        install_parent=$(dirname "$INSTALL_DIR")
+        case "$install_parent" in
+            /|.|"") : ;;
+            *)
+                if [ -d "${install_parent}/.helixscreen" ]; then
+                    $SUDO rm -rf "${install_parent}/.helixscreen"
+                    log_success "Removed ${install_parent}/.helixscreen"
+                fi
+                ;;
+        esac
+    fi
+
+    # Service user's $HOME/.helixscreen (fallback backup path)
+    if [ -n "${KLIPPER_HOME:-}" ] && [ -d "${KLIPPER_HOME}/.helixscreen" ]; then
+        $SUDO rm -rf "${KLIPPER_HOME}/.helixscreen"
+        log_success "Removed ${KLIPPER_HOME}/.helixscreen"
+    fi
+
+    # /root/.helixscreen — always sweep. The directory name is ours (dot-prefix rule);
+    # rm -rf on a missing dir is a no-op, and this catches platforms where the service
+    # historically ran as root even if KLIPPER_HOME has since moved off /root.
+    if [ -d "$state_root_home" ]; then
+        $SUDO rm -rf "$state_root_home"
+        log_success "Removed $state_root_home"
+    fi
+}
+
 # Print post-install commands for the user
 # Reads: INIT_SYSTEM, SERVICE_NAME, INIT_SCRIPT_DEST
 print_post_install_commands() {

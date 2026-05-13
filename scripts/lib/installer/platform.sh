@@ -546,6 +546,13 @@ set_install_paths() {
     local firmware=${2:-}
 
     if [ "$platform" = "ad5m" ]; then
+        # AD5M runs the helix-screen service as root on all three firmwares
+        # (klipper_mod, zmod, forge_x). Pin KLIPPER_USER/HOME explicitly so
+        # clean_helix_state_dirs and any other consumer don't fall back to
+        # the empty default and silently skip the user-home sweep.
+        KLIPPER_USER="root"
+        KLIPPER_GROUP="root"
+        KLIPPER_HOME="/root"
         case "$firmware" in
             klipper_mod)
                 # v00.05 and earlier: /root/printer_software/helixscreen
@@ -576,7 +583,10 @@ set_install_paths() {
                 ;;
         esac
     elif [ "$platform" = "ad5x" ]; then
-        # FlashForge AD5X - uses ZMOD, /usr/data structure
+        # FlashForge AD5X - uses ZMOD, /usr/data structure, runs as root
+        KLIPPER_USER="root"
+        KLIPPER_GROUP="root"
+        KLIPPER_HOME="/root"
         INSTALL_DIR="/srv/helixscreen"
         INIT_SCRIPT_DEST="/etc/init.d/S80helixscreen"
         PREVIOUS_UI_SCRIPT=""

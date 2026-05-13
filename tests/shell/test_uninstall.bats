@@ -22,6 +22,12 @@ setup() {
     export INIT_SYSTEM="sysv"
     export AD5M_FIRMWARE=""
     export SUDO=""
+
+    # Redirect clean_helix_state_dirs' hardcoded sweep paths so tests don't
+    # touch the dev box's real /var/lib/helixscreen or /root/.helixscreen
+    # (which may contain root-owned content the test user can't remove).
+    export HELIX_STATE_VAR_LIB="$BATS_TEST_TMPDIR/var/lib/helixscreen"
+    export HELIX_STATE_ROOT_HOME="$BATS_TEST_TMPDIR/root/.helixscreen"
 }
 
 # ============================================================================
@@ -594,4 +600,105 @@ CONF
 
 @test "regression: uninstall.sh cleans /var/tmp helix directories" {
     grep -q "/var/tmp/helix_" "$WORKTREE_ROOT/scripts/uninstall.sh"
+}
+
+# ============================================================================
+# clean_helix_state_dirs — rolling config backup sweep on uninstall/clean
+# ============================================================================
+#
+# These tests cover the configurable paths (INSTALL_PARENT/.helixscreen and
+# KLIPPER_HOME/.helixscreen). The hardcoded /var/lib/helixscreen and
+# /root/.helixscreen branches are exercised by the function but not asserted
+# here — the test harness can't safely create or assert on real system paths.
+
+@test "clean_helix_state_dirs is defined in uninstall.sh" {
+    type clean_helix_state_dirs >/dev/null 2>&1
+}
+
+@test "clean_helix_state_dirs removes \$KLIPPER_HOME/.helixscreen when present" {
+    KLIPPER_HOME="$BATS_TEST_TMPDIR/home/lava"
+    mkdir -p "$KLIPPER_HOME/.helixscreen"
+    touch "$KLIPPER_HOME/.helixscreen/settings.json.backup"
+
+    INSTALL_DIR=""  # skip the install-parent branch
+
+    run clean_helix_state_dirs
+    [ "$status" -eq 0 ]
+    [ ! -d "$KLIPPER_HOME/.helixscreen" ]
+}
+
+@test "clean_helix_state_dirs removes \$INSTALL_PARENT/.helixscreen when present" {
+    local parent="$BATS_TEST_TMPDIR/opt"
+    INSTALL_DIR="$parent/helixscreen"
+    mkdir -p "$parent/.helixscreen"
+    touch "$parent/.helixscreen/self_restart_sentinel"
+
+    KLIPPER_HOME=""  # skip the home branch
+
+    run clean_helix_state_dirs
+    [ "$status" -eq 0 ]
+    [ ! -d "$parent/.helixscreen" ]
+}
+
+@test "clean_helix_state_dirs is a no-op when no state dirs exist" {
+    INSTALL_DIR="$BATS_TEST_TMPDIR/opt/helixscreen"
+    KLIPPER_HOME="$BATS_TEST_TMPDIR/home/lava"
+    # Neither parent nor home exist — function must not error.
+
+    run clean_helix_state_dirs
+    [ "$status" -eq 0 ]
+}
+
+@test "clean_helix_state_dirs refuses to sweep when INSTALL_DIR parent is /" {
+    # INSTALL_DIR=/helixscreen → dirname=/. The case guard MUST skip this so we
+    # don't rm -rf /.helixscreen (which would still be wrong even if absent).
+    INSTALL_DIR="/helixscreen"
+    KLIPPER_HOME=""
+
+    run clean_helix_state_dirs
+    [ "$status" -eq 0 ]
+    # /.helixscreen must not have been touched (or attempted). We can't directly
+    # observe the skip from outside, but the case guard prevents the rm branch
+    # from running. Sanity-check the source as a regression seatbelt.
+    grep -q '/|\.|""' "$WORKTREE_ROOT/scripts/uninstall.sh"
+}
+
+@test "clean_helix_state_dirs handles unset INSTALL_DIR and KLIPPER_HOME" {
+    unset INSTALL_DIR KLIPPER_HOME
+
+    run clean_helix_state_dirs
+    [ "$status" -eq 0 ]
+}
+
+@test "uninstall.sh wires clean_helix_state_dirs into uninstall, clean, and bundle-uninstaller paths" {
+    # Three call sites: uninstall() in lib/installer/uninstall.sh,
+    # clean_old_installation() in same, and remove_installation() from
+    # bundle-uninstaller.sh's MAIN block.
+    [ "$(grep -c '^    clean_helix_state_dirs$' "$WORKTREE_ROOT/scripts/uninstall.sh")" -eq 3 ]
+}
+
+@test "install.sh ships clean_helix_state_dirs (uninstall path is bundled in)" {
+    grep -q "^clean_helix_state_dirs()" "$WORKTREE_ROOT/scripts/install.sh"
+}
+
+@test "clean_helix_state_dirs honors HELIX_STATE_VAR_LIB override" {
+    mkdir -p "$HELIX_STATE_VAR_LIB"
+    touch "$HELIX_STATE_VAR_LIB/helixscreen.env.backup"
+    INSTALL_DIR=""
+    KLIPPER_HOME=""
+
+    run clean_helix_state_dirs
+    [ "$status" -eq 0 ]
+    [ ! -d "$HELIX_STATE_VAR_LIB" ]
+}
+
+@test "clean_helix_state_dirs honors HELIX_STATE_ROOT_HOME override" {
+    mkdir -p "$HELIX_STATE_ROOT_HOME"
+    touch "$HELIX_STATE_ROOT_HOME/settings.json.backup"
+    INSTALL_DIR=""
+    KLIPPER_HOME=""
+
+    run clean_helix_state_dirs
+    [ "$status" -eq 0 ]
+    [ ! -d "$HELIX_STATE_ROOT_HOME" ]
 }
