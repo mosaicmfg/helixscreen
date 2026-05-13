@@ -97,7 +97,7 @@
               <text_small text="Brightness" translation_tag="Brightness" style_text_color="#text_muted"/>
               <text_small name="brightness_label" bind_text="led_brightness_text" style_text_color="#text_muted"/>
             </lv_obj>
-            <lv_slider name="brightness_slider" width="100%" range_min="0" range_max="100" bind_value="led_brightness">
+            <lv_slider name="brightness_slider" width="100%" min_value="0" max_value="100" bind_value="led_brightness">
               <event_cb trigger="value_changed" callback="led_brightness_changed_cb"/>
             </lv_slider>
           </lv_obj>
@@ -147,7 +147,7 @@
                           bind_text="led_wled_brightness_text" style_text_color="#text_muted"/>
             </lv_obj>
             <lv_slider name="wled_brightness_slider"
-                       width="100%" range_min="0" range_max="100" bind_value="led_wled_brightness"/>
+                       width="100%" min_value="0" max_value="100" bind_value="led_wled_brightness"/>
           </lv_obj>
         </lv_obj>
 

@@ -27,7 +27,7 @@
     <lv_obj name="job_list_container" width="100%" flex_grow="1"
             flex_flow="column" style_pad_all="0" style_pad_gap="2"
             style_bg_opa="0%" style_border_width="0"
-            scrollbar_mode="auto" overflow="scroll"
+            scrollbar_mode="auto"
             clickable="false" event_bubble="true">
       <bind_flag_if_eq subject="jq_size_mode" flag="hidden" ref_value="0"/>
     </lv_obj>

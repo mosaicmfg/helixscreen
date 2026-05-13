@@ -49,7 +49,7 @@
                style_pad_all="0"
                align="top_right"
                x="-16" y="16"
-               focusable="false">
+              >
       <bind_flag_if_eq subject="estop_visible" flag="hidden" ref_value="0"/>
       <icon src="power" size="md" variant="primary" align="center"/>
       <event_cb trigger="clicked" callback="emergency_stop_clicked"/>

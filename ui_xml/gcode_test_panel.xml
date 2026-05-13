@@ -40,7 +40,7 @@
           <text_body text="View Presets" translation_tag="View Presets"/>
           <!-- Row 1 -->
           <lv_obj width="100%" flex_flow="row" style_pad_all="0" style_pad_gap="#space_sm">
-            <ui_button name="btn_travels" flex_grow="1" flag_checkable="true" text="Travels" translation_tag="Travels"/>
+            <ui_button name="btn_travels" flex_grow="1" checkable="true" text="Travels" translation_tag="Travels"/>
             <ui_button name="btn_top" flex_grow="1" text="Top" translation_tag="Top"/>
             <ui_button name="btn_front" flex_grow="1" text="Front" translation_tag="Front"/>
           </lv_obj>

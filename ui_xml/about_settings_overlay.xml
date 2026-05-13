@@ -27,7 +27,7 @@
              even on wide screens (1024px+) where the full text might fit at 100%. -->
         <lv_obj name="contributor_marquee"
                 width="80%" height="content" style_pad_all="0" style_pad_gap="0" style_bg_opa="0" style_border_width="0"
-                scrollable="false" style_clip_corner="true" overflow="hidden"/>
+                scrollable="false" style_clip_corner="true"/>
       </lv_obj>
       <!-- Printer Name (7-tap easter egg trigger) -->
       <ui_button name="row_printer" width="100%" height="content" variant="ghost" style_radius="0" style_pad_all="0">

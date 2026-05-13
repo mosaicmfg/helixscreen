@@ -15,7 +15,7 @@
             style_pad_left="#space_lg" style_pad_right="#space_lg"
             style_pad_top="#space_sm" style_pad_bottom="#space_sm"
             flex_flow="column" style_pad_gap="#space_xs"
-            scrollable="true" scroll_dir="ver"
+            scrollable="true"
             style_scrollbar_mode="active">
       <!-- Rows populated dynamically in C++ -->
     </lv_obj>

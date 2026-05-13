@@ -22,7 +22,7 @@
             flex_flow="column" style_pad_gap="0"
             style_pad_left="#space_md" style_pad_right="#space_md"
             style_pad_top="#space_sm" style_pad_bottom="#space_sm"
-            scrollbar_mode="auto" overflow="scroll"/>
+            scrollbar_mode="auto"/>
 
     <divider_horizontal/>
 
