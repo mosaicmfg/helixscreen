@@ -1063,6 +1063,14 @@ void ui_temp_graph_destroy(ui_temp_graph_t* graph) {
             graph_ptr->theme_observer = nullptr;
         }
 
+        // Hide the chart before queuing the async delete: lv_refr's tree walk
+        // skips LV_OBJ_FLAG_HIDDEN, so any display-refresh frame that fires
+        // between now and lv_obj_delete_async_cb cannot send DRAW_POST_* events
+        // into a chart whose per-instance event_list / class state we have
+        // already torn down (bundle RP293UCW: SIGSEGV at lv_array_at NULL via
+        // lv_event_send during render of an alive-but-stripped chart).
+        lv_obj_add_flag(chart, LV_OBJ_FLAG_HIDDEN);
+
         // Async deletion escapes any UpdateQueue::process_pending batch we may be
         // running inside (e.g., reconnect → connection_observer → rebuild → destroy).
         // Sync lv_obj_del here corrupts LVGL's global event list when other queued

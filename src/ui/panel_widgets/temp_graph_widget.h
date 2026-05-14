@@ -52,6 +52,14 @@ class TempGraphWidget : public PanelWidget {
     void build_default_config();
     std::vector<TempGraphSeriesSpec> build_series_from_config() const;
 
+    /// Body of the TempGraphConfigModal save callback. Persists the new config,
+    /// then re-reads widget_obj_/parent_screen_ AT SAVE TIME (panel rebuilds
+    /// during the modal can free the original lv_obj_t — bundle RP293UCW) and
+    /// rebuilds the controller in place. Skips the rebuild if the underlying
+    /// widget container is gone; the persisted config still propagates to any
+    /// fresh widget instance that the layout manager attaches afterwards.
+    void apply_config_save(const nlohmann::json& new_config);
+
     /// Append any discovered extruders not yet present in config["sensors"].
     /// Returns true if any rows were added (caller can decide whether to
     /// persist). New rows use the provided enabled flag.

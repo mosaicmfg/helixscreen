@@ -28,6 +28,20 @@ class helix::TempGraphWidgetTestAccess {
     static std::string sensor_display_name(const std::string& klipper_name) {
         return TempGraphWidget::TempGraphConfigModal::sensor_display_name(klipper_name);
     }
+
+    // Drive the save-callback body directly so tests don't need to construct a
+    // live Modal + LVGL show() chain. Mirrors the lambda in on_edit_configure().
+    static void apply_config_save(TempGraphWidget& w, const nlohmann::json& new_config) {
+        w.apply_config_save(new_config);
+    }
+
+    // Inject widget container pointers so apply_config_save() can be exercised
+    // with both a live lv_obj_t and a deleted/null one (regression: RP293UCW).
+    static void set_widget_obj(TempGraphWidget& w, lv_obj_t* obj) { w.widget_obj_ = obj; }
+    static void set_parent_screen(TempGraphWidget& w, lv_obj_t* obj) { w.parent_screen_ = obj; }
+    static lv_obj_t* get_widget_obj(const TempGraphWidget& w) { return w.widget_obj_; }
+    static bool has_controller(const TempGraphWidget& w) { return w.controller_ != nullptr; }
+    static const nlohmann::json& get_config(const TempGraphWidget& w) { return w.config_; }
 };
 
 // Reuse the same lightweight fixture as test_temp_graph.cpp
@@ -642,4 +656,66 @@ TEST_CASE("merge_discovered_extruders honors the enabled flag",
     }
 
     ps.init_extruders({});
+}
+
+// ============================================================================
+// apply_config_save — RP293UCW regression: save callback must tolerate a
+// widget container that was freed between modal-open and modal-save (panel
+// rebuild during the modal window). Old behavior reattached to the stale
+// pointer; new behavior re-reads widget_obj_ at save time and skips the
+// reattach when it's gone.
+// ============================================================================
+
+TEST_CASE_METHOD(TempGraphFeatureFixture,
+                 "TempGraphWidget::apply_config_save: stale widget_obj_ does not crash",
+                 "[temp_graph][panel_widget][regression]") {
+    TempGraphWidget w("test_save_stale");
+
+    // Simulate the layout manager having detached this widget instance (or the
+    // underlying lv_obj_t having been freed by a panel rebuild) by leaving
+    // widget_obj_ = nullptr. The modal's save callback will still fire because
+    // it captured `this`, but the container is gone.
+    TempGraphWidgetTestAccess::set_widget_obj(w, nullptr);
+    TempGraphWidgetTestAccess::set_parent_screen(w, nullptr);
+
+    nlohmann::json new_cfg = {
+        {"sensors",
+         nlohmann::json::array(
+             {{{"name", "extruder"}, {"enabled", true}, {"color", 0xFF4444}},
+              {{"name", "heater_bed"}, {"enabled", true}, {"color", 0x88C0D0}}})}};
+
+    REQUIRE_NOTHROW(TempGraphWidgetTestAccess::apply_config_save(w, new_cfg));
+
+    // Config still persisted on the widget instance (so a fresh attach picks
+    // it up), and we left the widget detached — no zombie controller.
+    REQUIRE(TempGraphWidgetTestAccess::get_config(w)["sensors"].size() == 2);
+    REQUIRE(TempGraphWidgetTestAccess::has_controller(w) == false);
+    REQUIRE(TempGraphWidgetTestAccess::get_widget_obj(w) == nullptr);
+}
+
+TEST_CASE_METHOD(TempGraphFeatureFixture,
+                 "TempGraphWidget::apply_config_save: live widget_obj_ rebuilds in place",
+                 "[temp_graph][panel_widget][regression]") {
+    TempGraphWidget w("test_save_live");
+
+    lv_obj_t* container = lv_obj_create(screen);
+    lv_obj_set_size(container, 400, 300);
+    w.attach(container, screen);
+    REQUIRE(TempGraphWidgetTestAccess::has_controller(w));
+
+    nlohmann::json new_cfg = {
+        {"sensors",
+         nlohmann::json::array(
+             {{{"name", "extruder"}, {"enabled", true}, {"color", 0xFF4444}}})}};
+
+    REQUIRE_NOTHROW(TempGraphWidgetTestAccess::apply_config_save(w, new_cfg));
+
+    // Same container pointer (was valid throughout), controller rebuilt.
+    REQUIRE(TempGraphWidgetTestAccess::get_widget_obj(w) == container);
+    REQUIRE(TempGraphWidgetTestAccess::has_controller(w));
+    REQUIRE(TempGraphWidgetTestAccess::get_config(w)["sensors"].size() == 1);
+
+    // Clean up: detach before the container is destroyed by the fixture.
+    w.detach();
+    lv_obj_delete(container);
 }

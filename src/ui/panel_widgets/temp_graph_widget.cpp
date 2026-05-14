@@ -145,17 +145,26 @@ void TempGraphWidget::on_activate() {
 
 void TempGraphWidget::on_deactivate() {}
 
-bool TempGraphWidget::on_edit_configure() {
-    auto* saved_widget = widget_obj_;
-    auto* saved_parent = parent_screen_;
+void TempGraphWidget::apply_config_save(const nlohmann::json& new_config) {
+    config_ = new_config;
+    save_widget_config(config_);
+    // Snapshot the *current* widget pointers (panel rebuild between modal-open
+    // and save can free the originals; detach() then nulls these members).
+    auto* current_widget = widget_obj_;
+    auto* current_parent = parent_screen_;
+    detach();
+    if (!current_widget || !lv_obj_is_valid(current_widget)) {
+        spdlog::warn("[TempGraphWidget] '{}' save: widget container gone, skipping reattach",
+                     instance_id_);
+        return;
+    }
+    attach(current_widget, current_parent);
+}
 
+bool TempGraphWidget::on_edit_configure() {
     config_modal_ = std::make_unique<TempGraphConfigModal>(
-        config_, [this, saved_widget, saved_parent](const nlohmann::json& new_config) {
-            config_ = new_config;
-            save_widget_config(config_);
-            detach();
-            attach(saved_widget, saved_parent);
-        });
+        config_,
+        [this](const nlohmann::json& new_config) { apply_config_save(new_config); });
     config_modal_->show(lv_screen_active());
     return true;
 }
