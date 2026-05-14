@@ -1302,6 +1302,13 @@ void TemperatureService::setup_mini_combined_graph(lv_obj_t* container) {
         nozzle_spec.klipper_name = active_extruder_name_;
         nozzle_spec.color = heaters_[idx(HeaterType::Nozzle)].config.color;
         nozzle_spec.show_target = true;
+        // Source the localized "Nozzle [N]" label from PrinterTemperatureState
+        // so the mini-graph legend matches the rest of the temp UI instead of
+        // showing the raw Klipper "extruder" / "extruderN" identifier.
+        const auto& exts = printer_state_.temperature_state().extruders();
+        auto it = exts.find(active_extruder_name_);
+        if (it != exts.end() && !it->second.display_name.empty())
+            nozzle_spec.display_name = it->second.display_name;
         helix::TempGraphSeriesSpec bed_spec;
         bed_spec.klipper_name = "heater_bed";
         bed_spec.display_name = lv_tr("Bed");

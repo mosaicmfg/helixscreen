@@ -16,6 +16,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+
 namespace helix {
 
 void PrinterTemperatureState::init_subjects(bool register_xml) {
@@ -149,6 +151,11 @@ void PrinterTemperatureState::init_extruders(const std::vector<std::string>& hea
             extruder_names.push_back(name);
         }
     }
+    // Sort so the "Nozzle N" suffix matches the lexical (and numeric, for N < 10)
+    // order — both the chip row and the config modal sort by name elsewhere, so
+    // skipping the sort here would otherwise misalign labels with extruder index
+    // when Klipper returns heaters in a non-deterministic order.
+    std::sort(extruder_names.begin(), extruder_names.end());
 
     bool multi = extruder_names.size() > 1;
 
