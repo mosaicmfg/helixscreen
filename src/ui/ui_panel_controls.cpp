@@ -1031,18 +1031,17 @@ void ControlsPanel::handle_save_z_offset_confirm() {
     helix::zoffset::apply_and_save(
         api_, strategy,
         [this, tok, offset_mm]() {
-            if (tok.expired())
-                return;
-            NOTIFY_SUCCESS(lv_tr("Z-offset saved ({:+.3f}mm). Klipper restarting..."), offset_mm);
-            tok.defer("ControlsPanel::save_z_offset_done",
-                      [this]() { save_z_offset_in_progress_ = false; });
+            tok.defer("ControlsPanel::save_z_offset_done", [this, offset_mm]() {
+                NOTIFY_SUCCESS(lv_tr("Z-offset saved ({:+.3f}mm). Klipper restarting..."),
+                               offset_mm);
+                save_z_offset_in_progress_ = false;
+            });
         },
         [this, tok](const std::string& error) {
-            if (tok.expired())
-                return;
-            NOTIFY_ERROR("{}", error);
-            tok.defer("ControlsPanel::save_z_offset_done",
-                      [this]() { save_z_offset_in_progress_ = false; });
+            tok.defer("ControlsPanel::save_z_offset_done", [this, error]() {
+                NOTIFY_ERROR("{}", error);
+                save_z_offset_in_progress_ = false;
+            });
         });
 }
 
@@ -1245,14 +1244,10 @@ void ControlsPanel::handle_home_x() {
         api_->motion().home_axes(
             "X",
             [this, tok]() {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
             },
             [this, tok](const MoonrakerError& err) {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
                 if (err.type == MoonrakerErrorType::TIMEOUT) {
@@ -1277,14 +1272,10 @@ void ControlsPanel::handle_home_y() {
         api_->motion().home_axes(
             "Y",
             [this, tok]() {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
             },
             [this, tok](const MoonrakerError& err) {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
                 if (err.type == MoonrakerErrorType::TIMEOUT) {
@@ -1309,14 +1300,10 @@ void ControlsPanel::handle_home_xy() {
         api_->motion().home_axes(
             "XY",
             [this, tok]() {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
             },
             [this, tok](const MoonrakerError& err) {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
                 if (err.type == MoonrakerErrorType::TIMEOUT) {
@@ -1341,14 +1328,10 @@ void ControlsPanel::handle_home_z() {
         api_->motion().home_axes(
             "Z",
             [this, tok]() {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
             },
             [this, tok](const MoonrakerError& err) {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
                 if (err.type == MoonrakerErrorType::TIMEOUT) {
@@ -1373,15 +1356,11 @@ void ControlsPanel::handle_qgl() {
         api_->execute_gcode(
             "QUAD_GANTRY_LEVEL",
             [this, tok]() {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
                 NOTIFY_SUCCESS(lv_tr("Quad Gantry Level complete"));
             },
             [this, tok](const MoonrakerError& err) {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
                 if (err.type == MoonrakerErrorType::TIMEOUT) {
@@ -1407,15 +1386,11 @@ void ControlsPanel::handle_z_tilt() {
         api_->execute_gcode(
             "Z_TILT_ADJUST",
             [this, tok]() {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
                 NOTIFY_SUCCESS(lv_tr("Z-Tilt Adjust complete"));
             },
             [this, tok](const MoonrakerError& err) {
-                if (tok.expired())
-                    return;
                 tok.defer("ControlsPanel::operation_guard_end",
                           [this]() { operation_guard_.end(); });
                 if (err.type == MoonrakerErrorType::TIMEOUT) {
@@ -1585,8 +1560,6 @@ void ControlsPanel::handle_flow_up() {
     api_->execute_gcode(
         gcode,
         [this, tok, new_flow]() {
-            if (tok.expired())
-                return;
             tok.defer("ControlsPanel::flow_display_update", [this, new_flow]() {
                 helix::format::format_percent(new_flow, flow_override_buf_,
                                               sizeof(flow_override_buf_));
@@ -1616,8 +1589,6 @@ void ControlsPanel::handle_flow_down() {
     api_->execute_gcode(
         gcode,
         [this, tok, new_flow]() {
-            if (tok.expired())
-                return;
             tok.defer("ControlsPanel::flow_display_update", [this, new_flow]() {
                 helix::format::format_percent(new_flow, flow_override_buf_,
                                               sizeof(flow_override_buf_));

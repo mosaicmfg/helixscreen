@@ -490,9 +490,6 @@ void PrintPreparationManager::scan_file_for_operations(const std::string& filena
         // NOTE: This callback runs on a background HTTP thread, so we must defer
         // shared state updates and LVGL calls to the main thread via lv_async_call
         [this, token, filename](const std::string& content) {
-            if (token.expired())
-                return;
-
             // Parse on background thread (safe - no shared state access)
             gcode::GCodeOpsDetector detector;
             auto scan_result = detector.scan_content(content);
@@ -518,8 +515,6 @@ void PrintPreparationManager::scan_file_for_operations(const std::string& filena
         // Error: just log, don't block the UI
         // NOTE: Also runs on background thread
         [this, token, filename](const MoonrakerError& error) {
-            if (token.expired())
-                return;
             spdlog::warn("[PrintPreparationManager] Failed to scan G-code {}: {}", filename,
                          error.message);
 
@@ -734,8 +729,6 @@ void PrintPreparationManager::start_print(const std::string& filename,
             combined,
             [this, token, filename_to_print, ops_to_disable, on_navigate_to_status,
              wrapped_completion]() {
-                if (token.expired())
-                    return;
                 token.defer("PrintPreparationManager::pre_start_gcode_success",
                             [this, filename_to_print, ops_to_disable, on_navigate_to_status,
                              wrapped_completion]() {
@@ -750,8 +743,6 @@ void PrintPreparationManager::start_print(const std::string& filename,
                             });
             },
             [this, token, wrapped_completion](const MoonrakerError& err) {
-                if (token.expired())
-                    return;
                 token.defer("PrintPreparationManager::pre_start_gcode_error",
                             [wrapped_completion, msg = err.message]() {
                                 spdlog::error(

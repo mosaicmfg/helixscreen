@@ -57,8 +57,14 @@ from typing import Iterable
 #   if (tok.expired()) return;
 #   if (token.expired()) { return; }
 #   if (token.expired() || other_cond) return;
+#   if (token && token->expired()) return;           // optional<LifetimeToken>
+#   if (auto t = wp.lock(); t && t->expired()) ...   // shared_ptr<LifetimeToken>
+# Both `.expired()` and `->expired()` access patterns. The runtime detector
+# fires on either (it lives inside LifetimeToken::expired() itself); the lint
+# previously only matched `.expired()`, letting optional/shared_ptr<Token>
+# callsites in AfcConfigManager etc. evade gating until telemetry surfaced them.
 EXPIRED_CHECK_RE = re.compile(
-    r'\bif\s*\([^)]*\b(?P<varname>[a-zA-Z_]\w*)\.expired\s*\(\)[^)]*\)'
+    r'\bif\s*\([^)]*\b(?P<varname>[a-zA-Z_]\w*)\s*(?:\.|->)\s*expired\s*\(\)[^)]*\)'
 )
 
 # Patterns that count as "this access" on the line(s) following the expired check.

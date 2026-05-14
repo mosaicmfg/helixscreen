@@ -825,8 +825,6 @@ void SpoolmanOverlay::update_server_url_display() {
         [this, token](const std::string& content) {
             auto url =
                 helix::MoonrakerConfigManager::get_section_value(content, "spoolman", "server");
-            if (token.expired())
-                return;
             token.defer("SpoolmanOverlay::url_display", [this, url]() {
                 if (!server_url_text_)
                     return;
@@ -839,8 +837,6 @@ void SpoolmanOverlay::update_server_url_display() {
             });
         },
         [this, token](const MoonrakerError&) {
-            if (token.expired())
-                return;
             token.defer("SpoolmanOverlay::url_fallback", [this]() {
                 if (!server_url_text_)
                     return;

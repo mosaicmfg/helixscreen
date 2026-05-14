@@ -566,9 +566,6 @@ void BedMeshPanel::setup_moonraker_subscription() {
 
     SubscriptionId id =
         api->subscribe_notifications([this, api, token](nlohmann::json notification) {
-            if (token.expired())
-                return;
-
             // Check if this notification contains bed_mesh data BEFORE deferring to main thread
             if (!notification.contains("params") || !notification["params"].is_array() ||
                 notification["params"].empty()) {

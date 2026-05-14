@@ -503,9 +503,8 @@ void ConsolePanel::fetch_history() {
                 converted.push_back(e);
             }
 
-            // Defer LVGL operations to main thread with lifetime guard
-            if (token.expired())
-                return;
+            // Defer LVGL operations to main thread; defer has its own atomic
+            // expiration check on the main thread (avoids L081 Mechanism C noise).
             auto entries_ptr = std::make_shared<std::vector<GcodeEntry>>(std::move(converted));
             token.defer("ConsolePanel::fetch_done", [this, entries_ptr]() {
                 fetch_in_flight_ = false;
@@ -515,9 +514,6 @@ void ConsolePanel::fetch_history() {
         [this, token = lifetime_.token()](const MoonrakerError& err) {
             spdlog::error("[Console] Failed to fetch gcode store: {}", err.message);
 
-            // Defer LVGL operations to main thread with lifetime guard
-            if (token.expired())
-                return;
             token.defer("ConsolePanel::fetch_error", [this]() {
                 fetch_in_flight_ = false;
                 std::snprintf(status_buf_, sizeof(status_buf_), "%s",
