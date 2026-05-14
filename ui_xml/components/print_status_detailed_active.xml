@@ -3,16 +3,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <component>
   <consts>
-    <!-- Progress ring sizing — responsive per breakpoint. The arc shares the
-         middle column with the % label centered inside it; thickness scales
-         with size to keep the ring visually balanced (not "fluffy"). -->
-    <px name="progress_arc_size_tiny"      value="48"/>
-    <px name="progress_arc_size_small"     value="56"/>
-    <px name="progress_arc_size_medium"    value="64"/>
-    <px name="progress_arc_size_large"     value="72"/>
-    <px name="progress_arc_size_xlarge"    value="84"/>
-    <px name="progress_arc_size_xxlarge"   value="96"/>
-
+    <!-- Stroke thickness only — responsive per breakpoint. The arc's overall
+         diameter is flex-driven (sized by its column inside the main row),
+         not a fixed const. -->
     <px name="progress_arc_thickness_tiny"    value="3"/>
     <px name="progress_arc_thickness_small"   value="3"/>
     <px name="progress_arc_thickness_medium"  value="4"/>
@@ -28,18 +21,20 @@
             width="100%" flex_grow="1" style_pad_all="0" flex_flow="row" style_pad_gap="#space_sm"
             style_flex_cross_place="center" scrollable="false" clickable="false" event_bubble="true">
       <lv_image name="detailed_thumb"
-                width="35%" height="100%" src="A:assets/images/benchy_thumbnail_white.png"
+                flex_grow="2" height="100%" src="A:assets/images/benchy_thumbnail_white.png"
                 bind_src="print_thumbnail_path"
                 inner_align="contain" clickable="false" event_bubble="true"/>
       <lv_obj name="detailed_center_col"
-              width="content" height="100%" style_pad_all="0" flex_flow="column"
+              flex_grow="2" height="100%" style_pad_all="0" flex_flow="column"
               style_flex_main_place="center" style_flex_cross_place="center"
               style_pad_gap="#space_xxs" scrollable="false" clickable="false" event_bubble="true">
+        <!-- Arc container: fills the center column; arc + % label both center-aligned inside.
+             Container is flex-sized so arc diameter scales with available space (no fixed px). -->
         <lv_obj name="detailed_arc_container"
-                width="#progress_arc_size" height="#progress_arc_size" style_pad_all="0"
+                width="100%" flex_grow="1" style_pad_all="0"
                 scrollable="false" clickable="false" event_bubble="true">
           <lv_arc name="detailed_progress_arc"
-                  align="center" width="#progress_arc_size" height="#progress_arc_size" style_pad_all="0"
+                  align="center" width="100%" height="100%" style_pad_all="0"
                   min_value="0" max_value="100" value="0"
                   bg_start_angle="135" bg_end_angle="45"
                   rotation="0" mode="normal"
@@ -51,8 +46,8 @@
                   style_bg_opa-knob="0" style_shadow_width-knob="0"
                   style_outline_width-knob="0" style_pad_all-knob="0"
                   clickable="false" event_bubble="true"/>
-          <text_heading name="detailed_progress_pct" align="center"
-                        bind_text="print_status_progress_pct" clickable="false" event_bubble="true"/>
+          <text_body name="detailed_progress_pct" align="center"
+                     bind_text="print_status_progress_pct" clickable="false" event_bubble="true"/>
         </lv_obj>
         <!-- Temps under arc/data when colspan>=3 -->
         <lv_obj name="detailed_temp_row_under_data"
@@ -88,7 +83,7 @@
         </lv_obj>
       </lv_obj>
       <lv_obj name="detailed_data_col"
-              flex_grow="1" height="100%" style_pad_all="0" flex_flow="column"
+              flex_grow="3" height="100%" style_pad_all="0" flex_flow="column"
               style_flex_main_place="space_evenly" style_pad_gap="#space_xxs"
               scrollable="false" clickable="false" event_bubble="true">
         <text_body name="detailed_filename" width="100%"
