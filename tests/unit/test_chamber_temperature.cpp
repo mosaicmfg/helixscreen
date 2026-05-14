@@ -232,6 +232,105 @@ TEST_CASE("Manual chamber assignment updates sensor role", "[chamber][role]") {
     REQUIRE(old_chamber->role != helix::sensors::TemperatureSensorRole::CHAMBER);
 }
 
+// Empty-string override path: existing CHAMBER demoted, nothing re-promoted.
+TEST_CASE("apply_chamber_sensor_override(\"\") demotes existing CHAMBER",
+          "[chamber][override]") {
+    LVGLTestFixture fixture;
+
+    auto& mgr = helix::sensors::TemperatureSensorManager::instance();
+    mgr.init_subjects();
+
+    std::vector<std::string> objects = {"temperature_sensor chamber",
+                                        "temperature_sensor mcu_temp"};
+    mgr.discover(objects);
+
+    // Auto-categorizer should promote the "chamber"-named sensor.
+    auto sensors = mgr.get_sensors_sorted();
+    auto chamber = std::find_if(sensors.begin(), sensors.end(), [](const auto& s) {
+        return s.klipper_name == "temperature_sensor chamber";
+    });
+    REQUIRE(chamber != sensors.end());
+    REQUIRE(chamber->role == helix::sensors::TemperatureSensorRole::CHAMBER);
+
+    // Clearing the override (auto-detect saw nothing chamber-like) must
+    // demote the previous CHAMBER without leaving a stale promotion.
+    mgr.apply_chamber_sensor_override("");
+
+    sensors = mgr.get_sensors_sorted();
+    chamber = std::find_if(sensors.begin(), sensors.end(), [](const auto& s) {
+        return s.klipper_name == "temperature_sensor chamber";
+    });
+    REQUIRE(chamber != sensors.end());
+    REQUIRE(chamber->role != helix::sensors::TemperatureSensorRole::CHAMBER);
+}
+
+// Snapmaker / Elegoo scenario: the chamber sensor's klipper name doesn't
+// contain "chamber" (it's "cavity" / "enclosure"). The override must still
+// promote it so duplicate Chamber+Cavity entries don't appear in the temp
+// graph.
+TEST_CASE("apply_chamber_sensor_override promotes non-chamber-named sensor",
+          "[chamber][override]") {
+    LVGLTestFixture fixture;
+
+    auto& mgr = helix::sensors::TemperatureSensorManager::instance();
+    mgr.init_subjects();
+
+    std::vector<std::string> objects = {"temperature_sensor cavity",
+                                        "temperature_sensor mcu_temp"};
+    mgr.discover(objects);
+
+    // Auto-categorizer doesn't match "cavity" against the "chamber" substring.
+    auto sensors = mgr.get_sensors_sorted();
+    auto cavity = std::find_if(sensors.begin(), sensors.end(), [](const auto& s) {
+        return s.klipper_name == "temperature_sensor cavity";
+    });
+    REQUIRE(cavity != sensors.end());
+    REQUIRE(cavity->role == helix::sensors::TemperatureSensorRole::AUXILIARY);
+
+    mgr.apply_chamber_sensor_override("temperature_sensor cavity");
+
+    sensors = mgr.get_sensors_sorted();
+    cavity = std::find_if(sensors.begin(), sensors.end(), [](const auto& s) {
+        return s.klipper_name == "temperature_sensor cavity";
+    });
+    REQUIRE(cavity != sensors.end());
+    REQUIRE(cavity->role == helix::sensors::TemperatureSensorRole::CHAMBER);
+}
+
+// Calling override with the already-CHAMBER sensor is a no-op (preserves role,
+// avoids churn / log noise on every reconnect for printers whose chamber name
+// matches the auto-categorizer).
+TEST_CASE("apply_chamber_sensor_override on already-CHAMBER sensor is a no-op",
+          "[chamber][override]") {
+    LVGLTestFixture fixture;
+
+    auto& mgr = helix::sensors::TemperatureSensorManager::instance();
+    mgr.init_subjects();
+
+    std::vector<std::string> objects = {"temperature_sensor chamber",
+                                        "temperature_sensor mcu_temp"};
+    mgr.discover(objects);
+
+    auto sensors = mgr.get_sensors_sorted();
+    auto chamber = std::find_if(sensors.begin(), sensors.end(), [](const auto& s) {
+        return s.klipper_name == "temperature_sensor chamber";
+    });
+    REQUIRE(chamber != sensors.end());
+    REQUIRE(chamber->role == helix::sensors::TemperatureSensorRole::CHAMBER);
+    auto original_priority = chamber->priority;
+
+    // Should remain CHAMBER without demote-then-repromote churn.
+    mgr.apply_chamber_sensor_override("temperature_sensor chamber");
+
+    sensors = mgr.get_sensors_sorted();
+    chamber = std::find_if(sensors.begin(), sensors.end(), [](const auto& s) {
+        return s.klipper_name == "temperature_sensor chamber";
+    });
+    REQUIRE(chamber != sensors.end());
+    REQUIRE(chamber->role == helix::sensors::TemperatureSensorRole::CHAMBER);
+    REQUIRE(chamber->priority == original_priority);
+}
+
 // 11. Full round trip: setting → override → temperature update
 TEST_CASE("Chamber assignment full round trip", "[chamber][integration]") {
     LVGLTestFixture fixture;

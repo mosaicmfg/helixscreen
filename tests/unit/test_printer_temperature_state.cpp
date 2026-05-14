@@ -123,3 +123,52 @@ TEST_CASE("PrinterTemperatureState: default active works with single extruder",
 
     PrinterTemperatureStateTestAccess::reset(state);
 }
+
+TEST_CASE("PrinterTemperatureState: single extruder display_name is 'Nozzle'",
+          "[core][temperature][display-name]") {
+    lv_init_safe();
+    PrinterTemperatureState state;
+    state.init_subjects(false);
+    state.init_extruders({"extruder"});
+
+    const auto& exts = state.extruders();
+    auto it = exts.find("extruder");
+    REQUIRE(it != exts.end());
+    REQUIRE(it->second.display_name == "Nozzle");
+
+    PrinterTemperatureStateTestAccess::reset(state);
+}
+
+TEST_CASE("PrinterTemperatureState: multi-extruder display_name is 'Nozzle N'",
+          "[core][temperature][display-name]") {
+    lv_init_safe();
+    PrinterTemperatureState state;
+    state.init_subjects(false);
+    state.init_extruders({"extruder", "extruder1", "extruder2", "extruder3"});
+
+    const auto& exts = state.extruders();
+    REQUIRE(exts.find("extruder")->second.display_name == "Nozzle 1");
+    REQUIRE(exts.find("extruder1")->second.display_name == "Nozzle 2");
+    REQUIRE(exts.find("extruder2")->second.display_name == "Nozzle 3");
+    REQUIRE(exts.find("extruder3")->second.display_name == "Nozzle 4");
+
+    PrinterTemperatureStateTestAccess::reset(state);
+}
+
+TEST_CASE("PrinterTemperatureState: extruder names are sorted before labeling",
+          "[core][temperature][display-name]") {
+    lv_init_safe();
+    PrinterTemperatureState state;
+    state.init_subjects(false);
+    // Klipper isn't guaranteed to return heaters in sorted order. Labels must
+    // still align with lexical index — extruder=1, extruder1=2, etc.
+    state.init_extruders({"extruder2", "extruder", "extruder3", "extruder1"});
+
+    const auto& exts = state.extruders();
+    REQUIRE(exts.find("extruder")->second.display_name == "Nozzle 1");
+    REQUIRE(exts.find("extruder1")->second.display_name == "Nozzle 2");
+    REQUIRE(exts.find("extruder2")->second.display_name == "Nozzle 3");
+    REQUIRE(exts.find("extruder3")->second.display_name == "Nozzle 4");
+
+    PrinterTemperatureStateTestAccess::reset(state);
+}

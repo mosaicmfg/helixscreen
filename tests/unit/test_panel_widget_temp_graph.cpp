@@ -22,6 +22,12 @@ class helix::TempGraphWidgetTestAccess {
     static std::vector<TempGraphSeriesSpec> build_series(TempGraphWidget& w) {
         return w.build_series_from_config();
     }
+    static bool merge_discovered_extruders(nlohmann::json& config, bool enabled) {
+        return TempGraphWidget::merge_discovered_extruders(config, enabled);
+    }
+    static std::string sensor_display_name(const std::string& klipper_name) {
+        return TempGraphWidget::TempGraphConfigModal::sensor_display_name(klipper_name);
+    }
 };
 
 // Reuse the same lightweight fixture as test_temp_graph.cpp
@@ -548,4 +554,91 @@ TEST_CASE("TempGraphWidget: follow_overlay on with no snapshot falls back to con
     auto names = names_of(specs);
     REQUIRE(std::find(names.begin(), names.end(), "extruder") != names.end());
     REQUIRE(std::find(names.begin(), names.end(), "heater_bed") == names.end());
+}
+
+// ============================================================================
+// sensor_display_name: extruders, bed, chamber
+// ============================================================================
+
+#include "app_globals.h"
+#include "printer_state.h"
+
+TEST_CASE("sensor_display_name maps Klipper names to user-facing labels",
+          "[temp_graph][panel_widget][labels]") {
+    // Static fallbacks (PrinterTemperatureState may or may not have extruders
+    // populated in the global test PrinterState — these labels are derived
+    // unconditionally).
+    REQUIRE(TempGraphWidgetTestAccess::sensor_display_name("heater_bed") == "Bed");
+    REQUIRE(TempGraphWidgetTestAccess::sensor_display_name("chamber") == "Chamber");
+
+    // Pre-discovery / no extruder yet known: derived from suffix.
+    auto& ps = get_printer_state();
+    ps.init_extruders({}); // clear
+    REQUIRE(TempGraphWidgetTestAccess::sensor_display_name("extruder") == "Nozzle");
+    REQUIRE(TempGraphWidgetTestAccess::sensor_display_name("extruder1") == "Nozzle 2");
+    REQUIRE(TempGraphWidgetTestAccess::sensor_display_name("extruder5") == "Nozzle 6");
+
+    // After discovery: defers to the cached display_name (which itself is
+    // sorted/translated). Multi-extruder => "extruder" becomes "Nozzle 1".
+    ps.init_extruders({"extruder", "extruder1", "extruder2", "extruder3"});
+    REQUIRE(TempGraphWidgetTestAccess::sensor_display_name("extruder") == "Nozzle 1");
+    REQUIRE(TempGraphWidgetTestAccess::sensor_display_name("extruder1") == "Nozzle 2");
+    REQUIRE(TempGraphWidgetTestAccess::sensor_display_name("extruder3") == "Nozzle 4");
+
+    // Reset to empty so we don't leak state into other tests.
+    ps.init_extruders({});
+}
+
+// ============================================================================
+// merge_discovered_extruders helper
+// ============================================================================
+
+TEST_CASE("merge_discovered_extruders adds missing entries and is idempotent",
+          "[temp_graph][panel_widget][config]") {
+    auto& ps = get_printer_state();
+    ps.init_extruders({"extruder", "extruder1", "extruder2", "extruder3"});
+
+    nlohmann::json config = {
+        {"sensors",
+         {
+             {{"name", "extruder"}, {"enabled", true}, {"color", 0xFF4444}},
+             {{"name", "heater_bed"}, {"enabled", true}, {"color", 0x88C0D0}},
+         }}};
+
+    bool added = TempGraphWidgetTestAccess::merge_discovered_extruders(config, /*enabled=*/true);
+    REQUIRE(added == true);
+
+    auto& sensors = config["sensors"];
+    auto find_name = [&sensors](const std::string& name) {
+        return std::find_if(sensors.begin(), sensors.end(), [&](const nlohmann::json& e) {
+            return e["name"].get<std::string>() == name;
+        });
+    };
+    // Three new entries appended with enabled=true.
+    REQUIRE(find_name("extruder1") != sensors.end());
+    REQUIRE(find_name("extruder2") != sensors.end());
+    REQUIRE(find_name("extruder3") != sensors.end());
+    REQUIRE((*find_name("extruder1"))["enabled"].get<bool>() == true);
+
+    // Idempotent: second call adds nothing.
+    bool added_again = TempGraphWidgetTestAccess::merge_discovered_extruders(config, /*enabled=*/true);
+    REQUIRE(added_again == false);
+    REQUIRE(sensors.size() == 5); // extruder + bed + 3 new
+
+    ps.init_extruders({});
+}
+
+TEST_CASE("merge_discovered_extruders honors the enabled flag",
+          "[temp_graph][panel_widget][config]") {
+    auto& ps = get_printer_state();
+    ps.init_extruders({"extruder", "extruder1"});
+
+    nlohmann::json config = {{"sensors", nlohmann::json::array()}};
+
+    REQUIRE(TempGraphWidgetTestAccess::merge_discovered_extruders(config, /*enabled=*/false));
+    for (const auto& entry : config["sensors"]) {
+        REQUIRE(entry["enabled"].get<bool>() == false);
+    }
+
+    ps.init_extruders({});
 }
