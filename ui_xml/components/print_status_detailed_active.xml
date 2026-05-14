@@ -2,6 +2,12 @@
 <!-- Copyright (C) 2025-2026 356C LLC -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <component>
+  <consts>
+    <!-- Progress ring sizing — kept compact enough to share the middle column
+         with temperature glyphs at colspan=2 -->
+    <px name="progress_arc_size"      value="80"/>
+    <px name="progress_arc_thickness" value="6"/>
+  </consts>
   <view name="print_status_detailed_active" extends="lv_obj"
         width="100%" height="100%" style_pad_all="0" style_pad_gap="#space_xs"
         flex_flow="column" scrollable="false" clickable="false" event_bubble="true">
@@ -18,14 +24,16 @@
               style_flex_main_place="center" style_flex_cross_place="center"
               style_pad_gap="#space_xxs" scrollable="false" clickable="false" event_bubble="true">
         <lv_obj name="detailed_arc_container"
-                width="80" height="80" style_pad_all="0"
+                width="$progress_arc_size" height="$progress_arc_size" style_pad_all="0"
                 scrollable="false" clickable="false" event_bubble="true">
           <lv_arc name="detailed_progress_arc"
-                  align="center" width="80" height="80" style_pad_all="0"
+                  align="center" width="$progress_arc_size" height="$progress_arc_size" style_pad_all="0"
                   min_value="0" max_value="100" value="0"
                   bg_start_angle="135" bg_end_angle="45"
                   rotation="0" mode="normal"
                   style_arc_color="#border" style_arc_color-indicator="#primary"
+                  style_arc_width="$progress_arc_thickness"
+                  style_arc_width-indicator="$progress_arc_thickness"
                   style_arc_rounded="true" style_arc_rounded-indicator="true"
                   style_bg_opa="0" style_border_width="0"
                   style_bg_opa-knob="0" style_shadow_width-knob="0"
@@ -45,7 +53,7 @@
             <text_small bind_text="print_status_nozzle_tool_label" clickable="false" event_bubble="true">
               <bind_flag_if_eq subject="print_status_multi_tool" flag="hidden" ref_value="0"/>
             </text_small>
-            <icon src="printer_3d_nozzle" size="sm" clickable="false" event_bubble="true"/>
+            <icon src="filament" size="sm" clickable="false" event_bubble="true"/>
             <text_small bind_text="print_status_nozzle_text" clickable="false" event_bubble="true"/>
             <icon src="chevron_down" size="sm">
               <bind_flag_if_eq subject="print_status_multi_tool" flag="hidden" ref_value="0"/>
@@ -93,7 +101,7 @@
         <text_small bind_text="print_status_nozzle_tool_label" clickable="false" event_bubble="true">
           <bind_flag_if_eq subject="print_status_multi_tool" flag="hidden" ref_value="0"/>
         </text_small>
-        <icon src="printer_3d_nozzle" size="sm" clickable="false" event_bubble="true"/>
+        <icon src="filament" size="sm" clickable="false" event_bubble="true"/>
         <text_small bind_text="print_status_nozzle_text" clickable="false" event_bubble="true"/>
         <icon src="chevron_down" size="sm">
           <bind_flag_if_eq subject="print_status_multi_tool" flag="hidden" ref_value="0"/>
