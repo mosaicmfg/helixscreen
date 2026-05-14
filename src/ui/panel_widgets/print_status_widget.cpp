@@ -80,7 +80,29 @@ PrintStatusWidget::PrintStatusWidget() : printer_state_(get_printer_state()) {
         lv_xml_register_subject(nullptr, "print_status_actions_hidden", &actions_hidden_subject_);
         visibility_subjects_initialized_ = true;
 
+        // Detailed-layout subjects
+        lv_subject_init_int(&layout_mode_subject_, 0);
+        lv_xml_register_subject(nullptr, "print_status_layout_mode", &layout_mode_subject_);
+        lv_subject_init_int(&layout_effective_subject_, 0);
+        lv_xml_register_subject(nullptr, "print_status_layout_effective", &layout_effective_subject_);
+        lv_subject_init_int(&temp_under_thumb_subject_, 1);
+        lv_xml_register_subject(nullptr, "print_status_temp_under_thumb", &temp_under_thumb_subject_);
+        lv_subject_init_int(&show_filament_active_subject_, 0);
+        lv_xml_register_subject(nullptr, "print_status_show_filament_active",
+                                &show_filament_active_subject_);
+        lv_subject_init_int(&multi_tool_subject_, 0);
+        lv_xml_register_subject(nullptr, "print_status_multi_tool", &multi_tool_subject_);
+        detailed_subjects_initialized_ = true;
+
         StaticSubjectRegistry::instance().register_deinit("PrintStatusWidgetSubjects", []() {
+            if (detailed_subjects_initialized_ && lv_is_initialized()) {
+                lv_subject_deinit(&layout_mode_subject_);
+                lv_subject_deinit(&layout_effective_subject_);
+                lv_subject_deinit(&temp_under_thumb_subject_);
+                lv_subject_deinit(&show_filament_active_subject_);
+                lv_subject_deinit(&multi_tool_subject_);
+                detailed_subjects_initialized_ = false;
+            }
             if (visibility_subjects_initialized_ && lv_is_initialized()) {
                 lv_subject_deinit(&title_hidden_subject_);
                 lv_subject_deinit(&files_hidden_subject_);

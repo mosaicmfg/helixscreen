@@ -106,6 +106,14 @@ class PrintStatusWidget : public PanelWidget {
     static inline lv_subject_t actions_hidden_subject_;
     static inline bool visibility_subjects_initialized_ = false;
 
+    // Detailed-layout subjects (static inline — shared across all widget instances)
+    static inline lv_subject_t layout_mode_subject_{};       // 0=library, 1=detailed (user pref)
+    static inline lv_subject_t layout_effective_subject_{};  // after width gating
+    static inline lv_subject_t temp_under_thumb_subject_{};  // 1 at colspan==2, 0 at >=3
+    static inline lv_subject_t show_filament_active_subject_{};
+    static inline lv_subject_t multi_tool_subject_{};        // 1 when tool_count > 1
+    static inline bool detailed_subjects_initialized_ = false;
+
     // Compact mode and state tracking
     bool is_compact_ = false;
     bool is_column_ = false;
