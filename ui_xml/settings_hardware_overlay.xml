@@ -10,12 +10,11 @@
     <!-- Content Area - no padding, rows handle their own -->
     <lv_obj name="overlay_content" width="100%" flex_grow="1" style_pad_top="0" style_pad_left="#space_lg" style_pad_right="#space_lg" style_pad_bottom="#space_lg" scrollable="true" flex_flow="column">
       <!-- ================================================================== -->
-      <!-- HARDWARE ISSUES (hidden when no issues) -->
+      <!-- HARDWARE HEALTH (always visible — forensic surface for the user) -->
       <!-- ================================================================== -->
       <lv_obj name="container_hardware_health" width="100%" style_pad_all="0" scrollable="false">
-        <bind_flag_if_eq subject="hardware_has_issues" flag="hidden" ref_value="0"/>
         <setting_action_row name="row_hardware_health"
-                            label="Hardware Issues" label_tag="Hardware Issues" icon="alert"
+                            label="Hardware Health" label_tag="Hardware Health" icon="alert"
                             description="Review detected hardware validation issues"
                             description_tag="Review detected hardware validation issues"
                             callback="on_hardware_health_clicked"/>
