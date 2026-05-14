@@ -72,6 +72,18 @@ void TempGraphWidget::attach(lv_obj_t* widget_obj, lv_obj_t* parent_screen) {
         build_default_config();
     }
 
+    // Auto-upgrade older configs that pre-date extruder discovery (only the
+    // legacy single "extruder" entry was added). Without this, a widget that
+    // was first attached before the printer connected stays stuck on a single
+    // nozzle even after a multi-tool printer is discovered. New entries are
+    // enabled=true so users actually see their nozzles; existing rows are
+    // never modified so an explicit disable choice is preserved.
+    if (merge_discovered_extruders(config_, true)) {
+        save_widget_config(config_);
+        spdlog::info("[TempGraphWidget] '{}' auto-upgraded config with discovered extruders",
+                     instance_id_);
+    }
+
     TempGraphControllerConfig ctrl_config;
     ctrl_config.point_count = 300; // 5-minute window at 1Hz (matches mini graph)
     ctrl_config.axis_size = "xs";
@@ -317,6 +329,38 @@ void TempGraphWidget::build_default_config() {
                   instance_id_);
 }
 
+bool TempGraphWidget::merge_discovered_extruders(nlohmann::json& config, bool enabled) {
+    if (!config.contains("sensors") || !config["sensors"].is_array())
+        config["sensors"] = nlohmann::json::array();
+
+    auto& arr = config["sensors"];
+    std::set<std::string> existing;
+    for (const auto& entry : arr) {
+        if (entry.contains("name") && entry["name"].is_string())
+            existing.insert(entry["name"].get<std::string>());
+    }
+
+    bool added = false;
+    const auto& exts = get_printer_state().temperature_state().extruders();
+    int color_idx = static_cast<int>(arr.size());
+    for (const auto& [name, _] : exts) {
+        if (existing.count(name))
+            continue;
+        lv_color_t c = TEMP_GRAPH_SERIES_COLORS[color_idx % TEMP_GRAPH_PALETTE_SIZE];
+        uint32_t color_hex = (static_cast<uint32_t>(c.red) << 16) |
+                             (static_cast<uint32_t>(c.green) << 8) |
+                             static_cast<uint32_t>(c.blue);
+        nlohmann::json row;
+        row["name"] = name;
+        row["enabled"] = enabled;
+        row["color"] = color_hex;
+        arr.push_back(std::move(row));
+        ++color_idx;
+        added = true;
+    }
+    return added;
+}
+
 // ============================================================================
 // TempGraphConfigModal
 // ============================================================================
@@ -471,56 +515,32 @@ void TempGraphWidget::TempGraphConfigModal::populate_sensor_list() {
     if (!config_.contains("sensors") || !config_["sensors"].is_array())
         config_["sensors"] = nlohmann::json::array();
 
-    // Auto-discover extruders that aren't yet in the saved sensor list so
-    // multi-tool printers (Snapmaker U1, toolchangers) get all heaters exposed
-    // as toggleable rows instead of just the legacy "extruder" entry. New rows
-    // are added disabled so existing users' visible set doesn't change.
-    // Also normalize ordering: all extruders come first (sorted by klipper
-    // name), then everything else in its original order — keeps Nozzle 1..N
-    // grouped together even if a previous build appended them at the tail.
+    // Modal-time safety net: TempGraphWidget::attach already auto-upgrades on
+    // first run after extruder discovery, but if a widget was created and
+    // configured pre-discovery the user may still see only the legacy entry
+    // when reopening this modal. Add the missing rows as enabled=false so the
+    // currently visible curves don't change, then normalize ordering.
+    TempGraphWidget::merge_discovered_extruders(config_, /*enabled=*/false);
+
+    // Partition: extruders (sorted by name) first, then the rest in
+    // original order. stable_partition preserves the trailing entries'
+    // sequence so heater_bed / chamber / aux sensors stay where the user
+    // left them.
     {
         auto& arr = config_["sensors"];
         auto is_extruder_name = [](const std::string& n) {
             return n == "extruder" || (n.size() > 8 && n.rfind("extruder", 0) == 0 &&
                                        std::isdigit(static_cast<unsigned char>(n[8])));
         };
-
-        std::set<std::string> existing;
-        for (const auto& entry : arr) {
-            if (entry.contains("name") && entry["name"].is_string())
-                existing.insert(entry["name"].get<std::string>());
-        }
-
-        const auto& exts = get_printer_state().temperature_state().extruders();
-        for (const auto& [name, _] : exts) {
-            if (existing.count(name))
-                continue;
-            nlohmann::json row;
-            row["name"] = name;
-            row["enabled"] = false;
-            arr.push_back(std::move(row));
-        }
-
-        // Partition: extruders (sorted by name) first, then the rest in order.
-        nlohmann::json extruder_entries = nlohmann::json::array();
-        nlohmann::json other_entries = nlohmann::json::array();
-        for (auto& entry : arr) {
-            if (entry.contains("name") && entry["name"].is_string() &&
-                is_extruder_name(entry["name"].get<std::string>())) {
-                extruder_entries.push_back(std::move(entry));
-            } else {
-                other_entries.push_back(std::move(entry));
-            }
-        }
-        std::sort(extruder_entries.begin(), extruder_entries.end(),
+        auto entry_is_extruder = [&](const nlohmann::json& entry) {
+            return entry.contains("name") && entry["name"].is_string() &&
+                   is_extruder_name(entry["name"].get<std::string>());
+        };
+        auto split = std::stable_partition(arr.begin(), arr.end(), entry_is_extruder);
+        std::sort(arr.begin(), split,
                   [](const nlohmann::json& a, const nlohmann::json& b) {
                       return a["name"].get<std::string>() < b["name"].get<std::string>();
                   });
-        arr = nlohmann::json::array();
-        for (auto& e : extruder_entries)
-            arr.push_back(std::move(e));
-        for (auto& e : other_entries)
-            arr.push_back(std::move(e));
     }
 
     const auto& sensors = config_["sensors"];

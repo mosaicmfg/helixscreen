@@ -52,6 +52,11 @@ class TempGraphWidget : public PanelWidget {
     void build_default_config();
     std::vector<TempGraphSeriesSpec> build_series_from_config() const;
 
+    /// Append any discovered extruders not yet present in config["sensors"].
+    /// Returns true if any rows were added (caller can decide whether to
+    /// persist). New rows use the provided enabled flag.
+    static bool merge_discovered_extruders(nlohmann::json& config, bool enabled);
+
     /// Stable signature of the visibility set most recently applied to the
     /// controller. Used by on_activate() to detect when the overlay snapshot
     /// has drifted and a rebuild is needed (follow mode only).

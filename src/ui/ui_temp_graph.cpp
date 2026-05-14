@@ -359,10 +359,12 @@ static void draw_legend_cb(lv_event_t* e) {
     // Worst-case overflow indicator width ("+N" with N up to visible_count).
     // Reserved when there could still be more chips after the one we're about
     // to draw, so we never strand the final chip without room for the +N pill.
-    static char overflow_buf[16];
-    std::snprintf(overflow_buf, sizeof(overflow_buf), "+%d", visible_count);
+    // The sizing pass uses a local buffer; the persistent overflow_buf below
+    // is what we hand to lv_draw_label and must outlive deferred draw.
+    char sizing_buf[16];
+    std::snprintf(sizing_buf, sizeof(sizing_buf), "+%d", visible_count);
     lv_point_t overflow_txt_size;
-    lv_text_get_size(&overflow_txt_size, overflow_buf, font, 0, 0, LV_COORD_MAX,
+    lv_text_get_size(&overflow_txt_size, sizing_buf, font, 0, 0, LV_COORD_MAX,
                      LV_TEXT_FLAG_NONE);
     int32_t overflow_chip_w = chip_pad_h + overflow_txt_size.x + chip_pad_h;
 
@@ -401,6 +403,9 @@ static void draw_legend_cb(lv_event_t* e) {
             // remaining (including current) chips.
             if (chips_drawn == 0)
                 return;
+            // Static buffer because lv_draw_label may run the draw step
+            // asynchronously and needs the label text to outlive this scope.
+            static char overflow_buf[16];
             std::snprintf(overflow_buf, sizeof(overflow_buf), "+%d", chips_remaining);
             lv_point_t ov_size;
             lv_text_get_size(&ov_size, overflow_buf, font, 0, 0, LV_COORD_MAX,
