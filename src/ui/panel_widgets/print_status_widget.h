@@ -56,6 +56,14 @@ class PrintStatusWidget : public PanelWidget {
     /// Registry of live (attached) widget instances for use-after-free prevention
     static std::unordered_set<PrintStatusWidget*>& live_instances();
 
+    // Test accessors (always compiled — used by unit tests)
+    const std::string& layout_style_for_test() const {
+        return layout_style_;
+    }
+    const std::string& nozzle_tool_override_for_test() const {
+        return nozzle_tool_override_;
+    }
+
   private:
     lv_obj_t* widget_obj_ = nullptr;
     lv_obj_t* parent_screen_ = nullptr;
@@ -149,6 +157,8 @@ class PrintStatusWidget : public PanelWidget {
 
     // Configuration state
     nlohmann::json config_;
+    std::string layout_style_ = "library";       // "library" | "detailed"
+    std::string nozzle_tool_override_ = "auto";  // "auto" | extruder name
     bool show_title_ = true;
     bool show_print_files_ = true;
     bool show_reprint_last_ = true;

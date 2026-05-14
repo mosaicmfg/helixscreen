@@ -770,6 +770,15 @@ void PrintStatusWidget::show_idle_runout_modal() {
 
 void PrintStatusWidget::set_config(const nlohmann::json& config) {
     config_ = config;
+    if (config.contains("layout_style") && config["layout_style"].is_string()) {
+        std::string ls = config["layout_style"].get<std::string>();
+        if (ls == "library" || ls == "detailed") {
+            layout_style_ = std::move(ls);
+        }
+    }
+    if (config.contains("nozzle_tool_override") && config["nozzle_tool_override"].is_string()) {
+        nozzle_tool_override_ = config["nozzle_tool_override"].get<std::string>();
+    }
     if (config.contains("show_title") && config["show_title"].is_boolean()) {
         show_title_ = config["show_title"].get<bool>();
     }
