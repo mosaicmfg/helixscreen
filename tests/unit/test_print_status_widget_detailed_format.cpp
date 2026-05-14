@@ -6,6 +6,7 @@
 #include "src/ui/panel_widgets/print_status_widget.h"
 #include "app_globals.h"
 #include "printer_state.h"
+#include "tool_state.h"
 
 #include "../catch_amalgamated.hpp"
 
@@ -133,4 +134,30 @@ TEST_CASE_METHOD(HelixTestFixture, "Chamber with target shows pair",
     lv_subject_set_int(ps.get_chamber_target_subject(), 4500);   // 45
     UpdateQueueTestAccess::drain_all(UpdateQueue::instance());
     REQUIRE(std::string(lv_subject_get_string(lv_xml_get_subject(nullptr, "print_status_chamber_text"))) == "35 / 45°C");
+}
+
+TEST_CASE_METHOD(HelixTestFixture, "DetailedFormatter multi-tool label and gate",
+                 "[print_status][formatter][multi_tool]") {
+    ToolState::instance().init_subjects(false);
+
+    FormatterScope fs;
+    auto& ts = ToolState::instance();
+
+    // Single tool — no label, gate=0
+    lv_subject_set_int(ts.get_tool_count_subject(), 1);
+    UpdateQueueTestAccess::drain_all(UpdateQueue::instance());
+    REQUIRE(lv_subject_get_int(lv_xml_get_subject(nullptr, "print_status_multi_tool")) == 0);
+    REQUIRE(std::string(lv_subject_get_string(lv_xml_get_subject(nullptr, "print_status_nozzle_tool_label"))) == "");
+
+    // Two tools — gate=1, label tracks active (default index = 0)
+    lv_subject_set_int(ts.get_tool_count_subject(), 2);
+    UpdateQueueTestAccess::drain_all(UpdateQueue::instance());
+    REQUIRE(lv_subject_get_int(lv_xml_get_subject(nullptr, "print_status_multi_tool")) == 1);
+    REQUIRE(std::string(lv_subject_get_string(lv_xml_get_subject(nullptr, "print_status_nozzle_tool_label"))) == "T0");
+
+    // Back to single — gate=0, label cleared
+    lv_subject_set_int(ts.get_tool_count_subject(), 1);
+    UpdateQueueTestAccess::drain_all(UpdateQueue::instance());
+    REQUIRE(lv_subject_get_int(lv_xml_get_subject(nullptr, "print_status_multi_tool")) == 0);
+    REQUIRE(std::string(lv_subject_get_string(lv_xml_get_subject(nullptr, "print_status_nozzle_tool_label"))) == "");
 }

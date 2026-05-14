@@ -26,6 +26,7 @@
 #include "thumbnail_cache.h"
 #include "thumbnail_load_context.h"
 #include "thumbnail_processor.h"
+#include "tool_state.h"
 
 #include <spdlog/spdlog.h>
 
@@ -1263,6 +1264,22 @@ void PrintStatusWidget::DetailedFormatter::update_chamber_text() {
     lv_subject_copy_string(&chamber_text_subject_, chamber_text_buf_);
 }
 
+void PrintStatusWidget::DetailedFormatter::update_multi_tool() {
+    int count = lv_subject_get_int(ToolState::instance().get_tool_count_subject());
+    lv_subject_set_int(&PrintStatusWidget::multi_tool_subject_, count > 1 ? 1 : 0);
+}
+
+void PrintStatusWidget::DetailedFormatter::update_tool_label() {
+    int count = lv_subject_get_int(ToolState::instance().get_tool_count_subject());
+    if (count <= 1) {
+        nozzle_tool_label_buf_[0] = '\0';
+    } else {
+        int idx = ToolState::instance().active_tool_index();
+        snprintf(nozzle_tool_label_buf_, sizeof(nozzle_tool_label_buf_), "T%d", idx);
+    }
+    lv_subject_copy_string(&nozzle_tool_label_subject_, nozzle_tool_label_buf_);
+}
+
 PrintStatusWidget::DetailedFormatter::DetailedFormatter() {
     UI_MANAGED_SUBJECT_STRING(progress_pct_subject_, progress_pct_buf_, "0%",
                               "print_status_progress_pct", subjects_);
@@ -1338,6 +1355,19 @@ PrintStatusWidget::DetailedFormatter::DetailedFormatter() {
     update_nozzle_text();
     update_bed_text();
     update_chamber_text();
+
+    // Multi-tool: observe tool_count + active_tool to drive gate and T<n> label
+    tool_count_observer_ = observe_int_sync<DetailedFormatter>(
+        ToolState::instance().get_tool_count_subject(), this,
+        [](DetailedFormatter* self, int) {
+            self->update_multi_tool();
+            self->update_tool_label();
+        });
+    active_tool_observer_ = observe_int_sync<DetailedFormatter>(
+        ToolState::instance().get_active_tool_subject(), this,
+        [](DetailedFormatter* self, int) { self->update_tool_label(); });
+    update_multi_tool();
+    update_tool_label();
 
     spdlog::debug("[DetailedFormatter] subjects initialized");
 }

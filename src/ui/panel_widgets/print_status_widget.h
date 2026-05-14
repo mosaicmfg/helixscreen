@@ -227,6 +227,9 @@ class PrintStatusWidget : public PanelWidget {
         ObserverGuard chamber_temp_observer_;
         ObserverGuard chamber_target_observer_;
 
+        ObserverGuard tool_count_observer_;
+        ObserverGuard active_tool_observer_;
+
         void update_progress_pct();
         void update_layer_text();
         void update_time_text();
@@ -234,6 +237,8 @@ class PrintStatusWidget : public PanelWidget {
         void update_nozzle_text();
         void update_bed_text();
         void update_chamber_text();
+        void update_multi_tool();
+        void update_tool_label();
     };
 
     static inline std::unique_ptr<DetailedFormatter> s_formatter_;
