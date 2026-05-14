@@ -25,10 +25,12 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <fcntl.h>
 #include <fstream>
 #include <iomanip>
 #include <optional>
 #include <sys/stat.h>
+#include <unistd.h>
 // C++17 filesystem - use std::filesystem if available, fall back to experimental
 #if __cplusplus >= 201703L && __has_include(<filesystem>)
 #include <filesystem>
@@ -1477,6 +1479,19 @@ bool Config::save() {
             }
         }
 
+        // fsync the temp file so data is durable before the rename, then fsync
+        // the parent directory so the rename itself is durable. Required on
+        // flash-backed filesystems (#943, Qidi Q2): without this, a clean
+        // shutdown / power cycle can leave settings.json empty even though
+        // userspace-level rename() returned success.
+        {
+            int fd = ::open(tmp_path.c_str(), O_RDONLY);
+            if (fd >= 0) {
+                (void)::fsync(fd);
+                ::close(fd);
+            }
+        }
+
         if (std::rename(tmp_path.c_str(), target_path.c_str()) != 0) {
             NOTIFY_ERROR("Failed to save configuration file");
             LOG_ERROR_INTERNAL("Failed to rename temp file '{}' to '{}': {}", tmp_path, target_path,
@@ -1485,6 +1500,17 @@ bool Config::save() {
                                 fmt::format("rename failed: {}", strerror(errno)));
             std::remove(tmp_path.c_str());
             return false;
+        }
+
+        {
+            std::string dir = fs::path(target_path).parent_path().string();
+            if (!dir.empty()) {
+                int dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
+                if (dfd >= 0) {
+                    (void)::fsync(dfd);
+                    ::close(dfd);
+                }
+            }
         }
 
         spdlog::trace("[Config] saved successfully to {}", path);
