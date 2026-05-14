@@ -143,6 +143,10 @@ void PrintStatusWidget::attach(lv_obj_t* widget_obj, lv_obj_t* parent_screen) {
         s_formatter_ = std::make_unique<DetailedFormatter>();
     }
 
+    if (s_formatter_) {
+        s_formatter_->set_nozzle_tool_override(nozzle_tool_override_);
+    }
+
     // Store this pointer for event callback recovery
     lv_obj_set_user_data(widget_obj_, this);
 
@@ -834,6 +838,9 @@ void PrintStatusWidget::set_config(const nlohmann::json& config) {
     if (config.contains("show_job_queue") && config["show_job_queue"].is_boolean()) {
         show_job_queue_ = config["show_job_queue"].get<bool>();
     }
+    if (s_formatter_) {
+        s_formatter_->set_nozzle_tool_override(nozzle_tool_override_);
+    }
 }
 
 bool PrintStatusWidget::on_edit_configure() {
@@ -1238,10 +1245,71 @@ void PrintStatusWidget::DetailedFormatter::update_filament_text() {
 
 void PrintStatusWidget::DetailedFormatter::update_nozzle_text() {
     auto& ps = get_printer_state();
-    int t = cd_to_c(lv_subject_get_int(ps.get_active_extruder_temp_subject()));
-    int tg = cd_to_c(lv_subject_get_int(ps.get_active_extruder_target_subject()));
+    lv_subject_t* temp_sub;
+    lv_subject_t* tgt_sub;
+    if (current_nozzle_override_ == "auto") {
+        temp_sub = ps.get_active_extruder_temp_subject();
+        tgt_sub  = ps.get_active_extruder_target_subject();
+    } else {
+        // Read-only access — prefer the no-lifetime overload per [L084] note
+        temp_sub = ps.get_extruder_temp_subject(current_nozzle_override_);
+        tgt_sub  = ps.get_extruder_target_subject(current_nozzle_override_);
+    }
+    int t  = cd_to_c(temp_sub ? lv_subject_get_int(temp_sub) : 0);
+    int tg = cd_to_c(tgt_sub  ? lv_subject_get_int(tgt_sub)  : 0);
     snprintf(nozzle_text_buf_, sizeof(nozzle_text_buf_), "%d / %d°C", t, tg);
     lv_subject_copy_string(&nozzle_text_subject_, nozzle_text_buf_);
+}
+
+void PrintStatusWidget::DetailedFormatter::set_nozzle_tool_override(
+    const std::string& override_name) {
+    using helix::ui::observe_int_sync;
+    auto& ps = get_printer_state();
+
+    // [L084] Clear lifetimes BEFORE observers to expire weak_ptr first.
+    nozzle_temp_lifetime_.reset();
+    nozzle_target_lifetime_.reset();
+    // [L085] reset(), never release()
+    nozzle_temp_observer_.reset();
+    nozzle_target_observer_.reset();
+
+    auto bind_auto = [&]() {
+        current_nozzle_override_ = "auto";
+        nozzle_temp_observer_ = observe_int_sync<DetailedFormatter>(
+            ps.get_active_extruder_temp_subject(), this,
+            [](DetailedFormatter* self, int) { self->update_nozzle_text(); });
+        nozzle_target_observer_ = observe_int_sync<DetailedFormatter>(
+            ps.get_active_extruder_target_subject(), this,
+            [](DetailedFormatter* self, int) { self->update_nozzle_text(); });
+        update_nozzle_text();
+    };
+
+    if (override_name.empty() || override_name == "auto") {
+        bind_auto();
+        return;
+    }
+
+    // Pinned: resolve dynamic per-tool subjects
+    auto* temp_sub = ps.get_extruder_temp_subject(override_name, nozzle_temp_lifetime_);
+    auto* tgt_sub  = ps.get_extruder_target_subject(override_name, nozzle_target_lifetime_);
+    if (!temp_sub || !tgt_sub) {
+        spdlog::info("[DetailedFormatter] nozzle override '{}' not found, falling back to auto",
+                     override_name);
+        // Clear any half-bound lifetimes before falling back
+        nozzle_temp_lifetime_.reset();
+        nozzle_target_lifetime_.reset();
+        bind_auto();
+        return;
+    }
+
+    current_nozzle_override_ = override_name;
+    nozzle_temp_observer_ = observe_int_sync<DetailedFormatter>(
+        temp_sub, this,
+        [](DetailedFormatter* self, int) { self->update_nozzle_text(); });
+    nozzle_target_observer_ = observe_int_sync<DetailedFormatter>(
+        tgt_sub, this,
+        [](DetailedFormatter* self, int) { self->update_nozzle_text(); });
+    update_nozzle_text();
 }
 
 void PrintStatusWidget::DetailedFormatter::update_bed_text() {

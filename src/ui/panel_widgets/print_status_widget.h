@@ -86,6 +86,11 @@ class PrintStatusWidget : public PanelWidget {
             s_formatter_.reset();
         }
     }
+    // Test-only — forward nozzle override to active formatter; no-op if none alive
+    static void set_nozzle_tool_override_for_test(const std::string& override_name) {
+        if (s_formatter_)
+            s_formatter_->set_nozzle_tool_override(override_name);
+    }
 
   private:
     lv_obj_t* widget_obj_ = nullptr;
@@ -177,7 +182,13 @@ class PrintStatusWidget : public PanelWidget {
         DetailedFormatter(DetailedFormatter&&) = delete;
         DetailedFormatter& operator=(DetailedFormatter&&) = delete;
 
+        /// Override is "" or "auto" for auto-tracking; else extruder name like "extruder1".
+        /// Silently falls back to auto if the named subject doesn't resolve.
+        void set_nozzle_tool_override(const std::string& override_name);
+
       private:
+        std::string current_nozzle_override_ = "auto";
+
         SubjectManager subjects_;
 
         // Buffers backing string subjects
