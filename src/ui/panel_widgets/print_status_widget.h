@@ -118,6 +118,10 @@ class PrintStatusWidget : public PanelWidget {
     lv_obj_t* library_row_last_ = nullptr;         // Print Last row (for graying out)
     lv_obj_t* compact_row_last_ = nullptr;         // Compact Print Last row (for graying out)
 
+    // Detailed-layout state containers (visibility managed by C++)
+    lv_obj_t* print_card_idle_detailed_ = nullptr;     // Detailed idle hero
+    lv_obj_t* print_card_printing_detailed_ = nullptr; // Detailed active body
+
     // Size-dependent subject for XML bindings (1 = column/2x2 mode, 0 = row/wide)
     static inline lv_subject_t column_mode_subject_;
     static inline bool column_mode_subject_initialized_ = false;
@@ -275,6 +279,7 @@ class PrintStatusWidget : public PanelWidget {
     void on_print_thumbnail_path_changed(const char* path);
     void reset_print_card_to_idle();
     void update_idle_compact_mode();
+    void update_active_layout_mode();
     void update_last_print_availability();
 
     // Library action handlers

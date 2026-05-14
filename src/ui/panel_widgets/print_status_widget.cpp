@@ -167,6 +167,8 @@ void PrintStatusWidget::attach(lv_obj_t* widget_obj, lv_obj_t* parent_screen) {
     // Library idle state widgets
     print_card_idle_ = lv_obj_find_by_name(widget_obj_, "print_card_idle");
     print_card_idle_compact_ = lv_obj_find_by_name(widget_obj_, "print_card_idle_compact");
+    print_card_idle_detailed_ = lv_obj_find_by_name(widget_obj_, "print_card_idle_detailed");
+    print_card_printing_detailed_ = lv_obj_find_by_name(widget_obj_, "print_card_printing_detailed");
     print_card_thumb_compact_ = lv_obj_find_by_name(widget_obj_, "print_card_thumb_compact");
     library_row_last_ = lv_obj_find_by_name(widget_obj_, "library_row_last");
     compact_row_last_ = lv_obj_find_by_name(widget_obj_, "compact_row_last");
@@ -323,6 +325,8 @@ void PrintStatusWidget::detach() {
     print_card_preparing_info_ = nullptr;
     print_card_idle_ = nullptr;
     print_card_idle_compact_ = nullptr;
+    print_card_idle_detailed_ = nullptr;
+    print_card_printing_detailed_ = nullptr;
     print_card_thumb_compact_ = nullptr;
     library_row_last_ = nullptr;
     compact_row_last_ = nullptr;
@@ -361,6 +365,7 @@ void PrintStatusWidget::on_size_changed(int colspan, int rowspan, int /*width_px
     if (compact != is_compact_) {
         is_compact_ = compact;
         update_idle_compact_mode();
+        update_active_layout_mode();
     }
 
     if (!print_card_layout_ || !print_card_thumb_wrap_) {
@@ -410,21 +415,28 @@ void PrintStatusWidget::on_size_changed(int colspan, int rowspan, int /*width_px
 }
 
 void PrintStatusWidget::update_idle_compact_mode() {
-    // Toggle between full library card and compact card based on widget size
-    if (print_card_idle_ && lv_obj_is_valid(print_card_idle_)) {
-        if (is_compact_) {
-            lv_obj_add_flag(print_card_idle_, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_remove_flag(print_card_idle_, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-    if (print_card_idle_compact_ && lv_obj_is_valid(print_card_idle_compact_)) {
-        if (is_compact_) {
-            lv_obj_remove_flag(print_card_idle_compact_, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(print_card_idle_compact_, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
+    // Detailed only at colspan>=2 (is_compact_ == false); else fall back to Library
+    bool use_detailed = (layout_style_ == "detailed") && !is_compact_;
+
+    auto set_hidden = [](lv_obj_t* o, bool hide) {
+        if (!o || !lv_obj_is_valid(o)) return;
+        if (hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+    };
+    set_hidden(print_card_idle_,          use_detailed || is_compact_);
+    set_hidden(print_card_idle_compact_, !(!use_detailed && is_compact_));
+    set_hidden(print_card_idle_detailed_, !use_detailed);
+}
+
+void PrintStatusWidget::update_active_layout_mode() {
+    bool use_detailed = (layout_style_ == "detailed") && !is_compact_;
+    auto set_hidden = [](lv_obj_t* o, bool hide) {
+        if (!o || !lv_obj_is_valid(o)) return;
+        if (hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+    };
+    set_hidden(print_card_layout_,             use_detailed);
+    set_hidden(print_card_printing_detailed_, !use_detailed);
 }
 
 // ============================================================================
@@ -558,7 +570,7 @@ void PrintStatusWidget::on_print_state_changed(PrintJobState state) {
 
     bool is_active = (state == PrintJobState::PRINTING || state == PrintJobState::PAUSED);
 
-    // Hide both idle cards when printing, show the right one when idle
+    // Hide all idle cards when printing, show the right one when idle
     if (is_active) {
         if (print_card_idle_ && lv_obj_is_valid(print_card_idle_)) {
             lv_obj_add_flag(print_card_idle_, LV_OBJ_FLAG_HIDDEN);
@@ -566,10 +578,14 @@ void PrintStatusWidget::on_print_state_changed(PrintJobState state) {
         if (print_card_idle_compact_ && lv_obj_is_valid(print_card_idle_compact_)) {
             lv_obj_add_flag(print_card_idle_compact_, LV_OBJ_FLAG_HIDDEN);
         }
-        // Show the active container (preparing/printing info visibility handled by XML bindings)
+        if (print_card_idle_detailed_ && lv_obj_is_valid(print_card_idle_detailed_)) {
+            lv_obj_add_flag(print_card_idle_detailed_, LV_OBJ_FLAG_HIDDEN);
+        }
+        // Show the active container; inner Library/Detailed body chosen by mode helper
         if (print_card_printing_ && lv_obj_is_valid(print_card_printing_)) {
             lv_obj_remove_flag(print_card_printing_, LV_OBJ_FLAG_HIDDEN);
         }
+        update_active_layout_mode();
     } else {
         update_idle_compact_mode();
         // Hide the active container
@@ -853,6 +869,11 @@ void PrintStatusWidget::set_config(const nlohmann::json& config) {
     }
     if (s_formatter_) {
         s_formatter_->set_nozzle_tool_override(nozzle_tool_override_);
+    }
+    // Re-apply layout visibility — layout_style may have changed.
+    if (widget_obj_ && lv_obj_is_valid(widget_obj_)) {
+        update_idle_compact_mode();
+        update_active_layout_mode();
     }
 }
 
