@@ -133,9 +133,22 @@ jobs:
     - name: Fix permissions
       run: chmod +x build/bin/helix-screen build/bin/helix-tests
 
+    - name: Enable core dumps
+      # Test processes have been observed segfaulting on *exit* after "All tests
+      # passed" (fast-test shards 1+7 and the slow-tests job in recent nightlies).
+      # Drop cores into the workspace so the "Upload core dumps" step can grab
+      # them if a step fails.
+      run: |
+        ulimit -c unlimited
+        sudo mkdir -p /tmp/cores
+        sudo chmod 1777 /tmp/cores
+        echo '/tmp/cores/core.%e.%p.%t' | sudo tee /proc/sys/kernel/core_pattern
+        cat /proc/sys/kernel/core_pattern
+
     - name: Run fast tests in parallel shards
       timeout-minutes: 15
       run: |
+        ulimit -c unlimited
         NPROCS=$(( $(nproc) * 2 ))
         echo "Running $NPROCS test shards in parallel (excluding slow)..."
         pids=""
@@ -163,9 +176,38 @@ jobs:
     - name: Run slow tests sequentially
       timeout-minutes: 30
       run: |
+        ulimit -c unlimited
         echo "Running [slow] tests sequentially (thread-based tests deadlock under parallel sharding)..."
         timeout 1680 ./build/bin/helix-tests "[slow]" --durations yes
         echo "Slow tests passed"
+
+    - name: Inspect core dumps (on failure)
+      if: failure()
+      run: |
+        echo "=== Core files in /tmp/cores ==="
+        ls -la /tmp/cores/ 2>/dev/null || echo "no core files"
+        for core in /tmp/cores/core.*; do
+          [ -f "$core" ] || continue
+          echo "=== $core ==="
+          file "$core" || true
+          # Best-effort backtrace if gdb is available
+          if command -v gdb >/dev/null 2>&1; then
+            sudo apt-get install -qq -y gdb >/dev/null 2>&1 || true
+            gdb --batch -ex "bt 40" -ex "thread apply all bt 20" \
+                ./build/bin/helix-tests "$core" 2>&1 | tail -120 || true
+          fi
+        done
+
+    - name: Upload core dumps (on failure)
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        # Match the helix-tests binary already uploaded as 'nightly-build'.
+        # Skipping the binary here keeps the artifact small (~MB instead of GB).
+        name: test-cores-${{ github.run_id }}
+        path: /tmp/cores/core.*
+        if-no-files-found: ignore
+        retention-days: 7
 
   # ===========================================================================
   # Event loop / WebSocket stress tests (5-10 min, run separately)
