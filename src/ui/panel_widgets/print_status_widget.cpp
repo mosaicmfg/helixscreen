@@ -1107,6 +1107,10 @@ void PrintStatusWidget::show_configure_picker() {
         lv_obj_set_pos(card, card_x, card_y);
     }
 
+    // Initial visual state: primary-fill the selected layout button, hide the
+    // Show Sections group when Detailed is active.
+    apply_picker_state();
+
     spdlog::debug("[PrintStatusWidget] Configure picker shown");
 }
 
