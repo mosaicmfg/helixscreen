@@ -11,7 +11,7 @@
             scrollable="false" clickable="false" event_bubble="true">
       <lv_image name="idle_thumb"
                 width="45%" height="100%" src="A:assets/images/benchy_thumbnail_white.png"
-                bind_src="print_thumbnail_path"
+                bind_src="print_status_idle_thumb_path"
                 inner_align="contain" clickable="false" event_bubble="true"/>
       <lv_obj name="idle_data_col"
               flex_grow="1" height="100%" style_pad_all="0" flex_flow="column"

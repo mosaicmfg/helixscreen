@@ -107,6 +107,13 @@ PrintStatusWidget::PrintStatusWidget() : printer_state_(get_printer_state()) {
         // before any state events fire.
         lv_subject_init_int(&view_subject_, 0);
         lv_xml_register_subject(nullptr, "print_status_view", &view_subject_);
+        // Default to benchy; reset_print_card_to_idle replaces with last-print
+        // thumbnail when history loads.
+        lv_subject_init_string(&idle_thumb_path_subject_, idle_thumb_path_buf_,
+                               nullptr, sizeof(idle_thumb_path_buf_),
+                               idle_thumb_path_buf_);
+        lv_xml_register_subject(nullptr, "print_status_idle_thumb_path",
+                                &idle_thumb_path_subject_);
         detailed_subjects_initialized_ = true;
 
         StaticSubjectRegistry::instance().register_deinit("PrintStatusWidgetSubjects", []() {
@@ -116,6 +123,7 @@ PrintStatusWidget::PrintStatusWidget() : printer_state_(get_printer_state()) {
                 lv_subject_deinit(&show_filament_active_subject_);
                 lv_subject_deinit(&multi_tool_subject_);
                 lv_subject_deinit(&view_subject_);
+                lv_subject_deinit(&idle_thumb_path_subject_);
                 detailed_subjects_initialized_ = false;
             }
             if (visibility_subjects_initialized_ && lv_is_initialized()) {
@@ -390,7 +398,12 @@ void PrintStatusWidget::on_size_changed(int colspan, int rowspan, int /*width_px
     lv_subject_set_int(&layout_mode_subject_, user_pref);
     int effective = (user_pref == 1 && colspan >= 2) ? 1 : 0;
     lv_subject_set_int(&layout_effective_subject_, effective);
-    lv_subject_set_int(&show_filament_active_subject_, (colspan >= 3) ? 1 : 0);
+    // Combined gate: only show the filament line at colspan>=3 AND when actual
+    // filament has been extruded. update_filament_text() also writes this
+    // subject on used_mm changes, keeping both inputs in sync.
+    int used_mm = lv_subject_get_int(printer_state_.get_print_filament_used_subject());
+    lv_subject_set_int(&show_filament_active_subject_,
+                       (colspan >= 3 && used_mm > 0) ? 1 : 0);
 
     // Compact mode: 1-column — not enough horizontal space for thumbnail + action rows
     bool compact = (colspan <= 1);
@@ -685,7 +698,9 @@ void PrintStatusWidget::reset_print_card_to_idle() {
         return;
     }
 
-    // Also update compact thumbnail
+    // Update Library-mode thumbs (imperative — they don't bind_src), AND publish
+    // to print_status_idle_thumb_path so the detailed idle hero's bind_src
+    // picks it up automatically.
     auto set_thumb_on_widgets = [this](const char* src) {
         if (print_card_thumb_ && lv_obj_is_valid(print_card_thumb_)) {
             lv_image_set_src(print_card_thumb_, src);
@@ -693,6 +708,7 @@ void PrintStatusWidget::reset_print_card_to_idle() {
         if (print_card_thumb_compact_ && lv_obj_is_valid(print_card_thumb_compact_)) {
             lv_image_set_src(print_card_thumb_compact_, src);
         }
+        lv_subject_copy_string(&idle_thumb_path_subject_, src);
     };
 
     // Try to show the last printed file's thumbnail instead of benchy
@@ -1496,6 +1512,15 @@ void PrintStatusWidget::DetailedFormatter::update_filament_text() {
                  used_mm / 1000.0);
     }
     lv_subject_copy_string(&filament_text_subject_, filament_text_buf_);
+
+    // Keep the show_filament_active gate honest as filament accumulates.
+    // on_size_changed handles the colspan side; this side handles the
+    // used-mm transition (e.g., first extrusion of the print).
+    int colspan = lv_subject_get_int(&PrintStatusWidget::colspan_subject_);
+    int show = (colspan >= 3 && used_mm > 0) ? 1 : 0;
+    if (lv_subject_get_int(&PrintStatusWidget::show_filament_active_subject_) != show) {
+        lv_subject_set_int(&PrintStatusWidget::show_filament_active_subject_, show);
+    }
 }
 
 void PrintStatusWidget::DetailedFormatter::update_nozzle_text() {

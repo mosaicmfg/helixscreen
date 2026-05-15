@@ -84,7 +84,7 @@
           <bind_flag_if_eq subject="print_status_multi_tool" flag="hidden" ref_value="0"/>
         </text_small>
         <nozzle_icon size="sm" badge_subject="" clickable="false" event_bubble="true"/>
-        <temp_display size="sm" show_target="true"
+        <temp_display size="xs" show_target="true"
                       bind_current="extruder_temp" bind_target="extruder_target"
                       clickable="false" event_bubble="true"/>
         <icon src="chevron_down" size="sm">
@@ -96,7 +96,7 @@
               style_pad_gap="#space_xs" style_flex_cross_place="center"
               scrollable="false" clickable="false" event_bubble="true">
         <icon src="radiator" size="sm" variant="secondary" clickable="false" event_bubble="true"/>
-        <temp_display size="sm" show_target="true"
+        <temp_display size="xs" show_target="true"
                       bind_current="bed_temp" bind_target="bed_target"
                       clickable="false" event_bubble="true"/>
       </lv_obj>
@@ -105,9 +105,19 @@
               scrollable="false" clickable="false" event_bubble="true">
         <bind_flag_if_eq subject="printer_has_chamber" flag="hidden" ref_value="0"/>
         <icon src="fridge_industrial" size="sm" variant="secondary" clickable="false" event_bubble="true"/>
-        <temp_display size="sm" show_target="true"
+        <!-- Two variants: with target when a chamber heater exists, current-only
+             for sensor-only chambers (passive enclosure). Mutually exclusive on
+             printer_has_chamber_heater. -->
+        <temp_display size="xs" show_target="true"
                       bind_current="chamber_temp" bind_target="chamber_target"
-                      clickable="false" event_bubble="true"/>
+                      clickable="false" event_bubble="true">
+          <bind_flag_if_eq subject="printer_has_chamber_heater" flag="hidden" ref_value="0"/>
+        </temp_display>
+        <temp_display size="xs" show_target="false"
+                      bind_current="chamber_temp"
+                      clickable="false" event_bubble="true">
+          <bind_flag_if_eq subject="printer_has_chamber_heater" flag="hidden" ref_value="1"/>
+        </temp_display>
       </lv_obj>
     </lv_obj>
     <!-- M117 footer -->

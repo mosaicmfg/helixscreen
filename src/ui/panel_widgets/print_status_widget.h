@@ -151,8 +151,15 @@ class PrintStatusWidget : public PanelWidget {
     // Detailed-layout subjects (static inline — shared across all widget instances)
     static inline lv_subject_t layout_mode_subject_{};       // 0=library, 1=detailed (user pref)
     static inline lv_subject_t layout_effective_subject_{};  // after width gating
+    // Combined gate: (colspan >= 3) AND (filament_used > 0). Avoids the
+    // phantom-row gap when filament hasn't started extruding yet.
     static inline lv_subject_t show_filament_active_subject_{};
     static inline lv_subject_t multi_tool_subject_{};        // 1 when tool_count > 1
+    // Resolved thumbnail path for the detailed-idle hero; written by
+    // reset_print_card_to_idle alongside the lv_image_set_src calls on the
+    // Library-mode thumbs, so all three idle thumbnails share the same source.
+    static inline char idle_thumb_path_buf_[512] = "A:assets/images/benchy_thumbnail_white.png";
+    static inline lv_subject_t idle_thumb_path_subject_{};
     // Single subject driving visibility of all five card-body siblings:
     //   0 = idle_library_full   (print_card_idle)
     //   1 = idle_library_compact (print_card_idle_compact)
