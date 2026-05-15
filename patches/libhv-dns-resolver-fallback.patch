@@ -289,13 +289,13 @@ index 0000000..e4403a1
 +
 +#endif // DNS_RESOLV_H_
 diff --git a/base/hsocket.c b/base/hsocket.c
-index ed87a8c..4c13ccd 100644
+index ed87a8c..5d29024 100644
 --- a/base/hsocket.c
 +++ b/base/hsocket.c
 @@ -2,6 +2,10 @@
-
+ 
  #include "hdef.h"
-
+ 
 +#if defined(__GLIBC__)
 +#include "dns_resolv.h"
 +#endif
@@ -303,10 +303,10 @@ index ed87a8c..4c13ccd 100644
  #ifdef OS_WIN
  #include "hatomic.h"
  static hatomic_flag_t s_wsa_initialized = HATOMIC_FLAG_INIT;
-@@ -64,6 +68,21 @@ int ResolveAddr(const char* host, sockaddr_u* addr) {
+@@ -64,6 +68,30 @@ int ResolveAddr(const char* host, sockaddr_u* addr) {
          addr->sa.sa_family = AF_INET6; // host is ipv6
      }
-
+ 
 +#if defined(__GLIBC__)
 +    // Try direct UDP DNS resolution FIRST on glibc builds.
 +    // Static glibc can't load NSS modules (libnss_dns.so) at runtime,
@@ -320,6 +320,15 @@ index ed87a8c..4c13ccd 100644
 +            addr->sin.sin_addr = resolved;
 +            return 0;
 +        }
++#if defined(__arm__) || defined(__mips__)
++        // dns_resolv_resolve failed (broken /etc/resolv.conf, DNS server
++        // unreachable, UDP timeout). On embedded 32-bit glibc the getaddrinfo()
++        // fallback below can SIGSEGV inside __check_pf/gaih_inet when NSS
++        // state is half-loaded (v0.99.62 AD5M crash, fault_addr 0x62).
++        // Fail closed — caller retries on its next cycle. Pi (aarch64) has
++        // full glibc and isn't in the crash class, so still falls through.
++        return -1;
++#endif
 +    }
 +#endif
      struct addrinfo* ais = NULL;
