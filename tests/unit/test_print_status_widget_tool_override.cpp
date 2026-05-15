@@ -15,12 +15,18 @@ using namespace helix;
 using namespace helix::ui;
 
 struct FormatterScope {
-    FormatterScope() { PrintStatusWidget::ensure_formatter_for_test(); }
+    FormatterScope() {
+        PrintStatusWidget::destroy_formatter_for_test();
+        PrintStatusWidget::ensure_formatter_for_test();
+    }
     ~FormatterScope() { PrintStatusWidget::release_formatter_for_test(); }
 };
 
 TEST_CASE_METHOD(HelixTestFixture, "Tool override: pinned reads per-tool subject",
                  "[print_status][tool_override]") {
+    // Reset the singleton formatter first — any prior test's observers point
+    // at PrinterState subjects we're about to destroy.
+    PrintStatusWidget::destroy_formatter_for_test();
     auto& ts = ToolState::instance();
     ts.init_subjects(false);
     PrinterState& ps = get_printer_state();
@@ -55,6 +61,7 @@ TEST_CASE_METHOD(HelixTestFixture, "Tool override: pinned reads per-tool subject
 
 TEST_CASE_METHOD(HelixTestFixture, "Tool override: stale pin falls back to auto",
                  "[print_status][tool_override]") {
+    PrintStatusWidget::destroy_formatter_for_test();
     auto& ts = ToolState::instance();
     ts.init_subjects(false);
     PrinterState& ps = get_printer_state();

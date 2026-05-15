@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../helix_test_fixture.h"
 #include "../test_helpers/printer_state_test_access.h"
+#include "app_globals.h"
 #include "src/ui/panel_widgets/print_status_widget.h"
 #include "printer_state.h"
 
@@ -30,6 +31,9 @@ TEST_CASE_METHOD(HelixTestFixture, "Layout gate: colspan>=3 reveals filament lin
     // Filament-active gate is (colspan>=3) AND (filament_used>0). Reset the
     // shared PrinterState singleton and seed used_mm so this test doesn't
     // depend on translation-unit ordering for a non-zero leftover value.
+    // Tear down the static formatter first so its observers don't reference
+    // the about-to-be-freed PrinterState subjects.
+    PrintStatusWidget::destroy_formatter_for_test();
     auto& ps = get_printer_state();
     PrinterStateTestAccess::reset(ps);
     ps.init_subjects(false);

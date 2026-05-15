@@ -69,83 +69,88 @@ std::unordered_set<PrintStatusWidget*>& PrintStatusWidget::live_instances() {
     return instances;
 }
 
+void PrintStatusWidget::init_static_subjects() {
+    // Register subjects before XML parsing so bind_flag_if_eq / bind_style can find them.
+    // Idempotent — guarded by column_mode_subject_initialized_.
+    if (column_mode_subject_initialized_) return;
+
+    lv_subject_init_int(&column_mode_subject_, 0);
+    lv_xml_register_subject(nullptr, "print_status_column_mode", &column_mode_subject_);
+    column_mode_subject_initialized_ = true;
+    lv_subject_init_int(&colspan_subject_, 2);
+    lv_xml_register_subject(nullptr, "print_status_colspan", &colspan_subject_);
+    colspan_subject_initialized_ = true;
+
+    lv_subject_init_int(&title_hidden_subject_, 0);
+    lv_xml_register_subject(nullptr, "print_status_title_hidden", &title_hidden_subject_);
+    lv_subject_init_int(&files_hidden_subject_, 0);
+    lv_xml_register_subject(nullptr, "print_status_files_hidden", &files_hidden_subject_);
+    lv_subject_init_int(&last_hidden_subject_, 0);
+    lv_xml_register_subject(nullptr, "print_status_last_hidden", &last_hidden_subject_);
+    lv_subject_init_int(&recent_hidden_subject_, 0);
+    lv_xml_register_subject(nullptr, "print_status_recent_hidden", &recent_hidden_subject_);
+    lv_subject_init_int(&queue_hidden_subject_, 1); // queue starts hidden until jobs arrive
+    lv_xml_register_subject(nullptr, "print_status_queue_hidden", &queue_hidden_subject_);
+    lv_subject_init_int(&actions_hidden_subject_, 0);
+    lv_xml_register_subject(nullptr, "print_status_actions_hidden", &actions_hidden_subject_);
+    visibility_subjects_initialized_ = true;
+
+    // Detailed-layout subjects
+    lv_subject_init_int(&layout_mode_subject_, 0);
+    lv_xml_register_subject(nullptr, "print_status_layout_mode", &layout_mode_subject_);
+    lv_subject_init_int(&layout_effective_subject_, 0);
+    lv_xml_register_subject(nullptr, "print_status_layout_effective", &layout_effective_subject_);
+    lv_subject_init_int(&show_filament_active_subject_, 0);
+    lv_xml_register_subject(nullptr, "print_status_show_filament_active",
+                            &show_filament_active_subject_);
+    lv_subject_init_int(&multi_tool_subject_, 0);
+    lv_xml_register_subject(nullptr, "print_status_multi_tool", &multi_tool_subject_);
+    // Initial value 0 = idle_library_full — matches the default ref_value=0
+    // on print_card_idle's bind_flag_if_not_eq so it shows by default
+    // before any state events fire.
+    lv_subject_init_int(&view_subject_, 0);
+    lv_xml_register_subject(nullptr, "print_status_view", &view_subject_);
+    // Default to benchy; reset_print_card_to_idle replaces with last-print
+    // thumbnail when history loads.
+    lv_subject_init_string(&idle_thumb_path_subject_, idle_thumb_path_buf_,
+                           nullptr, sizeof(idle_thumb_path_buf_),
+                           idle_thumb_path_buf_);
+    lv_xml_register_subject(nullptr, "print_status_idle_thumb_path",
+                            &idle_thumb_path_subject_);
+    detailed_subjects_initialized_ = true;
+
+    StaticSubjectRegistry::instance().register_deinit("PrintStatusWidgetSubjects", []() {
+        if (detailed_subjects_initialized_ && lv_is_initialized()) {
+            lv_subject_deinit(&layout_mode_subject_);
+            lv_subject_deinit(&layout_effective_subject_);
+            lv_subject_deinit(&show_filament_active_subject_);
+            lv_subject_deinit(&multi_tool_subject_);
+            lv_subject_deinit(&view_subject_);
+            lv_subject_deinit(&idle_thumb_path_subject_);
+            detailed_subjects_initialized_ = false;
+        }
+        if (visibility_subjects_initialized_ && lv_is_initialized()) {
+            lv_subject_deinit(&title_hidden_subject_);
+            lv_subject_deinit(&files_hidden_subject_);
+            lv_subject_deinit(&last_hidden_subject_);
+            lv_subject_deinit(&recent_hidden_subject_);
+            lv_subject_deinit(&queue_hidden_subject_);
+            lv_subject_deinit(&actions_hidden_subject_);
+            visibility_subjects_initialized_ = false;
+        }
+        if (colspan_subject_initialized_ && lv_is_initialized()) {
+            lv_subject_deinit(&colspan_subject_);
+            colspan_subject_initialized_ = false;
+        }
+        if (column_mode_subject_initialized_ && lv_is_initialized()) {
+            lv_subject_deinit(&column_mode_subject_);
+            column_mode_subject_initialized_ = false;
+        }
+    });
+}
+
 PrintStatusWidget::PrintStatusWidget() : printer_state_(get_printer_state()) {
-    // Register subjects before XML parsing so bind_flag_if_eq / bind_style can find them
-    if (!column_mode_subject_initialized_) {
-        lv_subject_init_int(&column_mode_subject_, 0);
-        lv_xml_register_subject(nullptr, "print_status_column_mode", &column_mode_subject_);
-        column_mode_subject_initialized_ = true;
-        lv_subject_init_int(&colspan_subject_, 2);
-        lv_xml_register_subject(nullptr, "print_status_colspan", &colspan_subject_);
-        colspan_subject_initialized_ = true;
-
-        lv_subject_init_int(&title_hidden_subject_, 0);
-        lv_xml_register_subject(nullptr, "print_status_title_hidden", &title_hidden_subject_);
-        lv_subject_init_int(&files_hidden_subject_, 0);
-        lv_xml_register_subject(nullptr, "print_status_files_hidden", &files_hidden_subject_);
-        lv_subject_init_int(&last_hidden_subject_, 0);
-        lv_xml_register_subject(nullptr, "print_status_last_hidden", &last_hidden_subject_);
-        lv_subject_init_int(&recent_hidden_subject_, 0);
-        lv_xml_register_subject(nullptr, "print_status_recent_hidden", &recent_hidden_subject_);
-        lv_subject_init_int(&queue_hidden_subject_, 1); // queue starts hidden until jobs arrive
-        lv_xml_register_subject(nullptr, "print_status_queue_hidden", &queue_hidden_subject_);
-        lv_subject_init_int(&actions_hidden_subject_, 0);
-        lv_xml_register_subject(nullptr, "print_status_actions_hidden", &actions_hidden_subject_);
-        visibility_subjects_initialized_ = true;
-
-        // Detailed-layout subjects
-        lv_subject_init_int(&layout_mode_subject_, 0);
-        lv_xml_register_subject(nullptr, "print_status_layout_mode", &layout_mode_subject_);
-        lv_subject_init_int(&layout_effective_subject_, 0);
-        lv_xml_register_subject(nullptr, "print_status_layout_effective", &layout_effective_subject_);
-        lv_subject_init_int(&show_filament_active_subject_, 0);
-        lv_xml_register_subject(nullptr, "print_status_show_filament_active",
-                                &show_filament_active_subject_);
-        lv_subject_init_int(&multi_tool_subject_, 0);
-        lv_xml_register_subject(nullptr, "print_status_multi_tool", &multi_tool_subject_);
-        // Initial value 0 = idle_library_full — matches the default ref_value=0
-        // on print_card_idle's bind_flag_if_not_eq so it shows by default
-        // before any state events fire.
-        lv_subject_init_int(&view_subject_, 0);
-        lv_xml_register_subject(nullptr, "print_status_view", &view_subject_);
-        // Default to benchy; reset_print_card_to_idle replaces with last-print
-        // thumbnail when history loads.
-        lv_subject_init_string(&idle_thumb_path_subject_, idle_thumb_path_buf_,
-                               nullptr, sizeof(idle_thumb_path_buf_),
-                               idle_thumb_path_buf_);
-        lv_xml_register_subject(nullptr, "print_status_idle_thumb_path",
-                                &idle_thumb_path_subject_);
-        detailed_subjects_initialized_ = true;
-
-        StaticSubjectRegistry::instance().register_deinit("PrintStatusWidgetSubjects", []() {
-            if (detailed_subjects_initialized_ && lv_is_initialized()) {
-                lv_subject_deinit(&layout_mode_subject_);
-                lv_subject_deinit(&layout_effective_subject_);
-                lv_subject_deinit(&show_filament_active_subject_);
-                lv_subject_deinit(&multi_tool_subject_);
-                lv_subject_deinit(&view_subject_);
-                lv_subject_deinit(&idle_thumb_path_subject_);
-                detailed_subjects_initialized_ = false;
-            }
-            if (visibility_subjects_initialized_ && lv_is_initialized()) {
-                lv_subject_deinit(&title_hidden_subject_);
-                lv_subject_deinit(&files_hidden_subject_);
-                lv_subject_deinit(&last_hidden_subject_);
-                lv_subject_deinit(&recent_hidden_subject_);
-                lv_subject_deinit(&queue_hidden_subject_);
-                lv_subject_deinit(&actions_hidden_subject_);
-                visibility_subjects_initialized_ = false;
-            }
-            if (colspan_subject_initialized_ && lv_is_initialized()) {
-                lv_subject_deinit(&colspan_subject_);
-                colspan_subject_initialized_ = false;
-            }
-            if (column_mode_subject_initialized_ && lv_is_initialized()) {
-                lv_subject_deinit(&column_mode_subject_);
-                column_mode_subject_initialized_ = false;
-            }
-        });
-    }
+    init_static_subjects();
 
     // Eager DetailedFormatter creation — its subjects (print_status_progress_pct,
     // print_status_bed_text, etc.) MUST be registered BEFORE lv_xml_create
@@ -1691,26 +1696,6 @@ bool PrintStatusWidget::DetailedFormatter::set_nozzle_tool_override(
     return true;
 }
 
-void PrintStatusWidget::DetailedFormatter::update_bed_text() {
-    auto& ps = get_printer_state();
-    int t = cd_to_c(lv_subject_get_int(ps.get_bed_temp_subject()));
-    int tg = cd_to_c(lv_subject_get_int(ps.get_bed_target_subject()));
-    snprintf(bed_text_buf_, sizeof(bed_text_buf_), "%d / %d°C", t, tg);
-    lv_subject_copy_string(&bed_text_subject_, bed_text_buf_);
-}
-
-void PrintStatusWidget::DetailedFormatter::update_chamber_text() {
-    auto& ps = get_printer_state();
-    int t = cd_to_c(lv_subject_get_int(ps.get_chamber_temp_subject()));
-    int tg = cd_to_c(lv_subject_get_int(ps.get_chamber_target_subject()));
-    if (tg <= 0) {
-        snprintf(chamber_text_buf_, sizeof(chamber_text_buf_), "%d°C", t);
-    } else {
-        snprintf(chamber_text_buf_, sizeof(chamber_text_buf_), "%d / %d°C", t, tg);
-    }
-    lv_subject_copy_string(&chamber_text_subject_, chamber_text_buf_);
-}
-
 void PrintStatusWidget::DetailedFormatter::update_multi_tool() {
     int count = lv_subject_get_int(ToolState::instance().get_tool_count_subject());
     lv_subject_set_int(&PrintStatusWidget::multi_tool_subject_, count > 1 ? 1 : 0);
@@ -1801,10 +1786,6 @@ PrintStatusWidget::DetailedFormatter::DetailedFormatter() {
                               "print_status_filament_text", subjects_);
     UI_MANAGED_SUBJECT_STRING(nozzle_text_subject_, nozzle_text_buf_, "0 / 0°C",
                               "print_status_nozzle_text", subjects_);
-    UI_MANAGED_SUBJECT_STRING(bed_text_subject_, bed_text_buf_, "0 / 0°C",
-                              "print_status_bed_text", subjects_);
-    UI_MANAGED_SUBJECT_STRING(chamber_text_subject_, chamber_text_buf_, "0°C",
-                              "print_status_chamber_text", subjects_);
     UI_MANAGED_SUBJECT_STRING(nozzle_tool_label_subject_, nozzle_tool_label_buf_, "",
                               "print_status_nozzle_tool_label", subjects_);
     UI_MANAGED_SUBJECT_INT(nozzle_current_subject_, 0,
@@ -1840,10 +1821,6 @@ PrintStatusWidget::DetailedFormatter::DetailedFormatter() {
         s_formatter_->filament_used_observer_.reset();
         s_formatter_->nozzle_temp_observer_.reset();
         s_formatter_->nozzle_target_observer_.reset();
-        s_formatter_->bed_temp_observer_.reset();
-        s_formatter_->bed_target_observer_.reset();
-        s_formatter_->chamber_temp_observer_.reset();
-        s_formatter_->chamber_target_observer_.reset();
         s_formatter_->tool_count_observer_.reset();
         s_formatter_->active_tool_observer_.reset();
         s_formatter_->arc_value_observer_.reset();
@@ -1880,18 +1857,9 @@ PrintStatusWidget::DetailedFormatter::DetailedFormatter() {
     nozzle_target_observer_ = observe_int_sync<DetailedFormatter>(
         ps.get_active_extruder_target_subject(), this,
         [](DetailedFormatter* self, int) { self->update_nozzle_text(); });
-    bed_temp_observer_ = observe_int_sync<DetailedFormatter>(
-        ps.get_bed_temp_subject(), this,
-        [](DetailedFormatter* self, int) { self->update_bed_text(); });
-    bed_target_observer_ = observe_int_sync<DetailedFormatter>(
-        ps.get_bed_target_subject(), this,
-        [](DetailedFormatter* self, int) { self->update_bed_text(); });
-    chamber_temp_observer_ = observe_int_sync<DetailedFormatter>(
-        ps.get_chamber_temp_subject(), this,
-        [](DetailedFormatter* self, int) { self->update_chamber_text(); });
-    chamber_target_observer_ = observe_int_sync<DetailedFormatter>(
-        ps.get_chamber_target_subject(), this,
-        [](DetailedFormatter* self, int) { self->update_chamber_text(); });
+    // Bed and chamber temp_display widgets bind directly to bed_temp / bed_target /
+    // chamber_temp / chamber_target in the XML — no formatter mirroring needed
+    // for those. The nozzle path still mirrors because pinning rebinds it.
 
     // Seed initial values from current subject state
     update_progress_pct();
@@ -1899,8 +1867,6 @@ PrintStatusWidget::DetailedFormatter::DetailedFormatter() {
     update_time_text();
     update_filament_text();
     update_nozzle_text();
-    update_bed_text();
-    update_chamber_text();
 
     // Multi-tool: observe tool_count + active_tool to drive gate and T<n> label
     tool_count_observer_ = observe_int_sync<DetailedFormatter>(
@@ -1963,10 +1929,6 @@ PrintStatusWidget::DetailedFormatter::~DetailedFormatter() {
     filament_used_observer_.reset();
     nozzle_temp_observer_.reset();
     nozzle_target_observer_.reset();
-    bed_temp_observer_.reset();
-    bed_target_observer_.reset();
-    chamber_temp_observer_.reset();
-    chamber_target_observer_.reset();
     tool_count_observer_.reset();
     active_tool_observer_.reset();
     arc_value_observer_.reset();

@@ -4,22 +4,20 @@
  * @file test_print_status_widget_detailed_visibility.cpp
  * @brief Integration test for Detailed vs Library visibility flow.
  *
- * Validates that PrintStatusWidget::update_active_layout_mode() flips visibility
- * of the two sibling active-state containers (print_card_layout = Library,
- * print_card_printing_detailed = Detailed) based on the layout_style config and
- * the effective colspan.
- *
- * Uses a mock LVGL widget tree (same pattern as test_print_status_widget_idle_thumb.cpp)
- * rather than loading the real XML — panel_widget_print_status.xml has a wide
- * dependency surface (events, subjects, custom widgets) that an integration unit test
- * shouldn't have to recreate, and update_active_layout_mode() only reads the cached
- * widget pointers from lv_obj_find_by_name(), not the XML scope.
+ * Visibility of the five card-body siblings (print_card_idle/_compact/_detailed,
+ * print_card_layout, print_card_printing_detailed) is driven by the
+ * print_status_view int subject (0..4) via bind_flag_if_not_eq in the real XML.
+ * These tests assert on the subject value the widget writes — the helix-xml
+ * binding layer is verified elsewhere.
  */
 
+#include "../helix_test_fixture.h"
 #include "../lvgl_test_fixture.h"
 #include "src/ui/panel_widgets/print_status_widget.h"
 
+#include "app_globals.h"
 #include "panel_widget_manager.h"
+#include "printer_state.h"
 #include "../catch_amalgamated.hpp"
 
 using namespace helix;
@@ -35,186 +33,143 @@ class PrintStatusDetailedVisibilityFixture : public LVGLTestFixture {
             PanelWidgetManager::instance().init_widget_subjects();
             s_widgets_registered = true;
         }
+        // Tear down the singleton formatter so the next PrintStatusWidget
+        // ctor creates a fresh one with observers bound to the current
+        // PrinterState (another test may have reset it).
+        PrintStatusWidget::destroy_formatter_for_test();
+    }
+    ~PrintStatusDetailedVisibilityFixture() {
+        PrintStatusWidget::destroy_formatter_for_test();
     }
 
-    /// Build a minimal widget tree containing every name the widget queries in attach().
-    /// Only the three visibility-related siblings (print_card_layout,
-    /// print_card_printing_detailed, plus their parent print_card_printing) matter for
-    /// the assertions; the rest exist so lv_obj_find_by_name() returns non-null and the
-    /// widget's other attach-time logic doesn't bail out early.
+    /// Minimal mock tree — just satisfies the names attach() looks up. Visibility
+    /// is asserted via the print_status_view subject, not flags on these objects.
+    /// Thumbnails MUST be lv_image_t — reset_print_card_to_idle calls
+    /// lv_image_set_src on them at the end of attach().
     lv_obj_t* create_mock_tree(lv_obj_t* parent) {
         lv_obj_t* container = lv_obj_create(parent);
-
-        // IDLE state subtree
-        lv_obj_t* idle = lv_obj_create(container);
-        lv_obj_set_name(idle, "print_card_idle");
-        lv_obj_t* thumb = lv_image_create(idle);
-        lv_obj_set_name(thumb, "print_card_thumb");
-        lv_obj_t* idle_compact = lv_obj_create(idle);
-        lv_obj_set_name(idle_compact, "print_card_idle_compact");
-        lv_obj_t* idle_detailed = lv_obj_create(idle);
-        lv_obj_set_name(idle_detailed, "print_card_idle_detailed");
-        lv_obj_t* thumb_compact = lv_image_create(idle);
-        lv_obj_set_name(thumb_compact, "print_card_thumb_compact");
-
-        // PRINTING state subtree — parent + two sibling active bodies
-        lv_obj_t* printing = lv_obj_create(container);
-        lv_obj_set_name(printing, "print_card_printing");
-
-        // Library-mode active body
-        lv_obj_t* layout = lv_obj_create(printing);
-        lv_obj_set_name(layout, "print_card_layout");
-        lv_obj_t* thumb_wrap = lv_obj_create(layout);
-        lv_obj_set_name(thumb_wrap, "print_card_thumb_wrap");
-        lv_obj_t* active_thumb = lv_image_create(thumb_wrap);
-        lv_obj_set_name(active_thumb, "print_card_active_thumb");
-        lv_obj_t* info = lv_obj_create(layout);
-        lv_obj_set_name(info, "print_card_info");
-        lv_obj_t* preparing_info = lv_obj_create(layout);
-        lv_obj_set_name(preparing_info, "print_card_preparing_info");
-
-        // Detailed-mode active body (sibling of print_card_layout)
-        lv_obj_t* detailed = lv_obj_create(printing);
-        lv_obj_set_name(detailed, "print_card_printing_detailed");
-
+        auto add = [container](const char* name, bool as_image = false) {
+            lv_obj_t* obj = as_image ? lv_image_create(container) : lv_obj_create(container);
+            lv_obj_set_name(obj, name);
+            return obj;
+        };
+        add("print_card_idle");
+        add("print_card_thumb", /*as_image=*/true);
+        add("print_card_idle_compact");
+        add("print_card_idle_detailed");
+        add("print_card_thumb_compact", /*as_image=*/true);
+        add("print_card_printing");
+        add("print_card_layout");
+        add("print_card_thumb_wrap");
+        add("print_card_active_thumb", /*as_image=*/true);
+        add("print_card_info");
+        add("print_card_preparing_info");
+        add("print_card_printing_detailed");
         return container;
+    }
+
+    int view_value() {
+        return lv_subject_get_int(PrintStatusWidget::view_subject_for_test());
     }
 };
 
-// =============================================================================
-// Tests: Detailed vs Library visibility flow
-// =============================================================================
+// view_subject_ values:
+//   0 = idle_library_full   (print_card_idle)
+//   1 = idle_library_compact (print_card_idle_compact)
+//   2 = idle_detailed       (print_card_idle_detailed)
+//   3 = active_library      (print_card_layout)
+//   4 = active_detailed     (print_card_printing_detailed)
+//
+// Each test:
+//   1. set_config + on_size_changed seeds layout_style and is_compact_.
+//   2. attach() runs first-pass update_view_subject and queues observer cbs.
+//   3. process_lvgl drains those queued cbs (so attach-time STANDBY observer
+//      doesn't override our forced state later).
+//   4. on_print_state_changed_for_test forces is_active_ and rewrites the
+//      view subject deterministically.
 
 TEST_CASE_METHOD(PrintStatusDetailedVisibilityFixture,
-                 "Detailed active visible when layout_style=detailed + colspan=2",
+                 "view=4 (active_detailed) when layout=detailed + colspan>=2 + PRINTING",
                  "[print_status][detailed_visibility]") {
     PrintStatusWidget w;
     w.set_config(nlohmann::json{{"layout_style", "detailed"}});
     w.on_size_changed(2, 2, 400, 400);
-
     lv_obj_t* container = create_mock_tree(test_screen());
     w.attach(container, test_screen());
     process_lvgl(50);
-
-    lv_obj_t* detailed_active = lv_obj_find_by_name(container, "print_card_printing_detailed");
-    lv_obj_t* legacy_layout   = lv_obj_find_by_name(container, "print_card_layout");
-    REQUIRE(detailed_active != nullptr);
-    REQUIRE(legacy_layout != nullptr);
-    REQUIRE_FALSE(lv_obj_has_flag(detailed_active, LV_OBJ_FLAG_HIDDEN));
-    REQUIRE(lv_obj_has_flag(legacy_layout, LV_OBJ_FLAG_HIDDEN));
-
+    w.on_print_state_changed_for_test(PrintJobState::PRINTING);
+    REQUIRE(view_value() == 4);
     w.detach();
 }
 
 TEST_CASE_METHOD(PrintStatusDetailedVisibilityFixture,
-                 "Library active visible when layout_style=library + colspan=2",
+                 "view=3 (active_library) when layout=library + colspan>=2 + PRINTING",
                  "[print_status][detailed_visibility]") {
     PrintStatusWidget w;
     w.set_config(nlohmann::json{{"layout_style", "library"}});
     w.on_size_changed(2, 2, 400, 400);
-
     lv_obj_t* container = create_mock_tree(test_screen());
     w.attach(container, test_screen());
     process_lvgl(50);
-
-    lv_obj_t* detailed_active = lv_obj_find_by_name(container, "print_card_printing_detailed");
-    lv_obj_t* legacy_layout   = lv_obj_find_by_name(container, "print_card_layout");
-    REQUIRE(detailed_active != nullptr);
-    REQUIRE(legacy_layout != nullptr);
-    REQUIRE(lv_obj_has_flag(detailed_active, LV_OBJ_FLAG_HIDDEN));
-    REQUIRE_FALSE(lv_obj_has_flag(legacy_layout, LV_OBJ_FLAG_HIDDEN));
-
+    w.on_print_state_changed_for_test(PrintJobState::PRINTING);
+    REQUIRE(view_value() == 3);
     w.detach();
 }
 
 TEST_CASE_METHOD(PrintStatusDetailedVisibilityFixture,
-                 "Switching layout_style at runtime flips visibility (library -> detailed)",
+                 "Switching layout_style at runtime flips view (library->detailed) while PRINTING",
                  "[print_status][detailed_visibility]") {
     PrintStatusWidget w;
     w.set_config(nlohmann::json{{"layout_style", "library"}});
     w.on_size_changed(2, 2, 400, 400);
-
     lv_obj_t* container = create_mock_tree(test_screen());
     w.attach(container, test_screen());
     process_lvgl(50);
-
-    lv_obj_t* detailed_active = lv_obj_find_by_name(container, "print_card_printing_detailed");
-    lv_obj_t* legacy_layout   = lv_obj_find_by_name(container, "print_card_layout");
-    REQUIRE(lv_obj_has_flag(detailed_active, LV_OBJ_FLAG_HIDDEN));
-    REQUIRE_FALSE(lv_obj_has_flag(legacy_layout, LV_OBJ_FLAG_HIDDEN));
-
-    // Flip to detailed — set_config re-runs update_active_layout_mode() since attached.
+    w.on_print_state_changed_for_test(PrintJobState::PRINTING);
+    REQUIRE(view_value() == 3);
     w.set_config(nlohmann::json{{"layout_style", "detailed"}});
-    process_lvgl(50);
-    REQUIRE_FALSE(lv_obj_has_flag(detailed_active, LV_OBJ_FLAG_HIDDEN));
-    REQUIRE(lv_obj_has_flag(legacy_layout, LV_OBJ_FLAG_HIDDEN));
-
+    REQUIRE(view_value() == 4);
     w.detach();
 }
 
 TEST_CASE_METHOD(PrintStatusDetailedVisibilityFixture,
-                 "Detailed falls back to Library at colspan=1 (compact)",
+                 "view=3 (Library) at colspan=1 even with detailed requested while PRINTING",
                  "[print_status][detailed_visibility]") {
     PrintStatusWidget w;
     w.set_config(nlohmann::json{{"layout_style", "detailed"}});
     w.on_size_changed(1, 2, 200, 400);
-
     lv_obj_t* container = create_mock_tree(test_screen());
     w.attach(container, test_screen());
     process_lvgl(50);
-
-    // Even with layout_style="detailed", colspan=1 forces is_compact_ and the
-    // Detailed body must stay hidden; Library wins.
-    lv_obj_t* detailed_active = lv_obj_find_by_name(container, "print_card_printing_detailed");
-    lv_obj_t* legacy_layout   = lv_obj_find_by_name(container, "print_card_layout");
-    REQUIRE(lv_obj_has_flag(detailed_active, LV_OBJ_FLAG_HIDDEN));
-    REQUIRE_FALSE(lv_obj_has_flag(legacy_layout, LV_OBJ_FLAG_HIDDEN));
-
+    w.on_print_state_changed_for_test(PrintJobState::PRINTING);
+    REQUIRE(view_value() == 3);
     w.detach();
 }
 
 TEST_CASE_METHOD(PrintStatusDetailedVisibilityFixture,
-                 "Idle Detailed hero visible at colspan>=2; Library idle bodies hidden",
+                 "view=2 (idle_detailed) when layout=detailed + colspan>=2 + IDLE",
                  "[print_status][detailed_visibility]") {
     PrintStatusWidget w;
     w.set_config(nlohmann::json{{"layout_style", "detailed"}});
     w.on_size_changed(2, 2, 400, 400);
-
     lv_obj_t* container = create_mock_tree(test_screen());
     w.attach(container, test_screen());
     process_lvgl(50);
-
-    lv_obj_t* idle          = lv_obj_find_by_name(container, "print_card_idle");
-    lv_obj_t* idle_compact  = lv_obj_find_by_name(container, "print_card_idle_compact");
-    lv_obj_t* idle_detailed = lv_obj_find_by_name(container, "print_card_idle_detailed");
-    REQUIRE(idle != nullptr);
-    REQUIRE(idle_compact != nullptr);
-    REQUIRE(idle_detailed != nullptr);
-    REQUIRE_FALSE(lv_obj_has_flag(idle_detailed, LV_OBJ_FLAG_HIDDEN));
-    REQUIRE(lv_obj_has_flag(idle, LV_OBJ_FLAG_HIDDEN));
-    REQUIRE(lv_obj_has_flag(idle_compact, LV_OBJ_FLAG_HIDDEN));
-
+    w.on_print_state_changed_for_test(PrintJobState::STANDBY);
+    REQUIRE(view_value() == 2);
     w.detach();
 }
 
 TEST_CASE_METHOD(PrintStatusDetailedVisibilityFixture,
-                 "Idle Library compact wins at colspan=1 regardless of layout_style",
+                 "view=1 (idle_library_compact) at colspan=1 regardless of layout_style",
                  "[print_status][detailed_visibility]") {
     PrintStatusWidget w;
     w.set_config(nlohmann::json{{"layout_style", "detailed"}});
     w.on_size_changed(1, 2, 200, 400);
-
     lv_obj_t* container = create_mock_tree(test_screen());
     w.attach(container, test_screen());
     process_lvgl(50);
-
-    lv_obj_t* idle          = lv_obj_find_by_name(container, "print_card_idle");
-    lv_obj_t* idle_compact  = lv_obj_find_by_name(container, "print_card_idle_compact");
-    lv_obj_t* idle_detailed = lv_obj_find_by_name(container, "print_card_idle_detailed");
-    // compact mode wins on small widths even with detailed requested
-    REQUIRE_FALSE(lv_obj_has_flag(idle_compact, LV_OBJ_FLAG_HIDDEN));
-    REQUIRE(lv_obj_has_flag(idle, LV_OBJ_FLAG_HIDDEN));
-    REQUIRE(lv_obj_has_flag(idle_detailed, LV_OBJ_FLAG_HIDDEN));
-
+    w.on_print_state_changed_for_test(PrintJobState::STANDBY);
+    REQUIRE(view_value() == 1);
     w.detach();
 }

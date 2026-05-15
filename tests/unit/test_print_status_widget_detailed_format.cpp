@@ -13,9 +13,16 @@
 using namespace helix;
 using namespace helix::ui;
 
-// RAII helper that creates the DetailedFormatter singleton without a real attach()
+// RAII helper that creates the DetailedFormatter singleton without a real attach().
+// Destroys any pre-existing formatter first so the new one's observers bind to
+// the current PrinterState subjects (tests in this file reset PrinterState in
+// their setup; a formatter from a prior test would hold dangling observer
+// pointers to the freed subjects).
 struct FormatterScope {
-    FormatterScope() { PrintStatusWidget::ensure_formatter_for_test(); }
+    FormatterScope() {
+        PrintStatusWidget::destroy_formatter_for_test();
+        PrintStatusWidget::ensure_formatter_for_test();
+    }
     ~FormatterScope() { PrintStatusWidget::release_formatter_for_test(); }
 };
 
@@ -103,7 +110,7 @@ TEST_CASE_METHOD(HelixTestFixture, "DetailedFormatter filament text formatted in
     REQUIRE(std::string(lv_subject_get_string(lv_xml_get_subject(nullptr, "print_status_filament_text"))) == "Filament: 2.5m");
 }
 
-TEST_CASE_METHOD(HelixTestFixture, "DetailedFormatter writes temps (decidegree rounding)",
+TEST_CASE_METHOD(HelixTestFixture, "DetailedFormatter nozzle text (decidegree rounding)",
                  "[print_status][formatter][temps]") {
     PrinterState& ps = get_printer_state();
     PrinterStateTestAccess::reset(ps);
@@ -114,28 +121,11 @@ TEST_CASE_METHOD(HelixTestFixture, "DetailedFormatter writes temps (decidegree r
     // helix::units::to_centidegrees which multiplies by 10, not 100).
     lv_subject_set_int(ps.get_active_extruder_temp_subject(), 2157);    // 215.7°C → 216
     lv_subject_set_int(ps.get_active_extruder_target_subject(), 2200);  // 220°C
-    lv_subject_set_int(ps.get_bed_temp_subject(), 601);                  // 60.1°C → 60
-    lv_subject_set_int(ps.get_bed_target_subject(), 600);                // 60°C
-    lv_subject_set_int(ps.get_chamber_temp_subject(), 380);              // 38°C, no target
-    lv_subject_set_int(ps.get_chamber_target_subject(), 0);
     UpdateQueueTestAccess::drain_all(UpdateQueue::instance());
 
     REQUIRE(std::string(lv_subject_get_string(lv_xml_get_subject(nullptr, "print_status_nozzle_text"))) == "216 / 220°C");
-    REQUIRE(std::string(lv_subject_get_string(lv_xml_get_subject(nullptr, "print_status_bed_text"))) == "60 / 60°C");
-    REQUIRE(std::string(lv_subject_get_string(lv_xml_get_subject(nullptr, "print_status_chamber_text"))) == "38°C");
-}
-
-TEST_CASE_METHOD(HelixTestFixture, "Chamber with target shows pair",
-                 "[print_status][formatter][temps]") {
-    PrinterState& ps = get_printer_state();
-    PrinterStateTestAccess::reset(ps);
-    ps.init_subjects(false);
-
-    FormatterScope fs;
-    lv_subject_set_int(ps.get_chamber_temp_subject(), 350);     // 35°C
-    lv_subject_set_int(ps.get_chamber_target_subject(), 450);   // 45°C
-    UpdateQueueTestAccess::drain_all(UpdateQueue::instance());
-    REQUIRE(std::string(lv_subject_get_string(lv_xml_get_subject(nullptr, "print_status_chamber_text"))) == "35 / 45°C");
+    // bed_text / chamber_text are no longer formatted by the widget — the
+    // XML's temp_display widgets bind directly to bed_temp / chamber_temp.
 }
 
 TEST_CASE_METHOD(HelixTestFixture, "DetailedFormatter multi-tool label and gate",

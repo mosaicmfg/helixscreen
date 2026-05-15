@@ -84,13 +84,35 @@ class PrintStatusWidget : public PanelWidget {
     static lv_subject_t* view_subject_for_test() {
         return &view_subject_;
     }
+    // Test-only — drive on_print_state_changed without a real PrinterState change.
+    void on_print_state_changed_for_test(PrintJobState state) {
+        on_print_state_changed(state);
+    }
+    // Test-only — destroy the singleton formatter regardless of refcount. Used
+    // by test fixtures that reset PrinterState between cases so the next
+    // formatter's observers bind to fresh subjects rather than freed memory.
+    static void destroy_formatter_for_test() {
+        s_formatter_.reset();
+        s_formatter_refcount_ = 0;
+    }
 
     // Test-only — instantiate the formatter without needing a real attach()
     static void ensure_formatter_for_test() {
+        // Widget-static subjects (print_status_multi_tool, layout_effective, etc.)
+        // are normally registered in the PrintStatusWidget ctor. Tests construct
+        // only the formatter, so make sure those subjects are alive too — the
+        // formatter writes to multi_tool_subject_ and tests assert on it.
+        init_static_subjects();
         if (s_formatter_refcount_++ == 0) {
             s_formatter_ = std::make_unique<DetailedFormatter>();
         }
     }
+    // Initializes the widget's static-inline subjects + their StaticSubjectRegistry
+    // deinit callback. Idempotent — guarded by *_initialized_ flags inside.
+    // Called from the ctor in production, AND from ensure_formatter_for_test so
+    // tests that only construct the formatter still get the subjects.
+    static void init_static_subjects();
+
     static void release_formatter_for_test() {
         if (--s_formatter_refcount_ == 0) {
             s_formatter_.reset();
@@ -238,9 +260,7 @@ class PrintStatusWidget : public PanelWidget {
         char layer_text_buf_[32];         // "Layer 9999 / 9999"
         char time_text_buf_[40];          // "12h 34m / 99h 99m"
         char filament_text_buf_[32];      // "1234.5m / 9999.9m"
-        char nozzle_text_buf_[32];        // "265 / 270°C"
-        char bed_text_buf_[32];
-        char chamber_text_buf_[32];
+        char nozzle_text_buf_[32];        // "265 / 270°C" — kept for tool_override test
         char nozzle_tool_label_buf_[8];   // "T0", "T9"
         char idle_filename_buf_[160];
         char idle_when_buf_[64];          // "Completed 2 hours ago"
@@ -252,8 +272,6 @@ class PrintStatusWidget : public PanelWidget {
         lv_subject_t time_text_subject_;
         lv_subject_t filament_text_subject_;
         lv_subject_t nozzle_text_subject_;
-        lv_subject_t bed_text_subject_;
-        lv_subject_t chamber_text_subject_;
         lv_subject_t nozzle_tool_label_subject_;
         // Proxy temp subjects (decidegrees, int) so the temp_display widget in the
         // detailed XML follows the pinned tool when nozzle_tool_override is set.
@@ -283,11 +301,6 @@ class PrintStatusWidget : public PanelWidget {
         ObserverGuard nozzle_temp_observer_;
         ObserverGuard nozzle_target_observer_;
 
-        ObserverGuard bed_temp_observer_;
-        ObserverGuard bed_target_observer_;
-        ObserverGuard chamber_temp_observer_;
-        ObserverGuard chamber_target_observer_;
-
         ObserverGuard tool_count_observer_;
         ObserverGuard active_tool_observer_;
 
@@ -296,8 +309,6 @@ class PrintStatusWidget : public PanelWidget {
         void update_time_text();
         void update_filament_text();
         void update_nozzle_text();
-        void update_bed_text();
-        void update_chamber_text();
         void update_multi_tool();
         void update_tool_label();
         void update_idle_fields();
