@@ -1252,6 +1252,13 @@ void PrintStatusWidget::show_nozzle_tool_picker(lv_obj_t* anchor) {
     if (nozzle_picker_backdrop_ || !parent_screen_)
         return;
 
+    // Single-tool printer: picker has nothing useful to offer. The whole
+    // nozzle group is now the click target (chevron is visual-only), so this
+    // can fire on a regular print and should be a clean no-op.
+    if (lv_subject_get_int(ToolState::instance().get_tool_count_subject()) <= 1) {
+        return;
+    }
+
     nozzle_picker_backdrop_ = static_cast<lv_obj_t*>(
         lv_xml_create(parent_screen_, "print_status_nozzle_tool_picker", nullptr));
     if (!nozzle_picker_backdrop_) {

@@ -77,12 +77,17 @@
             style_pad_gap="#space_sm" style_flex_main_place="space_evenly"
             style_flex_cross_place="center"
             scrollable="false" clickable="false" event_bubble="true">
+      <!-- Entire nozzle group is the click target for the tool picker; chevron
+           is a visual affordance only (its hidden flag still gates on
+           multi_tool, but its click is now subsumed by the parent). The
+           handler itself early-returns for single-tool printers. -->
       <lv_obj width="content" height="content" style_pad_all="0" flex_flow="row"
               style_pad_gap="#space_xs" style_flex_cross_place="center"
-              scrollable="false" clickable="false" event_bubble="true">
-        <text_small bind_text="print_status_nozzle_tool_label" clickable="false" event_bubble="true">
+              scrollable="false" clickable="true" event_bubble="false">
+        <event_cb trigger="clicked" callback="print_status_nozzle_chevron_cb"/>
+        <text_tiny bind_text="print_status_nozzle_tool_label" clickable="false" event_bubble="true">
           <bind_flag_if_eq subject="print_status_multi_tool" flag="hidden" ref_value="0"/>
-        </text_small>
+        </text_tiny>
         <nozzle_icon size="sm" badge_subject="" clickable="false" event_bubble="true"/>
         <!-- Bound to formatter-driven proxy subjects so pinning to a specific tool
              (via the chevron picker) actually changes the displayed temperature.
@@ -91,9 +96,8 @@
                       bind_current="print_status_nozzle_current"
                       bind_target="print_status_nozzle_target"
                       clickable="false" event_bubble="true"/>
-        <icon src="chevron_down" size="sm">
+        <icon src="chevron_down" size="sm" clickable="false" event_bubble="true">
           <bind_flag_if_eq subject="print_status_multi_tool" flag="hidden" ref_value="0"/>
-          <event_cb trigger="clicked" callback="print_status_nozzle_chevron_cb"/>
         </icon>
       </lv_obj>
       <lv_obj width="content" height="content" style_pad_all="0" flex_flow="row"
