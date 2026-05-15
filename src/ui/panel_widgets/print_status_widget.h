@@ -214,7 +214,11 @@ class PrintStatusWidget : public PanelWidget {
 
         /// Override is "" or "auto" for auto-tracking; else extruder name like "extruder1".
         /// Silently falls back to auto if the named subject doesn't resolve.
-        void set_nozzle_tool_override(const std::string& override_name);
+        // Returns true if the override resolved to a real subject. False
+        // when override_name was non-empty/non-"auto" but the per-tool subject
+        // didn't exist (formatter falls back to "auto"); callers should clear
+        // their cached override / persisted config to match.
+        bool set_nozzle_tool_override(const std::string& override_name);
 
         /// Called by widget attach() to hand the arc widget to the formatter
         void attach_arc(lv_obj_t* arc);

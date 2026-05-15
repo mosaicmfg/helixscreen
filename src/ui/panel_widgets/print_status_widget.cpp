@@ -178,9 +178,13 @@ void PrintStatusWidget::attach(lv_obj_t* widget_obj, lv_obj_t* parent_screen) {
     live_instances().insert(this);
 
     // Formatter is already alive (created in the ctor before XML parse).
-    // Just re-apply the per-instance nozzle override.
-    if (s_formatter_) {
-        s_formatter_->set_nozzle_tool_override(nozzle_tool_override_);
+    // Just re-apply the per-instance nozzle override. If the override
+    // pointed at a missing extruder, clear our cached state so we don't
+    // re-trigger the fallback every attach.
+    if (s_formatter_ && !s_formatter_->set_nozzle_tool_override(nozzle_tool_override_)) {
+        nozzle_tool_override_ = "auto";
+        config_["nozzle_tool_override"] = "auto";
+        save_widget_config(config_);
     }
 
     // Store this pointer for event callback recovery
@@ -902,8 +906,10 @@ void PrintStatusWidget::set_config(const nlohmann::json& config) {
     if (config.contains("show_job_queue") && config["show_job_queue"].is_boolean()) {
         show_job_queue_ = config["show_job_queue"].get<bool>();
     }
-    if (s_formatter_) {
-        s_formatter_->set_nozzle_tool_override(nozzle_tool_override_);
+    if (s_formatter_ && !s_formatter_->set_nozzle_tool_override(nozzle_tool_override_)) {
+        nozzle_tool_override_ = "auto";
+        config_["nozzle_tool_override"] = "auto";
+        save_widget_config(config_);
     }
     // Re-apply layout visibility — layout_style may have changed.
     if (widget_obj_ && lv_obj_is_valid(widget_obj_)) {
@@ -1128,6 +1134,10 @@ void PrintStatusWidget::apply_picker_visuals() {
         lv_obj_set_style_bg_color(active, accent, LV_PART_MAIN);
         lv_obj_set_style_bg_opa(active, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_bg_opa(inactive, LV_OPA_TRANSP, LV_PART_MAIN);
+    } else {
+        spdlog::warn("[PrintStatusWidget] picker layout buttons not found "
+                     "(layout_btn_library={}, layout_btn_detailed={}) — XML name drift?",
+                     fmt::ptr(lib_btn), fmt::ptr(det_btn));
     }
 
     // Show Sections only applies to the Library layout — hide in Detailed.
@@ -1450,12 +1460,14 @@ void PrintStatusWidget::print_card_clicked_cb(lv_event_t* e) {
     // Defense in depth — even if a child swallows the event with bubble=off,
     // a stray bubble path still routes through here. Skip when the click
     // originated inside the named nozzle click target; the chevron cb
-    // handles it.
+    // handles it. Name must match the lv_obj name in
+    // ui_xml/components/print_status_detailed_active.xml.
+    constexpr std::string_view kNozzleClickTargetName = "detailed_nozzle_click_target";
     bool from_nozzle_group = false;
     if (auto* target = lv_event_get_target_obj(e)) {
         for (lv_obj_t* o = target; o; o = lv_obj_get_parent(o)) {
             const char* name = lv_obj_get_name(o);
-            if (name && std::string_view(name) == "detailed_nozzle_click_target") {
+            if (name && std::string_view(name) == kNozzleClickTargetName) {
                 from_nozzle_group = true;
                 break;
             }
@@ -1618,7 +1630,7 @@ void PrintStatusWidget::DetailedFormatter::update_nozzle_text() {
     lv_subject_copy_string(&nozzle_text_subject_, nozzle_text_buf_);
 }
 
-void PrintStatusWidget::DetailedFormatter::set_nozzle_tool_override(
+bool PrintStatusWidget::DetailedFormatter::set_nozzle_tool_override(
     const std::string& override_name) {
     using helix::ui::observe_int_sync;
     auto& ps = get_printer_state();
@@ -1627,7 +1639,7 @@ void PrintStatusWidget::DetailedFormatter::set_nozzle_tool_override(
     // observer churn on every layout/state event that funnels through here.
     std::string normalized = (override_name.empty() ? std::string("auto") : override_name);
     if (normalized == current_nozzle_override_ && static_cast<bool>(nozzle_temp_observer_)) {
-        return;
+        return true;
     }
 
     // [L084] Clear lifetimes BEFORE observers to expire weak_ptr first.
@@ -1651,7 +1663,7 @@ void PrintStatusWidget::DetailedFormatter::set_nozzle_tool_override(
 
     if (override_name.empty() || override_name == "auto") {
         bind_auto();
-        return;
+        return true;
     }
 
     // Pinned: resolve dynamic per-tool subjects
@@ -1664,7 +1676,7 @@ void PrintStatusWidget::DetailedFormatter::set_nozzle_tool_override(
         nozzle_temp_lifetime_.reset();
         nozzle_target_lifetime_.reset();
         bind_auto();
-        return;
+        return false;
     }
 
     current_nozzle_override_ = override_name;
@@ -1676,6 +1688,7 @@ void PrintStatusWidget::DetailedFormatter::set_nozzle_tool_override(
         [](DetailedFormatter* self, int) { self->update_nozzle_text(); });
     update_nozzle_text();
     update_tool_label();
+    return true;
 }
 
 void PrintStatusWidget::DetailedFormatter::update_bed_text() {
@@ -1711,14 +1724,23 @@ void PrintStatusWidget::DetailedFormatter::update_tool_label() {
         // Label tracks what the user is VIEWING — the pinned tool when one
         // is set, otherwise the currently active tool. Anything else looks
         // broken right after a pin ("I picked Nozzle 2 but it still says T0").
-        int idx;
+        int idx = -1;
         if (current_nozzle_override_ == "extruder") {
             idx = 0;
         } else if (current_nozzle_override_.rfind("extruder", 0) == 0 &&
                    current_nozzle_override_.size() > 8) {
-            idx = std::atoi(current_nozzle_override_.c_str() + 8);
-        } else {
-            // "auto" or unrecognized → follow active tool.
+            // Defend against hand-edited config — atoi parses leading digits
+            // only; check the parsed index is in range before trusting it.
+            const char* suffix = current_nozzle_override_.c_str() + 8;
+            if (suffix[0] >= '0' && suffix[0] <= '9') {
+                int parsed = std::atoi(suffix);
+                if (parsed >= 0 && parsed < count) {
+                    idx = parsed;
+                }
+            }
+        }
+        if (idx < 0) {
+            // "auto", unrecognized, or out-of-range → follow active tool.
             idx = ToolState::instance().active_tool_index();
         }
         snprintf(nozzle_tool_label_buf_, sizeof(nozzle_tool_label_buf_), "T%d", idx);
