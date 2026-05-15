@@ -62,9 +62,19 @@ This section is for replacing the printer's built-in display with HelixScreen ru
 - SSH access to the printer
 - Stock firmware works directly. Community firmware like [53Aries/Q2-Firmware](https://github.com/53Aries/Q2-Firmware) or [OpenQIDI](https://openqidi.com/) may also be used.
 
-### Using the Pi/aarch64 Binary
+### One-Line Installer (Recommended)
 
-QIDI's aarch64 processors are the same architecture as the Raspberry Pi 4 and Pi 5. The standard Pi build of HelixScreen runs natively on QIDI hardware with no modifications.
+The standard HelixScreen installer works on QIDI hardware out of the box. SSH into the printer and run:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh | sh
+```
+
+The installer auto-detects QIDI-class SBCs (hostname `linaro-alip` + `/home/mks` on stock Q2; the same Pi/aarch64 binary covers Plus 4 and Max 4) and sets up the systemd service, launcher, and config under the correct user.
+
+### Manual Deployment (Alternative)
+
+QIDI's aarch64 processors are the same architecture as the Raspberry Pi 4 and Pi 5, so the standard Pi build of HelixScreen also runs if you'd rather drop the binary in by hand:
 
 ```bash
 # Build on a build server (or use a pre-built release)
@@ -127,30 +137,20 @@ The progress bar updates as each phase completes, so you can see exactly where y
 
 ## WiFi
 
-### Q2 WiFi Hardware
+WiFi works out of the box on QIDI hardware — no manual driver or wpa_supplicant configuration needed for HelixScreen.
 
-The Q2 uses a USB WiFi dongle from Tenda Technologies with a **Realtek RTL8188GU** chip (2.4 GHz only, 802.11n). The in-tree `rtl8xxxu` kernel module does not work reliably with this chip. The community-recommended fix is the out-of-tree driver from [wandercn/RTL8188GU](https://github.com/wandercn/RTL8188GU), installed via DKMS with the module name `RTL8188GUXX`.
+### Q2 WiFi Hardware (reference)
+
+The Q2 uses a USB WiFi dongle from Tenda Technologies with a **Realtek RTL8188GU** chip (2.4 GHz only, 802.11n). The community-recommended driver is the out-of-tree [wandercn/RTL8188GU](https://github.com/wandercn/RTL8188GU) (DKMS module `RTL8188GUXX`); stock QIDI firmware already ships a working driver.
 
 ### WiFi Management
 
-The stock Q2 firmware manages WiFi through the closed-source `QD_Q2/bin/client` binary, which writes `wpa_supplicant` configuration directly. When HelixScreen replaces the stock UI, WiFi management must come from HelixScreen instead.
+HelixScreen auto-selects the right backend:
 
-HelixScreen's **wpa_supplicant backend** works on the Q2:
-- Connects to `wpa_supplicant` via its control socket (not `wpa_cli`)
-- Scans for networks, connects, and saves configuration via `SAVE_CONFIG`
-- WiFi credentials persist across reboots via wpa_supplicant's native config file
+- **wpa_supplicant backend** — used on stock QIDI firmware. Connects via the wpa_supplicant control socket, scans/connects/saves, and persists credentials via `SAVE_CONFIG`.
+- **NetworkManager backend** — auto-detected if NetworkManager is installed (e.g., Armbian/OpenQIDI reflash).
 
-If the Q2 has NetworkManager installed (e.g., via Armbian/OpenQIDI reflash), HelixScreen will auto-detect and use the NetworkManager backend instead.
-
-### Q2 WiFi Troubleshooting
-
-If WiFi doesn't work in HelixScreen on a Q2:
-
-1. **Check the driver is loaded:** `lsmod | grep -i rtl` — look for `RTL8188GUXX` or `rtl8xxxu`
-2. **Check wpa_supplicant is running:** `systemctl status wpa_supplicant` or `ps aux | grep wpa`
-3. **Check the interface exists:** `ip link show wlan0`
-4. **Check the wpa_supplicant socket:** `ls /var/run/wpa_supplicant/` — HelixScreen needs this socket to communicate
-5. **If using stock firmware:** The stock `client` binary may hold the wpa_supplicant socket. Stop it first: `killall client`
+The stock Q2 `QD_Q2/bin/client` binary also writes wpa_supplicant config directly. When HelixScreen replaces the stock UI, the installer takes over network management cleanly.
 
 ## QIDI Box (Filament Changer)
 
@@ -169,7 +169,6 @@ Real integration is blocked on test-hardware access.
 - **Q2 has limited RAM** -- ~498 MB total. HelixScreen must be memory-conscious on this device.
 - **Plus 4 and Max 4 untested** -- Detection heuristics and display rendering for these models are based on specs. Community testers welcome.
 - **No chamber heater control UI** -- QIDI printers have heated chambers, but HelixScreen doesn't yet have a dedicated chamber temperature control panel.
-- **Manual deployment required** -- There is no KIAUH or package manager integration for QIDI yet. Binary must be deployed manually.
 
 ## Q2 Hardware Details
 
@@ -189,7 +188,7 @@ Firmware source reference: [53Aries/Q2-Firmware](https://github.com/53Aries/Q2-F
 
 ## Community Testing
 
-We have a confirmed install report on the Q2 (2026-04). Display and touch work. WiFi is the main gap — the wpa_supplicant backend should handle it but needs testing with the RTL8188GU driver.
+We have a confirmed install report on the Q2 (2026-04). The one-line installer works, display and touch render correctly, and WiFi connects without manual configuration via the wpa_supplicant backend.
 
 We still need testers for the **Plus 4** and **Max 4**. If you can help:
 
