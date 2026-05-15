@@ -11,11 +11,12 @@
   <view extends="ui_card" width="100%" height="100%">
     <bind_state_if_not_eq subject="printer_connection_state" state="disabled" ref_value="2"/>
     <event_cb trigger="clicked" callback="print_card_clicked_cb"/>
-    <!-- IDLE STATE: Library card with thumbnail + file actions -->
-    <!-- Visibility managed by C++ on_print_state_changed() + update_idle_compact_mode() -->
+    <!-- IDLE STATE: Library card with thumbnail + file actions.
+         Visibility driven by print_status_view subject (0 = idle_library_full). -->
     <lv_obj name="print_card_idle"
-            width="100%" height="100%" style_pad_all="0" flex_flow="column" style_pad_gap="0" hidden="true"
+            width="100%" height="100%" style_pad_all="0" flex_flow="column" style_pad_gap="0"
             clickable="false" event_bubble="true">
+      <bind_flag_if_not_eq subject="print_status_view" flag="hidden" ref_value="0"/>
       <!-- Header: "Library" label with underline. Hidden flag bound to
            print_status_title_hidden (1 when show_title config is off OR at micro breakpoint). -->
       <lv_obj name="library_header"
@@ -83,12 +84,13 @@
         </lv_obj>
       </lv_obj>
     </lv_obj>
-    <!-- COMPACT IDLE STATE: Print Files + Print Last (for 1x2 size) -->
-    <!-- No header, no thumbnail, no Recent — just the two most important actions -->
-    <!-- Visibility managed by C++ update_idle_compact_mode(), not by subject binding -->
+    <!-- COMPACT IDLE STATE: Print Files + Print Last (for 1x2 size).
+         No header, no thumbnail, no Recent — just the two most important actions.
+         Visibility driven by print_status_view (1 = idle_library_compact). -->
     <lv_obj name="print_card_idle_compact"
             width="100%" height="100%" style_pad_all="#space_xs" flex_flow="column" style_flex_main_place="center"
-            style_pad_gap="#space_sm" hidden="true" clickable="false" event_bubble="true">
+            style_pad_gap="#space_sm" clickable="false" event_bubble="true">
+      <bind_flag_if_not_eq subject="print_status_view" flag="hidden" ref_value="1"/>
       <lv_image name="print_card_thumb_compact"
                 width="100%" flex_grow="1" src="A:assets/images/benchy_thumbnail_white.png" inner_align="contain"
                 clickable="false" event_bubble="true"/>
@@ -105,18 +107,22 @@
         <event_cb trigger="clicked" callback="library_last_cb"/>
       </ui_button>
     </lv_obj>
-    <!-- DETAILED IDLE HERO: thumbnail + filename + last-print meta + Reprint Last -->
-    <!-- Starts hidden; C++ shows when idle + layout_style=="detailed" -->
-    <print_status_detailed_idle name="print_card_idle_detailed" hidden="true"/>
+    <!-- DETAILED IDLE HERO: thumbnail + filename + last-print meta + Reprint Last.
+         Visibility driven by print_status_view (2 = idle_detailed). -->
+    <print_status_detailed_idle name="print_card_idle_detailed">
+      <bind_flag_if_not_eq subject="print_status_view" flag="hidden" ref_value="2"/>
+    </print_status_detailed_idle>
     <!-- ACTIVE STATE: Shared container for preparing + printing phases -->
     <!-- Visibility managed by C++ on_print_state_changed(), not subject binding -->
     <lv_obj name="print_card_printing"
             width="100%" height="100%" style_pad_left="#space_sm" style_pad_right="#space_sm" style_pad_top="#space_xxs"
             style_pad_bottom="#space_sm" flex_flow="column" style_pad_gap="#space_xs" style_flex_cross_place="center"
             scrollable="false" hidden="true" clickable="false" event_bubble="true">
+      <!-- Library active body — visibility driven by print_status_view (3). -->
       <lv_obj name="print_card_layout"
               width="100%" flex_grow="1" style_pad_all="0" flex_flow="column" style_flex_cross_place="center"
               style_pad_gap="#space_sm" scrollable="false" clickable="false" event_bubble="true">
+        <bind_flag_if_not_eq subject="print_status_view" flag="hidden" ref_value="3"/>
         <lv_obj name="print_card_thumb_wrap"
                 width="100%" flex_grow="1" style_pad_all="0" style_bg_opa="0%" scrollable="false" clickable="false"
                 event_bubble="true">
@@ -154,7 +160,10 @@
       </lv_obj>
       <!-- DETAILED ACTIVE: arc + filename/layer/time/filament/temps -->
       <!-- Starts hidden; C++ shows when active + layout_style=="detailed" -->
-      <print_status_detailed_active name="print_card_printing_detailed" hidden="true"/>
+      <!-- Detailed active body — visibility driven by print_status_view (4). -->
+      <print_status_detailed_active name="print_card_printing_detailed">
+        <bind_flag_if_not_eq subject="print_status_view" flag="hidden" ref_value="4"/>
+      </print_status_detailed_active>
       <text_small name="display_message"
                   width="100%" bind_text="display_message" style_text_align="center" long_mode="dots"
                   hidden="true" clickable="false" event_bubble="true">

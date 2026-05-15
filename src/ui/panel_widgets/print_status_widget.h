@@ -81,6 +81,9 @@ class PrintStatusWidget : public PanelWidget {
     static lv_subject_t* show_filament_active_subject_for_test() {
         return &show_filament_active_subject_;
     }
+    static lv_subject_t* view_subject_for_test() {
+        return &view_subject_;
+    }
 
     // Test-only — instantiate the formatter without needing a real attach()
     static void ensure_formatter_for_test() {
@@ -150,9 +153,18 @@ class PrintStatusWidget : public PanelWidget {
     static inline lv_subject_t layout_effective_subject_{};  // after width gating
     static inline lv_subject_t show_filament_active_subject_{};
     static inline lv_subject_t multi_tool_subject_{};        // 1 when tool_count > 1
+    // Single subject driving visibility of all five card-body siblings:
+    //   0 = idle_library_full   (print_card_idle)
+    //   1 = idle_library_compact (print_card_idle_compact)
+    //   2 = idle_detailed       (print_card_idle_detailed)
+    //   3 = active_library      (print_card_layout)
+    //   4 = active_detailed     (print_card_printing_detailed)
+    // C++ sets this; XML binds with bind_flag_if_not_eq per sibling.
+    static inline lv_subject_t view_subject_{};
     static inline bool detailed_subjects_initialized_ = false;
 
     // Compact mode and state tracking
+    bool is_active_ = false;  // PRINTING or PAUSED (drives view_subject_)
     bool is_compact_ = false;
     bool is_column_ = false;
     bool last_print_available_ = false;
@@ -320,6 +332,9 @@ class PrintStatusWidget : public PanelWidget {
     // Idempotent visual feedback only — paints the selected layout button
     // primary, hides Show Sections in Detailed mode. No checkbox read, no save.
     void apply_picker_visuals();
+    // Recompute the view subject from (is_active_, layout_style_, is_compact_).
+    // Drives bind_flag_if_not_eq on the five card-body siblings.
+    void update_view_subject();
 
     static PrintStatusWidget* s_active_picker_;
 

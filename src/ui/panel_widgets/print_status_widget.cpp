@@ -102,6 +102,11 @@ PrintStatusWidget::PrintStatusWidget() : printer_state_(get_printer_state()) {
                                 &show_filament_active_subject_);
         lv_subject_init_int(&multi_tool_subject_, 0);
         lv_xml_register_subject(nullptr, "print_status_multi_tool", &multi_tool_subject_);
+        // Initial value 0 = idle_library_full — matches the default ref_value=0
+        // on print_card_idle's bind_flag_if_not_eq so it shows by default
+        // before any state events fire.
+        lv_subject_init_int(&view_subject_, 0);
+        lv_xml_register_subject(nullptr, "print_status_view", &view_subject_);
         detailed_subjects_initialized_ = true;
 
         StaticSubjectRegistry::instance().register_deinit("PrintStatusWidgetSubjects", []() {
@@ -110,6 +115,7 @@ PrintStatusWidget::PrintStatusWidget() : printer_state_(get_printer_state()) {
                 lv_subject_deinit(&layout_effective_subject_);
                 lv_subject_deinit(&show_filament_active_subject_);
                 lv_subject_deinit(&multi_tool_subject_);
+                lv_subject_deinit(&view_subject_);
                 detailed_subjects_initialized_ = false;
             }
             if (visibility_subjects_initialized_ && lv_is_initialized()) {
@@ -446,32 +452,22 @@ void PrintStatusWidget::on_size_changed(int colspan, int rowspan, int /*width_px
     }
 }
 
-void PrintStatusWidget::update_idle_compact_mode() {
-    // Detailed only at colspan>=2 (is_compact_ == false); else fall back to Library
+void PrintStatusWidget::update_view_subject() {
     bool use_detailed = (layout_style_ == "detailed") && !is_compact_;
-
-    // detach() nulls every print_card_* member, so a non-null pointer here is
-    // always a live LVGL object (no lv_obj_is_valid needed — L075).
-    auto set_hidden = [](lv_obj_t* o, bool hide) {
-        if (!o) return;
-        if (hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
-        else      lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
-    };
-    set_hidden(print_card_idle_,          use_detailed || is_compact_);
-    set_hidden(print_card_idle_compact_, !(!use_detailed && is_compact_));
-    set_hidden(print_card_idle_detailed_, !use_detailed);
+    int v;
+    if (is_active_) {
+        v = use_detailed ? 4 : 3;
+    } else {
+        v = use_detailed ? 2 : (is_compact_ ? 1 : 0);
+    }
+    lv_subject_set_int(&view_subject_, v);
 }
 
-void PrintStatusWidget::update_active_layout_mode() {
-    bool use_detailed = (layout_style_ == "detailed") && !is_compact_;
-    auto set_hidden = [](lv_obj_t* o, bool hide) {
-        if (!o) return;
-        if (hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
-        else      lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
-    };
-    set_hidden(print_card_layout_,             use_detailed);
-    set_hidden(print_card_printing_detailed_, !use_detailed);
-}
+// Kept as thin wrappers so existing call sites (on_size_changed,
+// set_config, picker layout-button cbs, on_print_state_changed) remain
+// readable. All three roads now lead through update_view_subject().
+void PrintStatusWidget::update_idle_compact_mode() { update_view_subject(); }
+void PrintStatusWidget::update_active_layout_mode() { update_view_subject(); }
 
 // ============================================================================
 // Print Card Click Handler
@@ -598,37 +594,25 @@ void PrintStatusWidget::on_print_state_changed(PrintJobState state) {
     if (!widget_obj_ || !print_card_thumb_) {
         return;
     }
-    if (!lv_obj_is_valid(widget_obj_)) {
-        return;
-    }
 
-    bool is_active = (state == PrintJobState::PRINTING || state == PrintJobState::PAUSED);
+    is_active_ = (state == PrintJobState::PRINTING || state == PrintJobState::PAUSED);
 
-    // Hide all idle cards when printing, show the right one when idle
-    if (is_active) {
-        if (print_card_idle_ && lv_obj_is_valid(print_card_idle_)) {
-            lv_obj_add_flag(print_card_idle_, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (print_card_idle_compact_ && lv_obj_is_valid(print_card_idle_compact_)) {
-            lv_obj_add_flag(print_card_idle_compact_, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (print_card_idle_detailed_ && lv_obj_is_valid(print_card_idle_detailed_)) {
-            lv_obj_add_flag(print_card_idle_detailed_, LV_OBJ_FLAG_HIDDEN);
-        }
-        // Show the active container; inner Library/Detailed body chosen by mode helper
-        if (print_card_printing_ && lv_obj_is_valid(print_card_printing_)) {
+    // The 5 card-body siblings are subject-driven (bind_flag_if_not_eq on
+    // print_status_view). Recompute that subject; XML handles visibility.
+    update_view_subject();
+
+    // print_card_printing is the active-state WRAPPER (holds preparing_info,
+    // print_card_layout, print_card_printing_detailed). Its padding occupies
+    // layout space even when its children are hidden, so the wrapper stays
+    // imperatively toggled. detach() nulls this pointer (no L075 needed).
+    if (print_card_printing_) {
+        if (is_active_)
             lv_obj_remove_flag(print_card_printing_, LV_OBJ_FLAG_HIDDEN);
-        }
-        update_active_layout_mode();
-    } else {
-        update_idle_compact_mode();
-        // Hide the active container
-        if (print_card_printing_ && lv_obj_is_valid(print_card_printing_)) {
+        else
             lv_obj_add_flag(print_card_printing_, LV_OBJ_FLAG_HIDDEN);
-        }
     }
 
-    if (is_active) {
+    if (is_active_) {
         spdlog::debug("[PrintStatusWidget] Print active - state updated via subject bindings");
     } else {
         spdlog::debug("[PrintStatusWidget] Print not active - reverting card to idle state");
