@@ -1,0 +1,54 @@
+<?xml version="1.0"?>
+<!-- Copyright (C) 2025-2026 356C LLC -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!--
+  Helix Progress Arc — shared lv_arc with proportional stroke thickness.
+
+  Encapsulates the common arc styling we used to repeat across
+  print_status_detailed_active, fan_arc_core, ams_loaded_card, and
+  clog_meter_page (track color, indicator color, rounded ends, no
+  bg/border/knob), plus the 5-tier diameter-driven thickness styles.
+
+  Pair with helix::ui::attach_progress_arc() (include/ui_progress_arc.h)
+  to wire automatic resize-to-square + thickness tier publication.
+  The C++ helper owns the per-instance tier subject and binds the 5
+  arc_w_* styles below to it on both LV_PART_MAIN and LV_PART_INDICATOR.
+
+  Default angles are a 270° dial (135 → 45). Override via props for
+  full circles or partial arcs.
+-->
+<component>
+  <styles>
+    <!-- Stroke thickness tiers — diameter ranges (px):
+         tier 0: <80, tier 1: 80-119, tier 2: 120-179,
+         tier 3: 180-239, tier 4: >=240. Logic in ui_progress_arc.cpp. -->
+    <style name="arc_w_4"  arc_width="4"/>
+    <style name="arc_w_6"  arc_width="6"/>
+    <style name="arc_w_8"  arc_width="8"/>
+    <style name="arc_w_10" arc_width="10"/>
+    <style name="arc_w_12" arc_width="12"/>
+  </styles>
+  <api>
+    <prop name="bind_value" type="string" default=""/>
+    <prop name="min_value" type="number" default="0"/>
+    <prop name="max_value" type="number" default="100"/>
+    <prop name="value" type="number" default="0"/>
+    <!-- Default angles match the 270° dial pattern used everywhere today. -->
+    <prop name="bg_start_angle" type="number" default="135"/>
+    <prop name="bg_end_angle" type="number" default="45"/>
+    <prop name="start_angle" type="number" default="135"/>
+    <prop name="end_angle" type="number" default="135"/>
+  </api>
+  <view extends="lv_arc"
+        min_value="$min_value" max_value="$max_value" value="$value"
+        bind_value="$bind_value"
+        bg_start_angle="$bg_start_angle" bg_end_angle="$bg_end_angle"
+        start_angle="$start_angle" end_angle="$end_angle"
+        rotation="0" mode="normal"
+        style_arc_color="#border" style_arc_color-indicator="#primary"
+        style_arc_rounded="true" style_arc_rounded-indicator="true"
+        style_bg_opa="0" style_border_width="0"
+        style_bg_opa-knob="0" style_shadow_width-knob="0"
+        style_outline_width-knob="0" style_pad_all-knob="0"
+        clickable="false"/>
+</component>

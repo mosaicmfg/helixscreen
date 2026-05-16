@@ -7,6 +7,7 @@
 #include "ui_nav_manager.h"
 #include "ui_overlay_temp_graph.h"
 #include "ui_panel_print_select.h"
+#include "ui_progress_arc.h"
 #include "ui_panel_print_status.h"
 #include "ui_update_queue.h"
 #include "ui_utils.h"
@@ -1950,47 +1951,13 @@ PrintStatusWidget::DetailedFormatter::~DetailedFormatter() {
     subjects_.deinit_all();
 }
 
-// Force the arc to a square sized to fit its parent column. lv_arc draws
-// within its bounds but its actual circle takes only min(w,h) — leaving the
-// % label child stranded if the bounds are tall-narrow. Setting both
-// dimensions to the parent's height gives a true square that flex-centers
-// in the column on both axes.
-// Maps an arc diameter to a thickness tier index (0..4 → 4/6/8/10/12 px).
-// Tier value is published on print_status_arc_thickness_tier_subject_;
-// XML bind_styles select the matching arc_width style per tier.
-static int arc_thickness_tier_for(int dim) {
-    if (dim < 80)  return 0; // 4px  — Tiny/Micro print_status widget
-    if (dim < 120) return 1; // 6px
-    if (dim < 180) return 2; // 8px  — Medium default
-    if (dim < 240) return 3; // 10px
-    return 4;                // 12px — XXLarge / user-resized big
-}
-
-static void resize_arc_to_square(lv_obj_t* arc) {
-    if (!arc) return;
-    lv_obj_t* parent = lv_obj_get_parent(arc);
-    if (!parent) return;
-    lv_obj_update_layout(parent);
-    int ph = lv_obj_get_content_height(parent);
-    int pw = lv_obj_get_content_width(parent);
-    int dim = ph < pw ? ph : pw;
-    if (dim <= 0) return;
-    lv_obj_set_size(arc, dim, dim);
-    // Publish thickness tier to the subject; styling stays in XML (bind_style).
-    // lv_subject_set_int is a no-op for unchanged values, so no manual guard.
-    lv_subject_set_int(&PrintStatusWidget::arc_thickness_tier_subject_,
-                       arc_thickness_tier_for(dim));
-}
-
 void PrintStatusWidget::DetailedFormatter::attach_arc(lv_obj_t* arc) {
     arc_widget_ = arc;
     if (arc) {
-        // Range + angles + styling come from XML; just seed the initial value.
+        // Range + angles + styling come from helix_progress_arc; just seed the
+        // initial value.
         int pct = lv_subject_get_int(get_printer_state().get_print_progress_subject());
         lv_arc_set_value(arc, pct);
-        // Initial square sizing (a follow-up call from on_size_changed picks
-        // up the final layout when the widget grid resolves).
-        resize_arc_to_square(arc);
         // Null arc_widget_ when LVGL destroys the arc — lets the progress
         // observer null-check without lv_obj_is_valid (L075).
         lv_obj_add_event_cb(
@@ -1999,24 +1966,19 @@ void PrintStatusWidget::DetailedFormatter::attach_arc(lv_obj_t* arc) {
                 if (s_formatter_) s_formatter_->arc_widget_ = nullptr;
             },
             LV_EVENT_DELETE, nullptr);
-        // Re-size whenever the column relayouts (window resize, breakpoint).
-        // The parent's LV_EVENT_SIZE_CHANGED cb references the arc via
-        // user_data; the cb is auto-removed when the parent is deleted, so no
-        // explicit cleanup needed here.
-        lv_obj_t* parent = lv_obj_get_parent(arc);
-        if (parent) {
-            lv_obj_add_event_cb(parent,
-                                [](lv_event_t* e) {
-                                    auto* arc_obj = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
-                                    resize_arc_to_square(arc_obj);
-                                },
-                                LV_EVENT_SIZE_CHANGED, arc);
-        }
+        // Auto-resize + diameter-driven thickness via the shared helper.
+        // It hooks LV_EVENT_SIZE_CHANGED on the parent and publishes the
+        // tier to our class-level subject, which the XML bind_styles
+        // (in helix_progress_arc.xml) react to.
+        helix::ui::attach_progress_arc(arc, lv_obj_get_parent(arc),
+                                       &PrintStatusWidget::arc_thickness_tier_subject_);
     }
 }
 
 void PrintStatusWidget::DetailedFormatter::resize_arc() {
-    resize_arc_to_square(arc_widget_);
+    // Outer grid relayouts may not propagate SIZE_CHANGED to the arc's
+    // direct parent immediately. Force a refresh through the shared helper.
+    helix::ui::refresh_progress_arc(arc_widget_);
 }
 
 // ============================================================================

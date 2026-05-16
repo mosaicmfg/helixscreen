@@ -3,82 +3,43 @@
 
 #include "ui_fan_arc_resize.h"
 
+#include "ui_progress_arc.h"
+
 #include <spdlog/spdlog.h>
 
 namespace helix::ui {
 
-// Sizing constants for arc scaling
-constexpr int32_t MIN_ARC_SIZE = 60;
-constexpr int32_t ARC_TO_TRACK_RATIO = 11;
-constexpr int32_t MIN_TRACK_WIDTH = 6;
+// Thin wrappers around the shared helix_progress_arc helper. fan_arc_core.xml
+// now uses <helix_progress_arc> directly, so the common arc styling + 5-tier
+// thickness binding lives in helix_progress_arc.xml; the C++ here just finds
+// the arc inside a fan card root and wires up auto-resize with an owned
+// per-card tier subject.
 
 void fan_arc_resize_to_fit(lv_obj_t* card_root) {
     if (!card_root)
         return;
-
-    // Per-object re-entrancy guard: lv_obj_update_layout() below can fire
-    // SIZE_CHANGED which calls back into this function via the event callback.
-    // Using a per-object flag (not a static bool) so resizing one card doesn't
-    // block a different card that fires SIZE_CHANGED in the same layout pass.
-    if (lv_obj_has_flag(card_root, LV_OBJ_FLAG_USER_1))
-        return;
-    lv_obj_add_flag(card_root, LV_OBJ_FLAG_USER_1);
-    struct Guard {
-        lv_obj_t* obj;
-        ~Guard() {
-            lv_obj_remove_flag(obj, LV_OBJ_FLAG_USER_1);
-        }
-    } guard{card_root};
-
     lv_obj_t* arc = lv_obj_find_by_name(card_root, "dial_arc");
     if (!arc)
         return;
-
-    // The container is either found by name (carousel pages set it explicitly)
-    // or inferred as the arc's parent (XML component roots get their name
-    // overwritten by the component system, so "dial_container" won't match).
-    lv_obj_t* container = lv_obj_find_by_name(card_root, "dial_container");
-    if (!container)
-        container = lv_obj_get_parent(arc);
-
-    // Force layout computation so flex_grow children have real sizes
-    lv_obj_update_layout(card_root);
-
-    int32_t content_w = lv_obj_get_content_width(container);
-    int32_t container_h = lv_obj_get_content_height(container);
-
-    // Arc must be square, fit in both dimensions
-    int32_t arc_size = LV_MIN(content_w, container_h);
-    arc_size = LV_MAX(arc_size, MIN_ARC_SIZE);
-
-    // Scale arc track width proportionally (ratio matches all original breakpoints)
-    int32_t track_w = LV_MAX(arc_size / ARC_TO_TRACK_RATIO, MIN_TRACK_WIDTH);
-
-    // Skip if already at target size and track width (avoids layout churn)
-    if (lv_obj_get_width(arc) == arc_size && lv_obj_get_height(arc) == arc_size &&
-        lv_obj_get_style_arc_width(arc, LV_PART_MAIN) == track_w)
-        return;
-
-    lv_obj_set_size(arc, arc_size, arc_size);
-    lv_obj_set_style_arc_width(arc, track_w, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(arc, track_w, LV_PART_INDICATOR);
-
-    spdlog::trace("[FanArcResize] content_w={} container_h={} -> arc={}x{} track_w={}", content_w,
-                  container_h, arc_size, arc_size, track_w);
-}
-
-static void on_card_size_changed(lv_event_t* e) {
-    auto* card_root = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
-    fan_arc_resize_to_fit(card_root);
+    helix::ui::refresh_progress_arc(arc);
 }
 
 void fan_arc_attach_auto_resize(lv_obj_t* card_root) {
     if (!card_root)
         return;
-    lv_obj_add_event_cb(card_root, on_card_size_changed, LV_EVENT_SIZE_CHANGED, nullptr);
+    lv_obj_t* arc = lv_obj_find_by_name(card_root, "dial_arc");
+    if (!arc) {
+        spdlog::warn("[FanArcResize] dial_arc not found under card_root");
+        return;
+    }
+    // dial_container, if present, is the size-driving container. Otherwise
+    // fall back to the arc's direct parent — same logic as the old impl.
+    lv_obj_t* container = lv_obj_find_by_name(card_root, "dial_container");
+    if (!container)
+        container = lv_obj_get_parent(arc);
 
-    // Trigger initial resize
-    fan_arc_resize_to_fit(card_root);
+    // Per-card owned subject; freed automatically on arc deletion.
+    helix::ui::attach_progress_arc_owned(arc, container);
 }
 
 } // namespace helix::ui

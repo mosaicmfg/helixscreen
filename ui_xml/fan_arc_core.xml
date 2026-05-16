@@ -13,17 +13,11 @@
         style_flex_main_place="center" style_flex_cross_place="center"
         style_clip_content="false"
         event_bubble="true">
-    <!-- 270-degree arc dial (size set dynamically by fan_arc_resize_to_fit) -->
-    <lv_arc name="dial_arc"
-            align="center"
-            bg_start_angle="135" bg_end_angle="45"
-            start_angle="135" end_angle="135"
-            min_value="0" max_value="100" value="$initial_value"
-            rotation="0" mode="normal"
-            style_arc_color="#border"
-            style_arc_color-indicator="#primary"
-            style_arc_rounded="true" style_arc_rounded-indicator="true"
-            style_bg_opa="0" style_border_width="0"/>
+    <!-- 270-degree dial — shared helix_progress_arc handles the common
+         styling + diameter-driven stroke thickness via attach_progress_arc()
+         in fan_arc_resize.cpp. Size is set dynamically by that helper. -->
+    <helix_progress_arc name="dial_arc"
+                        align="center" value="$initial_value"/>
     <!-- Centered icon + percentage column — children non-clickable so long-press bubbles to card -->
     <lv_obj name="center_content"
             align="center" width="content" height="content"
