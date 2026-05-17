@@ -59,3 +59,14 @@ TEST_CASE_METHOD(HelixTestFixture, "classify_primary_fans treats controller/temp
         REQUIRE_FALSE(state.classify_primary_fans().aux.empty());
     }
 }
+
+TEST_CASE_METHOD(HelixTestFixture, "classify_primary_fans handles empty fan list",
+                 "[fan_state][drift]") {
+    PrinterFanState state;
+    state.set_fans_for_test({});
+
+    auto picked = state.classify_primary_fans();
+    REQUIRE(picked.part.empty());
+    REQUIRE(picked.hotend.empty());
+    REQUIRE(picked.aux.empty());
+}
