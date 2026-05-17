@@ -3,7 +3,9 @@
 
 #include "runtime_config.h"
 
+#include "ams_backend.h"
 #include "ams_state.h"
+#include "ams_types.h"
 #include "app_globals.h"
 
 #include <spdlog/spdlog.h>
@@ -80,7 +82,17 @@ bool RuntimeConfig::should_show_runout_modal() const {
     // Check AMS state
     auto& ams = AmsState::instance();
     if (ams.is_available()) {
-        // AMS present - check bypass state
+        // Tool changers (Snapmaker U1, generic TOOL_CHANGER) have one extruder
+        // per slot and no shared hub — runout on a tool cannot be auto-resolved
+        // by swapping spools. Treat them like "no AMS" for runout guidance so
+        // the user gets the same Load/Resume/Cancel modal they would on a
+        // single-extruder printer. Bypass doesn't apply to tool changers.
+        if (auto* backend = ams.get_backend(0); backend && is_tool_changer(backend->get_type())) {
+            spdlog::debug("[RuntimeConfig] Tool-changer AMS - showing runout modal");
+            return true;
+        }
+
+        // Hub-topology AMS (Happy Hare, AFC, ACE, AD5X IFS, CFS, QIDI Box):
         // bypass_active=1: external spool (show modal - toolhead sensor matters)
         // bypass_active=0: AMS managing filament (suppress - runout during swaps normal)
         int bypass_active = lv_subject_get_int(ams.get_bypass_active_subject());
