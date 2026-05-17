@@ -318,6 +318,12 @@ PrintStatusPanel::~PrintStatusPanel() {
         gcode_load_timer_ = nullptr;
     }
 
+    // Cancel pending Pause/Resume optimistic-UI timeout
+    if (pending_action_timeout_) {
+        lv_timer_delete(pending_action_timeout_);
+        pending_action_timeout_ = nullptr;
+    }
+
     // ObserverGuard handles observer cleanup automatically
     resize_registered_ = false;
 
@@ -1542,9 +1548,19 @@ void PrintStatusPanel::update_all_displays() {
     helix::format::format_percent(lifecycle_.flow_percent(), flow_buf_, sizeof(flow_buf_));
     lv_subject_copy_string(&flow_subject_, flow_buf_);
 
-    // Update pause button icon and label based on state
+    // Update pause button icon and label based on state, with optimistic
+    // override while a Pause/Resume RPC is in flight (Klipper takes ~20s to
+    // acknowledge, real lifecycle state lags the user's tap).
     // MDI icons: play=F040A, pause=F03E4 (UTF-8: play=F3 B0 90 8A, pause=F3 B0 8F A4)
-    if (lifecycle_.state() == PrintState::Paused) {
+    if (pending_action_ == PendingPrintAction::Pausing) {
+        // Show paused glyph while waiting for confirmation — communicates the
+        // intent immediately; label clarifies it's in-flight.
+        std::snprintf(pause_button_buf_, sizeof(pause_button_buf_), "\xF3\xB0\x8F\xA4"); // pause
+        std::snprintf(pause_label_buf_, sizeof(pause_label_buf_), "Pausing...");
+    } else if (pending_action_ == PendingPrintAction::Resuming) {
+        std::snprintf(pause_button_buf_, sizeof(pause_button_buf_), "\xF3\xB0\x90\x8A"); // play
+        std::snprintf(pause_label_buf_, sizeof(pause_label_buf_), "Resuming...");
+    } else if (lifecycle_.state() == PrintState::Paused) {
         std::snprintf(pause_button_buf_, sizeof(pause_button_buf_), "\xF3\xB0\x90\x8A"); // play
         std::snprintf(pause_label_buf_, sizeof(pause_label_buf_), "Resume");
     } else {
@@ -1578,6 +1594,7 @@ void PrintStatusPanel::handle_pause_button() {
 
         if (api_) {
             spdlog::info("[{}] Using StandardMacros pause: {}", get_name(), pause_info.get_macro());
+            start_pending_action(PendingPrintAction::Pausing);
             // Stateless callbacks to avoid use-after-free if panel destroyed [L012]
             StandardMacros::instance().execute(
                 StandardMacroSlot::Pause, api_,
@@ -1588,6 +1605,10 @@ void PrintStatusPanel::handle_pause_button() {
                 [](const MoonrakerError& err) {
                     spdlog::error("[Print Status] Failed to pause print: {}", err.message);
                     NOTIFY_ERROR(lv_tr("Failed to pause print: {}"), err.user_message());
+                    // Send-side failure: clear optimistic UI immediately rather
+                    // than waiting on the 25s timeout. Panel is a singleton so
+                    // the static-context lookup is safe.
+                    get_global_print_status_panel().clear_pending_action();
                 });
         } else {
             // Fall back to local state change for mock mode
@@ -1608,6 +1629,7 @@ void PrintStatusPanel::handle_pause_button() {
         if (api_) {
             spdlog::info("[{}] Using StandardMacros resume: {}", get_name(),
                          resume_info.get_macro());
+            start_pending_action(PendingPrintAction::Resuming);
             // Stateless callbacks to avoid use-after-free if panel destroyed [L012]
             StandardMacros::instance().execute(
                 StandardMacroSlot::Resume, api_,
@@ -1618,6 +1640,7 @@ void PrintStatusPanel::handle_pause_button() {
                 [](const MoonrakerError& err) {
                     spdlog::error("[Print Status] Failed to resume print: {}", err.message);
                     NOTIFY_ERROR(lv_tr("Failed to resume print: {}"), err.user_message());
+                    get_global_print_status_panel().clear_pending_action();
                 });
         } else {
             // Fall back to local state change for mock mode
@@ -2236,6 +2259,54 @@ void PrintStatusPanel::on_controls_size_changed(lv_event_t* e) {
     LVGL_SAFE_EVENT_CB_END();
 }
 
+void PrintStatusPanel::start_pending_action(PendingPrintAction action) {
+    // Cancel any in-flight pending action before starting a new one — replaces
+    // a stale Pausing/Resuming with the latest user intent.
+    clear_pending_action();
+    pending_action_ = action;
+
+    // Optimistic 25s timeout: Klipper's RESUME/PAUSE typically lands in <2s but
+    // can stretch to 20s when buffered moves drain. After 25s assume the
+    // command silently failed and revert UI so the user can re-issue. Length
+    // is conservative — we'd rather give a slow resume time to land than show
+    // a spurious "timed out" toast on a successful command.
+    pending_action_timeout_ = lv_timer_create(
+        [](lv_timer_t* t) {
+            auto* self =
+                static_cast<PrintStatusPanel*>(lv_timer_get_user_data(t));
+            if (!self) return;
+            const char* verb = (self->pending_action_ == PendingPrintAction::Resuming)
+                                   ? "Resume"
+                                   : "Pause";
+            spdlog::warn("[Print Status] {} request timed out — clearing pending UI", verb);
+            NOTIFY_WARNING(lv_tr("{} command timed out"), verb);
+            self->clear_pending_action();
+        },
+        25000, this);
+    lv_timer_set_repeat_count(pending_action_timeout_, 1);
+
+    // Push the optimistic state to all dependent subjects right now.
+    update_all_displays();
+    update_button_states();
+    recompute_paused_overlay_visibility();
+}
+
+void PrintStatusPanel::clear_pending_action() {
+    if (pending_action_timeout_) {
+        lv_timer_delete(pending_action_timeout_);
+        pending_action_timeout_ = nullptr;
+    }
+    bool had_pending = (pending_action_ != PendingPrintAction::None);
+    pending_action_ = PendingPrintAction::None;
+    if (had_pending && subjects_initialized_) {
+        // Re-render so button label/icon/state and paused overlay snap back to
+        // whatever lifecycle_ now reports.
+        update_all_displays();
+        update_button_states();
+        recompute_paused_overlay_visibility();
+    }
+}
+
 void PrintStatusPanel::recompute_paused_overlay_visibility() {
     if (!subjects_initialized_)
         return;
@@ -2243,14 +2314,33 @@ void PrintStatusPanel::recompute_paused_overlay_visibility() {
     auto state = static_cast<PrintJobState>(
         lv_subject_get_int(printer_state_.get_print_state_enum_subject()));
     bool paused = (state == PrintJobState::PAUSED);
-    lv_subject_set_int(&show_paused_overlay_subject_, paused ? 1 : 0);
 
-    // Reason resolution: prefer Klipper's print_stats.message (firmware-supplied
-    // descriptor — runout, error wrap, custom macros). If empty AND any
-    // configured runout sensor is currently tripped, surface a generic
-    // "Filament Runout" hint. Otherwise leave blank → reason label stays hidden.
+    // Optimistic overlay state while a Pause/Resume RPC is in flight: show the
+    // overlay during a Pausing request even though Klipper still reports
+    // PRINTING; hide it as soon as Resuming starts even though Klipper still
+    // reports PAUSED. Reason label swaps to a transitional message so the user
+    // sees their tap acknowledged without waiting ~20s for Moonraker to
+    // confirm.
+    bool effective_paused = paused;
+    if (pending_action_ == PendingPrintAction::Pausing) {
+        effective_paused = true;
+    } else if (pending_action_ == PendingPrintAction::Resuming) {
+        effective_paused = false;
+    }
+    lv_subject_set_int(&show_paused_overlay_subject_, effective_paused ? 1 : 0);
+
+    // Reason resolution. Pending action takes precedence so the user always
+    // sees feedback. Otherwise prefer Klipper's print_stats.message
+    // (firmware-supplied descriptor — runout, error wrap, custom macros). If
+    // empty AND any configured runout sensor is currently tripped, surface a
+    // generic "Filament Runout" hint. Otherwise leave blank → reason label
+    // stays hidden.
     std::string reason;
-    if (paused) {
+    if (pending_action_ == PendingPrintAction::Pausing) {
+        reason = lv_tr("Pausing...");
+    } else if (pending_action_ == PendingPrintAction::Resuming) {
+        reason = lv_tr("Resuming...");
+    } else if (paused) {
         const char* fw_msg = lv_subject_get_string(printer_state_.get_print_message_subject());
         if (fw_msg && *fw_msg) {
             reason = fw_msg;
@@ -2336,6 +2426,15 @@ void PrintStatusPanel::on_print_state_changed(PrintJobState job_state) {
     auto result = lifecycle_.on_job_state_changed(job_state, outcome);
     if (!result.state_changed) {
         return;
+    }
+
+    // Any real lifecycle transition clears an in-flight optimistic Pause/Resume
+    // — whether or not the transition matches our intent. PRINTING -> PAUSED
+    // confirms a Pause; PAUSED -> PRINTING confirms a Resume; anything else
+    // (Cancelled, Error) supersedes the intent and the optimistic UI should
+    // step aside immediately.
+    if (pending_action_ != PendingPrintAction::None) {
+        clear_pending_action();
     }
 
     // Note: Badge/Reprint button visibility is now handled via the print_outcome subject,
@@ -2848,7 +2947,11 @@ void PrintStatusPanel::update_button_states() {
     bool controls_enabled = PrintLifecycleState::is_active(state);
 
     auto& macros = StandardMacros::instance();
+    // Disable the pause/resume button while a Pause/Resume RPC is in flight so
+    // impatient users can't re-tap and queue a second macro. Real state arrival
+    // (or timeout) clears pending_action_ and re-enables.
     bool pause_enabled = controls_enabled &&
+                         pending_action_ == PendingPrintAction::None &&
                          !macros.get(state == PrintState::Paused ? StandardMacroSlot::Resume
                                                                  : StandardMacroSlot::Pause)
                               .is_empty();

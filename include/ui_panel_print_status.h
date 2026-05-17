@@ -552,6 +552,18 @@ class PrintStatusPanel : public OverlayBase {
     void handle_reprint_button(); ///< Reprint the cancelled file
     void handle_resize();
 
+    /// Optimistic UI for Pause/Resume: Klipper takes up to ~20s to acknowledge
+    /// a RESUME/PAUSE macro. Without immediate UI feedback the button looks
+    /// dead and the user re-taps. start_pending_action flips the button label,
+    /// disables it, and updates the paused overlay text. clear_pending_action
+    /// is called from on_print_state_changed when the real lifecycle state
+    /// reaches the intended state, or from a timeout fallback.
+    enum class PendingPrintAction { None, Pausing, Resuming };
+    PendingPrintAction pending_action_ = PendingPrintAction::None;
+    lv_timer_t* pending_action_timeout_ = nullptr;
+    void start_pending_action(PendingPrintAction action);
+    void clear_pending_action();
+
     //
     // === Static Trampolines ===
     //
