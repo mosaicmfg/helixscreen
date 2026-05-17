@@ -197,6 +197,16 @@ void ui_gcode_viewer_set_paused(lv_obj_t* obj, bool paused);
  */
 bool ui_gcode_viewer_is_paused(lv_obj_t* obj);
 
+/**
+ * @brief Force a full redraw of the viewer
+ *
+ * Marks the cached frame stale (3D renderer's frame_dirty_, 2D's last-render
+ * state) and invalidates the widget so DRAW_POST regenerates the image from
+ * scratch. Use on display wake — the cached-blit fast path can leave a blank
+ * widget when LVGL's image cache is invalidated by the framebuffer unblank.
+ */
+void ui_gcode_viewer_force_redraw(lv_obj_t* obj);
+
 // ==============================================
 // Render Mode Control
 // ==============================================

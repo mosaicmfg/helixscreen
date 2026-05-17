@@ -753,6 +753,20 @@ lv_obj_t* PrintStatusPanel::create(lv_obj_t* parent) {
     // Register resize callback
     if (auto* dm = DisplayManager::instance()) {
         dm->register_resize_callback(on_resize_static);
+
+        // Force-redraw the gcode viewer on display wake. LVGL's image cache is
+        // invalidated when the framebuffer is unblanked, leaving the 3D
+        // renderer's cached-blit path with stale references — the canvas can
+        // come back blank even though the underlying draw_buf data is intact.
+        // Issuing a full re-render here paints from scratch.
+        auto token = lifetime_.token();
+        dm->register_sleep_callback([this, token](bool sleeping) {
+            if (token.expired() || sleeping)
+                return;
+            if (gcode_viewer_ && !ui_gcode_viewer_is_paused(gcode_viewer_)) {
+                ui_gcode_viewer_force_redraw(gcode_viewer_);
+            }
+        });
     }
     resize_registered_ = true;
 

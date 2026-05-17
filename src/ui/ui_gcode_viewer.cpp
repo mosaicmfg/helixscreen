@@ -1924,6 +1924,28 @@ bool ui_gcode_viewer_is_paused(lv_obj_t* obj) {
     return st ? st->rendering_paused_ : true;
 }
 
+void ui_gcode_viewer_force_redraw(lv_obj_t* obj) {
+    gcode_viewer_state_t* st = get_state(obj);
+    if (!st)
+        return;
+
+    // 3D path: the renderer's cached-blit fast path skips re-rendering when
+    // state is unchanged and draw_buf_ exists. Drop the draw_buf so the next
+    // DRAW_POST takes the full render path (render_to_fbo -> blit_to_lvgl).
+#ifdef ENABLE_3D_RENDERER
+    if (st->renderer_) {
+        st->renderer_->clear_cached_frame();
+    }
+#endif
+
+    // 2D path doesn't expose an invalidate hook, but the invalidate below
+    // forces DRAW_POST which re-runs the renderer; without a stale draw_buf
+    // to short-circuit on, that's sufficient for the 2D case.
+
+    lv_obj_invalidate(obj);
+    spdlog::debug("[GCode Viewer] force_redraw issued");
+}
+
 // ==============================================
 // Render Mode Control
 // ==============================================
