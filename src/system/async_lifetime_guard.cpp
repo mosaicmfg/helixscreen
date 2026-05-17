@@ -116,16 +116,26 @@ bool on_main_thread() noexcept {
                   lr, static_cast<unsigned long long>(tid_word));
 
     // Use the existing display-anomaly channel so the telemetry pipeline
-    // captures backtrace + rate-limits across other LVGL anomalies.
+    // captures backtrace + rate-limits across other LVGL anomalies. Telemetry
+    // is the persistent signal — visible at any log level via debug bundles.
     helix_lvgl_anomaly("bg_tok_expired_check", ctx);
 
-    spdlog::warn("[LifetimeToken] bg-thread expired() check while alive at lr={} — "
-                 "likely missing tok.defer() wrap (cluster:pstat-async-delete Mechanism C)",
-                 lr);
+    // The runtime detector cannot distinguish a correct
+    //   `if (tok.expired()) return; ... tok.defer([this](){ ... });`
+    // pattern from a bare Mechanism C anti-pattern — both inline the same
+    // `expired()` call and the captured LR points at the next instruction
+    // in either case. scripts/check_l081_anti_pattern.py is the authoritative
+    // static gate; this runtime emit is informational only. Field bundles
+    // (#UMAX4U2G v0.99.60 et al.) showed 8 distinct LRs all resolving to
+    // correct tok.defer() callsites — debug-level avoids that noise in
+    // production logs while telemetry still captures occurrence rates.
+    spdlog::debug("[LifetimeToken] bg-thread expired() check at lr={} "
+                  "(cluster:pstat-async-delete — verify tok.defer() wraps body)",
+                  lr);
 
     // Strict mode (CI / test fixtures): abort so any new instance of the
-    // anti-pattern fails the build instead of silently warning. Production
-    // stays at warn so we never crash a user over instrumentation.
+    // anti-pattern fails the build. Print loudly to stderr so the abort
+    // reason is visible in test output even at debug log level.
     if (g_strict_bg_check.load(std::memory_order_acquire)) {
         std::fprintf(stderr,
                      "\n[LifetimeToken] STRICT MODE: bg-thread expired() check at lr=%p — "
