@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import urllib.request
 import urllib.error
@@ -203,6 +204,66 @@ def is_static_platform(platform: str) -> bool:
     return platform in ("ad5m", "ad5x", "cc1")
 
 
+# ---------------------------------------------------------------------------
+# memory_map parsing: handle binaries with multiple PT_LOAD r-xp segments
+# ---------------------------------------------------------------------------
+# A single `load_base` value can't resolve frames in binaries that mmap the
+# .text section at a file offset other than 0, or that have more than one
+# executable PT_LOAD segment (the snapmaker-u1 build, for example, maps
+# 0x1382000 of r-xp starting at file offset 0x155000). Parse the memory_map
+# lines from the crash bundle and translate each frame through the segment
+# it actually falls in.
+
+# /proc/self/maps line shape:
+#   START-END PERMS FILE_OFFSET DEV INODE   /path/to/file
+# we only care about r-xp lines that map the helix-screen executable.
+_MAP_LINE_RE = re.compile(
+    r"^([0-9a-f]+)-([0-9a-f]+)\s+r-xp\s+([0-9a-f]+)\s+\S+\s+\d+\s+(.+?)\s*$"
+)
+
+
+def parse_binary_segments(memory_map: list) -> list[tuple[int, int, int]]:
+    """Extract (mem_start, mem_end, file_offset) tuples for helix-screen r-xp
+    segments in /proc/self/maps lines. Returns [] if no map data or no matches.
+
+    Telemetry's `memory_map` field is already filtered to r-xp .so / helix-screen
+    lines (src/system/telemetry_manager.cpp:1217-1234), so we just match on path
+    suffix here.
+    """
+    segments: list[tuple[int, int, int]] = []
+    if not memory_map:
+        return segments
+    for line in memory_map:
+        if not isinstance(line, str):
+            continue
+        # Only the binary itself, not shared libs — those resolve via different
+        # symbol files (which we don't ship).
+        if "helix-screen" not in line and "helix_screen" not in line:
+            continue
+        m = _MAP_LINE_RE.match(line)
+        if not m:
+            continue
+        try:
+            mem_start = int(m.group(1), 16)
+            mem_end = int(m.group(2), 16)
+            file_off = int(m.group(3), 16)
+        except ValueError:
+            continue
+        segments.append((mem_start, mem_end, file_off))
+    return segments
+
+
+def addr_to_file_offset(addr: int, segments: list[tuple[int, int, int]]) -> Optional[int]:
+    """If addr falls in a known helix-screen r-xp segment, return the
+    corresponding file offset in the binary. Otherwise None (shared lib /
+    unmapped / data segment).
+    """
+    for mem_start, mem_end, file_off in segments:
+        if mem_start <= addr < mem_end:
+            return (addr - mem_start) + file_off
+    return None
+
+
 def is_shared_lib_addr(addr: int, platform: str, load_base: int = 0,
                        sym_max: int = 0) -> bool:
     """Detect shared library addresses (not from our binary).
@@ -271,6 +332,7 @@ def resolve_backtrace(
     symbols: Optional[SymbolTable],
     load_base: Optional[str] = None,
     anchor_names: Optional[list[str]] = None,
+    segments: Optional[list[tuple[int, int, int]]] = None,
 ) -> list[dict]:
     """Resolve a crash backtrace to named frames.
 
@@ -278,6 +340,15 @@ def resolve_backtrace(
     when no explicit `load_base` is provided. Defaults to ["crash_signal_handler"]
     (correct for crash events). Anomaly events (no signal handler in trace)
     can pass e.g. ["helix_lvgl_anomaly", "report_bg_expired_check"].
+
+    `segments` is the list of helix-screen r-xp memory mappings from
+    parse_binary_segments(). When provided, each frame is translated to a
+    file offset via the segment it falls in, which correctly handles binaries
+    that mmap .text at a non-zero file offset or have multiple PT_LOAD r-xp
+    segments (e.g. snapmaker-u1 maps r-xp at file_offset=0x155000). Frames
+    outside any helix-screen segment are flagged shared-lib; frames inside one
+    bypass the global `load_base` arithmetic entirely. Absent → fall back to
+    the legacy single-base path.
 
     Returns list of {addr, resolved, is_shared_lib} dicts.
     """
@@ -385,8 +456,17 @@ def resolve_backtrace(
     sym_max = symbols.addrs[-1] if symbols and symbols.addrs else 0
 
     for i, addr in enumerate(addrs):
-        is_lib = is_shared_lib_addr(addr, platform, load_base=base_address,
-                                     sym_max=sym_max)
+        # Classification: prefer memory_map segments when present.
+        # `is_shared_lib_addr` falls back to `load_base + sym_max` heuristics,
+        # which misclassifies binary frames past `_etext` as shared lib on
+        # builds with `-ffunction-sections + LTO` (snapmaker-u1). Segments
+        # tell us definitively which addrs are in helix-screen vs elsewhere.
+        if segments is not None:
+            is_lib = addr_to_file_offset(addr, segments) is None
+        else:
+            is_lib = is_shared_lib_addr(addr, platform, load_base=base_address,
+                                         sym_max=sym_max)
+
         if is_lib:
             frames.append({
                 "addr": f"0x{addr:x}",
@@ -394,6 +474,13 @@ def resolve_backtrace(
                 "is_shared_lib": True,
             })
         else:
+            # Translation always goes through `addr - load_base`. For PIE the
+            # base makes this == file_offset (= sym_addr, since the linker uses
+            # vaddr 0). For non-PIE static binaries the base is 0 and `nm`
+            # encodes runtime virtual addresses directly, so this is also
+            # correct. The segment-based `(addr - mem_start) + file_off`
+            # formula computes file_offset and is WRONG for non-PIE because
+            # virtual_addr != file_offset there — see ad5m static link.
             file_offset = addr - base_address
             resolved = symbols.lookup(file_offset)
             frames.append({
@@ -636,7 +723,14 @@ def analyze_crashes(
 
         # Resolve backtrace
         load_base = crash.get("load_base")
-        frames = resolve_backtrace(backtrace, platform, symbols, load_base=load_base)
+        # Parse the bundle's /proc/self/maps r-xp lines into segments so
+        # multi-PT_LOAD or non-zero-file-offset binaries resolve correctly.
+        # Empty list ⇒ no map data; pass None so the legacy single-base path
+        # is taken instead of misclassifying every frame as <shared lib>.
+        seg_list = parse_binary_segments(crash.get("memory_map") or [])
+        segments = seg_list if seg_list else None
+        frames = resolve_backtrace(backtrace, platform, symbols,
+                                   load_base=load_base, segments=segments)
 
         # If backtrace is shallow (only crash_handler + signal_restorer),
         # inject reg_pc and reg_lr as additional frames for resolution.
@@ -650,7 +744,8 @@ def analyze_crashes(
                 if reg_val:
                     reg_addrs.append(reg_val)
             if reg_addrs:
-                reg_frames = resolve_backtrace(reg_addrs, platform, symbols, load_base=load_base)
+                reg_frames = resolve_backtrace(reg_addrs, platform, symbols,
+                                               load_base=load_base, segments=segments)
                 useful_reg = [f for f in reg_frames if not f["is_shared_lib"]
                               and "crash_signal_handler" not in f["resolved"]]
                 if useful_reg:
