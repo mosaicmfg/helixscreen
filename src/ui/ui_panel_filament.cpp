@@ -1970,12 +1970,24 @@ void FilamentPanel::set_limits(int min_temp, int max_temp, int min_extrude_temp)
 // ============================================================================
 
 void FilamentPanel::execute_load() {
-    // When an AMS backend is active and requires slot selection, redirect to the
-    // AMS panel so the user can pick a specific slot. The backend decides — e.g.
-    // bypass mode returns false so we fall through to standard macros instead.
+    // When an AMS backend is active and requires slot selection, prefer loading
+    // the currently-active slot directly — the filament panel's AMS card already
+    // shows which slot is active, asking the user to pick again in the AMS panel
+    // is redundant and confusing. Only fall through to the AMS-panel redirect
+    // when no slot is currently active (e.g. cold start, no tool selected).
     AmsBackend* backend = AmsState::instance().get_backend();
     if (backend && backend->requires_slot_selection_for_load()) {
-        spdlog::info("[{}] AMS backend active ({}), redirecting to AMS panel for slot selection",
+        AmsSystemInfo sys = backend->get_system_info();
+        if (sys.current_slot >= 0) {
+            spdlog::info("[{}] Loading filament directly into active slot {} (no redirect)",
+                         get_name(), sys.current_slot);
+            AmsError err = backend->load_filament(sys.current_slot);
+            if (!err.success()) {
+                NOTIFY_ERROR("{}", err.user_msg);
+            }
+            return;
+        }
+        spdlog::info("[{}] AMS backend active ({}), no active slot — redirecting to AMS panel",
                      get_name(), ams_type_to_string(backend->get_type()));
         NOTIFY_INFO(lv_tr("Select a filament slot to load"));
         navigate_to_ams_panel();
