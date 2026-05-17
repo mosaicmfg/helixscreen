@@ -1064,6 +1064,9 @@ void PrintStatusPanel::on_ui_destroyed() {
     btn_pause_ = nullptr;
     btn_tune_ = nullptr;
     btn_cancel_ = nullptr;
+    // Lazy fan control overlay — force re-creation on next click so we don't
+    // dereference a pointer into a destroyed widget tree (mirrors FanStackWidget::detach).
+    fan_control_panel_ = nullptr;
     success_badge_ = nullptr;
     cancel_badge_ = nullptr;
     error_badge_ = nullptr;
@@ -2193,10 +2196,10 @@ void PrintStatusPanel::recompute_fans_fit() {
         if (available >= fan_row_natural_height_ + 4)
             next = 1;
     }
-    spdlog::info(
-        "[{}] fans_fit check: controls_h={} used={} available={} needed={} current={} next={}",
-        get_name(), controls_h, used, available, fan_row_natural_height_, current, next);
     if (next != current) {
+        spdlog::debug(
+            "[{}] fans_fit {} -> {} (controls_h={}, used={}, available={}, needed={})",
+            get_name(), current, next, controls_h, used, available, fan_row_natural_height_);
         lv_subject_set_int(&fans_fit_subject_, next);
     }
 }
