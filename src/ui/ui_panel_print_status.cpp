@@ -12,6 +12,7 @@
 #include "ui_filename_utils.h"
 #include "ui_gcode_viewer.h"
 #include "ui_modal.h"
+#include "ui_fan_control_overlay.h"
 #include "ui_nav_manager.h"
 #include "ui_overlay_temp_graph.h"
 #include "ui_panel_common.h"
@@ -1746,8 +1747,27 @@ void PrintStatusPanel::on_fans_clicked(lv_event_t* e) {
 }
 
 void PrintStatusPanel::handle_fans_click() {
-    // Stub — full overlay-push wired in Task 9
-    spdlog::debug("[PrintStatusPanel] fans clicked (stub)");
+    spdlog::debug("[{}] Fans clicked — opening fan control overlay", get_name());
+
+    if (!fan_control_panel_ && parent_screen_) {
+        auto& overlay = get_fan_control_overlay();
+        if (!overlay.are_subjects_initialized())
+            overlay.init_subjects();
+        overlay.register_callbacks();
+        overlay.set_api(api_);
+
+        fan_control_panel_ = overlay.create(parent_screen_);
+        if (!fan_control_panel_) {
+            spdlog::error("[{}] Failed to create fan control overlay", get_name());
+            return;
+        }
+        NavigationManager::instance().register_overlay_instance(fan_control_panel_, &overlay);
+    }
+
+    if (fan_control_panel_) {
+        get_fan_control_overlay().set_api(api_);
+        NavigationManager::instance().push_overlay(fan_control_panel_);
+    }
 }
 
 void PrintStatusPanel::on_reprint_clicked(lv_event_t* e) {

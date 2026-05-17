@@ -19,6 +19,12 @@ void fan_spin_start(lv_obj_t* icon, int speed_pct) {
     if (!icon || speed_pct <= 0)
         return;
 
+    // Center the rotation pivot. Without this, transform_rotation pivots
+    // around the top-left and the icon orbits instead of spinning in place.
+    // Idempotent — safe to set on every start call.
+    lv_obj_set_style_transform_pivot_x(icon, LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(icon, LV_PCT(50), 0);
+
     // Scale duration inversely with speed: 100% → MIN, 1% → MAX
     uint32_t duration =
         FAN_SPIN_MAX_DURATION_MS -
