@@ -76,6 +76,16 @@ static char s_crash_path[MAX_PATH_LEN] = {};
 /// Whether the crash handler is installed
 static volatile sig_atomic_t s_installed = 0;
 
+/// One-shot guard: whichever path (write_exception_record OR the signal
+/// handler) reaches the crash file first wins. The other skips. Without this,
+/// a terminate_handler that writes the EXCEPTION record and then re-enters via
+/// abort() races with the SIGABRT signal handler — both open the same path
+/// with O_TRUNC and interleave, producing a garbled crash file (bundle
+/// SQABQX95 / issue #950 had "name:EXCEPTI" + "veversion:" and parsed as
+/// vunknown). Use sig_atomic_t so the SIGABRT-path read is async-signal-safe;
+/// __atomic_compare_exchange_n is lock-free on every target we ship.
+static volatile sig_atomic_t s_crash_file_written = 0;
+
 /// Application start time (for uptime calculation)
 static time_t s_start_time = 0;
 
@@ -480,6 +490,23 @@ static int fp_walk_backtrace(int fd, uintptr_t initial_fp, uintptr_t sp,
 
 /// The signal handler itself -- async-signal-safe ONLY
 static void crash_signal_handler(int sig, siginfo_t* info, void* ucontext) {
+    // If write_exception_record already laid down a crash file (e.g. the
+    // C++ terminate_handler ran before falling through to abort()), don't
+    // trample it — the EXCEPTION record is strictly more informative than
+    // a bare SIGABRT signature. The CAS is async-signal-safe (lock-free).
+    sig_atomic_t expected = 0;
+    if (!__atomic_compare_exchange_n(&s_crash_file_written, &expected, 1, false,
+                                     __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+        // Already written by the exception path. Skip the dump but still
+        // re-raise with the default handler so the process exits with the
+        // correct status — never leave the signal unhandled.
+        struct sigaction sa_dfl = {};
+        sa_dfl.sa_handler = SIG_DFL;
+        sigaction(sig, &sa_dfl, nullptr);
+        raise(sig);
+        _exit(128 + sig);
+    }
+
     // Open crash file (O_CREAT | O_WRONLY | O_TRUNC)
     // These are all async-signal-safe
     int fd = open(s_crash_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
@@ -1424,6 +1451,14 @@ void crash_handler::write_exception_record(const char* what) noexcept {
     // blocks in main() are uninteresting in practice (Application's constructor
     // doesn't throw before install completes), so dropping is acceptable.
     if (s_crash_path[0] == '\0') {
+        return;
+    }
+
+    // First-writer-wins. If a signal already laid down a crash file, don't
+    // overwrite — the original signal carries fault_addr/registers we'd lose.
+    sig_atomic_t expected = 0;
+    if (!__atomic_compare_exchange_n(&s_crash_file_written, &expected, 1, false,
+                                     __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
         return;
     }
 
