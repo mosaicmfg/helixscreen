@@ -51,6 +51,10 @@ constexpr uint8_t kExcludedAlpha = 153;
 /// Ghost darkening factor (40% brightness)
 constexpr int kGhostDarkenPercent = 40;
 
+/// Ghost wall darkening factor (10% brightness — outer walls render darker
+/// than infill so the silhouette outline reads against the background).
+constexpr int kGhostWallDarkenPercent = 10;
+
 /// Default extrusion width when metadata is unavailable (mm)
 constexpr float kDefaultExtrusionWidthMm = 0.4f;
 
@@ -1604,6 +1608,11 @@ void GCodeLayerRenderer::background_ghost_render_thread() {
     uint8_t ghost_a = 255; // Full alpha, we'll apply 40% when blitting
     uint32_t ghost_color = (ghost_a << 24) | (ghost_r << 16) | (ghost_g << 8) | ghost_b;
 
+    uint8_t wall_r = local_color_extrusion.red * kGhostWallDarkenPercent / 100;
+    uint8_t wall_g = local_color_extrusion.green * kGhostWallDarkenPercent / 100;
+    uint8_t wall_b = local_color_extrusion.blue * kGhostWallDarkenPercent / 100;
+    uint32_t ghost_wall_color = (255u << 24) | (wall_r << 16) | (wall_g << 8) | wall_b;
+
     // Render all layers to raw buffer
     // Works with both full-file mode (gcode_) and streaming mode (streaming_controller_)
     for (int layer_idx = 0; layer_idx < total_layers; ++layer_idx) {
@@ -1647,13 +1656,17 @@ void GCodeLayerRenderer::background_ghost_render_thread() {
             if (p1.x == p2.x && p1.y == p2.y)
                 continue;
 
+            // Outer walls render darker to give the ghost a readable silhouette.
+            const bool is_wall = (seg.feature_type == FeatureType::OuterWall);
+            const int darken_pct = is_wall ? kGhostWallDarkenPercent : kGhostDarkenPercent;
+
             // Per-segment ghost color (tool palette or single color)
-            uint32_t seg_color = ghost_color;
+            uint32_t seg_color = is_wall ? ghost_wall_color : ghost_color;
             if (local_tool_palette.has_tool_colors()) {
                 lv_color_t tc = local_tool_palette.resolve(seg.tool_index, local_color_extrusion);
-                uint8_t tr = tc.red * kGhostDarkenPercent / 100;
-                uint8_t tg = tc.green * kGhostDarkenPercent / 100;
-                uint8_t tb = tc.blue * kGhostDarkenPercent / 100;
+                uint8_t tr = tc.red * darken_pct / 100;
+                uint8_t tg = tc.green * darken_pct / 100;
+                uint8_t tb = tc.blue * darken_pct / 100;
                 seg_color = (255u << 24) | (tr << 16) | (tg << 8) | tb;
             }
             if (!obj_name.empty() && local_excluded.count(obj_name) > 0) {
