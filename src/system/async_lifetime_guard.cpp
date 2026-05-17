@@ -36,8 +36,18 @@ pthread_t g_main_thread_id;
 
 /// Strict mode: abort instead of just warning when the bg-thread anti-pattern
 /// fires. Enabled by setting `HELIX_STRICT_BG_THREAD_CHECK=1` in the env
-/// (CI runs export this; production never sets it). Resolved once at
-/// `set_main_thread_id()` time so the cost is one TLS-cache read at fire.
+/// (CI runs export this) OR via `set_strict_bg_check(true)` (HelixTestFixture).
+/// Resolved once at `set_main_thread_id()` time so the cost is one TLS-cache
+/// read at fire.
+///
+/// Release builds (`HELIX_RELEASE_BUILD` defined by cross-compile targets in
+/// `mk/cross.mk`) ignore the env var AND compile out the abort branch so a
+/// stray env leak can never crash a user — the detector still emits the
+/// telemetry anomaly + debug log. Native dev builds keep the abort so a real
+/// L081 anti-pattern fails loudly with the LR on stderr (snapmaker-u1 user
+/// 6d10417c hit this on 2026-05-14 with the env var somehow set; crash sig
+/// 307b6f48). `set_strict_bg_check(true)` still flips the flag in any build,
+/// but the release build has nothing to do with it.
 std::atomic<bool> g_strict_bg_check{false};
 
 /// Per-thread first-fire seen-set: TLS array of LRs already reported by
@@ -70,12 +80,16 @@ bool record_first_fire(void* lr) noexcept {
 void set_main_thread_id() noexcept {
     if (g_main_thread_set.load(std::memory_order_acquire)) return;
     g_main_thread_id = pthread_self();
+#ifndef HELIX_RELEASE_BUILD
     // Resolve strict mode opt-in once. Test fixtures may call
     // set_strict_bg_check(true) explicitly; CI exports the env var.
+    // Release builds skip both the env-var read and the abort branch
+    // so a stray HELIX_STRICT_BG_THREAD_CHECK=1 can never crash a user.
     if (const char* v = std::getenv("HELIX_STRICT_BG_THREAD_CHECK");
         v != nullptr && (v[0] == '1' || v[0] == 't' || v[0] == 'T' || v[0] == 'y' || v[0] == 'Y')) {
         g_strict_bg_check.store(true, std::memory_order_release);
     }
+#endif
     g_main_thread_set.store(true, std::memory_order_release);
 }
 
@@ -133,9 +147,12 @@ bool on_main_thread() noexcept {
                   "(cluster:pstat-async-delete — verify tok.defer() wraps body)",
                   lr);
 
+#ifndef HELIX_RELEASE_BUILD
     // Strict mode (CI / test fixtures): abort so any new instance of the
     // anti-pattern fails the build. Print loudly to stderr so the abort
     // reason is visible in test output even at debug log level.
+    // Compiled out in release builds — `g_strict_bg_check` may still be
+    // true via `set_strict_bg_check(true)` but has no effect here.
     if (g_strict_bg_check.load(std::memory_order_acquire)) {
         std::fprintf(stderr,
                      "\n[LifetimeToken] STRICT MODE: bg-thread expired() check at lr=%p — "
@@ -144,6 +161,7 @@ bool on_main_thread() noexcept {
                      lr);
         std::abort();
     }
+#endif
 }
 
 } // namespace helix::internal
