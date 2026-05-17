@@ -168,9 +168,6 @@ class PrinterFanState {
     /// Returns empty strings for roles with no detected fan.
     PrimaryFans classify_primary_fans() const;
 
-    /// Test-only: inject a synthesized fan list, bypassing Moonraker discovery.
-    void set_fans_for_test(std::vector<FanInfo> fans) { fans_ = std::move(fans); }
-
   private:
     friend class PrinterFanStateTestAccess;
 

@@ -33,6 +33,10 @@ class PrinterStateTestAccess {
         ps.last_kinematics_.clear();
         PrinterPrintStateTestAccess::reset_extra(ps.print_domain_);
     }
+
+    static PrinterFanState& get_fan_state(PrinterState& ps) {
+        return ps.fan_state_;
+    }
 };
 
 } // namespace helix

@@ -143,21 +143,6 @@ class PrintStatusPanel : public OverlayBase {
 
   public:
     //
-    // === Test Hooks ===
-    //
-
-    /**
-     * @brief Drive aux composite subjects with explicit inputs (tests only).
-     *
-     * Bypasses overlay_root_ / widget-measurement guards so integration tests
-     * can verify the three aux_*_visible subjects update correctly without
-     * constructing a full LVGL widget tree.
-     */
-    void recompute_aux_composites_for_test(int density, bool aux_present) {
-        recompute_aux_composites_for_measurement(density, aux_present);
-    }
-
-    //
     // === Legacy Compatibility ===
     //
 
@@ -294,6 +279,8 @@ class PrintStatusPanel : public OverlayBase {
     // Tune panel handlers delegated to PrintTuneOverlay (tune_overlay_ member)
 
   private:
+    friend class PrintStatusPanelTestAccess;
+
     //
     // === Injected Dependencies ===
     //

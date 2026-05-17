@@ -805,10 +805,6 @@ class PrinterState {
         return fan_state_;
     }
 
-    helix::PrinterFanState& get_fan_state() {
-        return fan_state_;
-    }
-
     /**
      * @brief Get all tracked fans
      * @return Const reference to fan info vector
