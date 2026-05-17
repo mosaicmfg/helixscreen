@@ -104,6 +104,9 @@ TEST_CASE_METHOD(HelixTestFixture,
     REQUIRE(picked.part == "fan");
     REQUIRE(picked.hotend == "heater_fan hotend_fan");
     REQUIRE(picked.aux == "fan_generic exhaust");
+
+    // Clear the global fan state so later tests don't see this leftover.
+    fs.set_fans_for_test({});
 }
 
 TEST_CASE_METHOD(FanPanelFixture,
@@ -130,7 +133,7 @@ TEST_CASE_METHOD(FanPanelFixture,
 }
 
 TEST_CASE_METHOD(FanPanelFixture,
-                 "recompute_aux_composites: density=0, aux present -> icon visible only",
+                 "recompute_aux_composites: density=0, aux present -> icon + full label visible",
                  "[print_status][fans]") {
     // density=0 (full): icon+label+val — aux_icon_visible=1, full=1, short=0
     panel.recompute_aux_composites_for_test(0, true);
