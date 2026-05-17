@@ -339,6 +339,8 @@ class PrintStatusPanel : public OverlayBase {
     // forced-visible). Used by recompute_fans_fit() as the `needed` value.
     int fan_row_natural_height_ = 0;
 
+    bool animations_enabled_ = false; ///< Cached from DisplaySettingsManager
+
     // Resolved fan object names (refreshed when fans_version ticks).
     std::string part_fan_name_;
     std::string hotend_fan_name_;
@@ -483,6 +485,14 @@ class PrintStatusPanel : public OverlayBase {
     //
     // === Private Helpers ===
     //
+
+    void bind_fan_observers();         ///< Reclassify + rebind on fans_version
+    void rebind_single_fan(ObserverGuard& guard, SubjectLifetime& lt,
+                           const std::string& object_name,
+                           const char* speed_label_widget_name,
+                           const char* icon_widget_name);
+    void update_fan_speed_display(const char* label_name, const char* icon_name, int speed);
+    void refresh_fan_animations();
 
     void update_all_displays();
     void show_gcode_viewer(bool show);

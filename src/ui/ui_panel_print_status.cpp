@@ -19,6 +19,7 @@
 #include "ui_temperature_utils.h"
 #include "ui_toast_manager.h"
 #include "ui_update_queue.h"
+#include "ui/fan_spin_animation.h"
 #include "ui/ui_widget_helpers.h"
 
 #include "abort_manager.h"
@@ -414,6 +415,32 @@ void PrintStatusPanel::init_subjects() {
     UI_MANAGED_SUBJECT_INT(fans_fit_subject_, 0, "print_status_fans_fit", subjects_);
     UI_MANAGED_SUBJECT_INT(aux_fan_present_subject_, 0, "print_status_aux_fan_present", subjects_);
 
+    // Fan classification refresh on discovery
+    {
+        auto token = lifetime_.token();
+        fans_version_observer_ = observe_int_sync<PrintStatusPanel>(
+            printer_state_.get_fans_version_subject(), this,
+            [token](PrintStatusPanel* self, int /*v*/) {
+                if (token.expired())
+                    return;
+                self->bind_fan_observers();
+            });
+    }
+
+    // Animation-settings refresh
+    animations_enabled_ = DisplaySettingsManager::instance().get_animations_enabled();
+    {
+        auto token = lifetime_.token();
+        animations_enabled_observer_ = observe_int_sync<PrintStatusPanel>(
+            DisplaySettingsManager::instance().subject_animations_enabled(), this,
+            [token](PrintStatusPanel* self, int enabled) {
+                if (token.expired())
+                    return;
+                self->animations_enabled_ = (enabled != 0);
+                self->refresh_fan_animations();
+            });
+    }
+
     end_overlay_dismissed_observer_ = observe_int_sync<PrintStatusPanel>(
         &end_overlay_dismissed_subject_, this,
         [](PrintStatusPanel* self, int) { self->recompute_end_overlay_visibility(); });
@@ -524,6 +551,16 @@ void PrintStatusPanel::deinit_subjects() {
     // in its destructor trying to lv_observer_remove() on freed memory.
     end_overlay_dismissed_observer_.reset();
     print_message_observer_.reset();
+
+    // Fan-row observers — lifetimes BEFORE observer guards per [L084]
+    fans_version_observer_.reset();
+    animations_enabled_observer_.reset();
+    part_speed_lifetime_.reset();
+    part_speed_observer_.reset();
+    hotend_speed_lifetime_.reset();
+    hotend_speed_observer_.reset();
+    aux_speed_lifetime_.reset();
+    aux_speed_observer_.reset();
 
     temp_observers_.clear();
     subjects_.deinit_all();
@@ -740,6 +777,9 @@ lv_obj_t* PrintStatusPanel::create(lv_obj_t* parent) {
     if (const char* icon = lv_xml_get_const(nullptr, "icon_cube")) {
         lv_subject_copy_string(&view_toggle_icon_subject_, icon);
     }
+
+    // Initial fan classification (may rebind later when fans_version updates)
+    bind_fan_observers();
 
     spdlog::debug("[{}] Setup complete!", get_name());
     return overlay_root_;
@@ -1738,6 +1778,108 @@ void PrintStatusPanel::recompute_end_overlay_visibility() {
     lv_subject_set_int(&show_complete_overlay_subject_, complete);
     lv_subject_set_int(&show_cancelled_overlay_subject_, cancelled);
     lv_subject_set_int(&show_error_overlay_subject_, error);
+}
+
+void PrintStatusPanel::bind_fan_observers() {
+    // Reset paired lifetime+observer members. Per [L084], lifetime BEFORE observer.
+    part_speed_lifetime_.reset();
+    part_speed_observer_.reset();
+    hotend_speed_lifetime_.reset();
+    hotend_speed_observer_.reset();
+    aux_speed_lifetime_.reset();
+    aux_speed_observer_.reset();
+
+    auto primary = printer_state_.get_fan_state().classify_primary_fans();
+    part_fan_name_ = primary.part;
+    hotend_fan_name_ = primary.hotend;
+    aux_fan_name_ = primary.aux;
+
+    rebind_single_fan(part_speed_observer_, part_speed_lifetime_,
+                      part_fan_name_, "part_fan_speed", "part_fan_icon");
+    rebind_single_fan(hotend_speed_observer_, hotend_speed_lifetime_,
+                      hotend_fan_name_, "hotend_fan_speed", "hotend_fan_icon");
+    rebind_single_fan(aux_speed_observer_, aux_speed_lifetime_,
+                      aux_fan_name_, "aux_fan_speed", "aux_fan_icon");
+
+    // Aux cluster visibility — subject drives XML bind_flag_if_eq
+    lv_subject_set_int(&aux_fan_present_subject_, aux_fan_name_.empty() ? 0 : 1);
+
+    spdlog::debug("[{}] Bound fans: part='{}' hotend='{}' aux='{}'", get_name(),
+                  part_fan_name_, hotend_fan_name_, aux_fan_name_);
+}
+
+void PrintStatusPanel::rebind_single_fan(ObserverGuard& guard, SubjectLifetime& lt,
+                                          const std::string& object_name,
+                                          const char* speed_label_widget_name,
+                                          const char* icon_widget_name) {
+    if (object_name.empty()) {
+        update_fan_speed_display(speed_label_widget_name, icon_widget_name, 0);
+        return;
+    }
+    lv_subject_t* subj = printer_state_.get_fan_speed_subject(object_name, lt);
+    if (!subj) {
+        spdlog::warn("[{}] Fan '{}' subject not available", get_name(), object_name);
+        return;
+    }
+
+    auto token = lifetime_.token();
+    std::string label_copy = speed_label_widget_name;
+    std::string icon_copy = icon_widget_name;
+    guard = helix::ui::observe_int_sync<PrintStatusPanel>(
+        subj, this,
+        [token, label_copy, icon_copy](PrintStatusPanel* self, int speed) {
+            if (token.expired())
+                return;
+            self->update_fan_speed_display(label_copy.c_str(), icon_copy.c_str(), speed);
+        },
+        lt);
+
+    // Seed initial value — observer fires only on change
+    update_fan_speed_display(speed_label_widget_name, icon_widget_name,
+                              lv_subject_get_int(subj));
+}
+
+void PrintStatusPanel::update_fan_speed_display(const char* label_name,
+                                                  const char* icon_name, int speed) {
+    if (!overlay_root_)
+        return;
+    lv_obj_t* label = lv_obj_find_by_name(overlay_root_, label_name);
+    if (label) {
+        char buf[8];
+        helix::format::format_percent(speed, buf, sizeof(buf));
+        lv_label_set_text(label, buf);
+    }
+    lv_obj_t* icon = lv_obj_find_by_name(overlay_root_, icon_name);
+    if (icon) {
+        if (!animations_enabled_ || speed <= 0)
+            helix::ui::fan_spin_stop(icon);
+        else
+            helix::ui::fan_spin_start(icon, speed);
+    }
+}
+
+void PrintStatusPanel::refresh_fan_animations() {
+    if (!overlay_root_)
+        return;
+    auto refresh_one = [this](const std::string& name, const char* icon_widget) {
+        if (name.empty())
+            return;
+        SubjectLifetime tmp;
+        lv_subject_t* s = printer_state_.get_fan_speed_subject(name, tmp);
+        if (!s)
+            return;
+        lv_obj_t* icon = lv_obj_find_by_name(overlay_root_, icon_widget);
+        if (!icon)
+            return;
+        int sp = lv_subject_get_int(s);
+        if (!animations_enabled_ || sp <= 0)
+            helix::ui::fan_spin_stop(icon);
+        else
+            helix::ui::fan_spin_start(icon, sp);
+    };
+    refresh_one(part_fan_name_, "part_fan_icon");
+    refresh_one(hotend_fan_name_, "hotend_fan_icon");
+    refresh_one(aux_fan_name_, "aux_fan_icon");
 }
 
 void PrintStatusPanel::recompute_paused_overlay_visibility() {
