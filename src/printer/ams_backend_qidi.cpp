@@ -6,6 +6,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cstdlib>
 #include <optional>
 #include <string>
 
@@ -76,8 +77,16 @@ AmsBackendQidi::AmsBackendQidi(MoonrakerAPI* api, helix::MoonrakerClient* client
     system_info_.units.push_back(std::move(unit));
     slot_rfid_.resize(NUM_SLOTS);
 
-    spdlog::debug("{} Stub backend constructed ({} slots, no protocol implemented)",
-                  backend_log_tag(), NUM_SLOTS);
+    // Field-testing gate. Default off; set HELIX_QIDI_BOX_WRITE=1 (or any
+    // non-empty value) to enable the write-path. See header for rationale.
+    if (const char* env = std::getenv("HELIX_QIDI_BOX_WRITE");
+        env != nullptr && *env != '\0' && *env != '0') {
+        write_enabled_ = true;
+        spdlog::info("{} Write-path ENABLED via HELIX_QIDI_BOX_WRITE", backend_log_tag());
+    }
+
+    spdlog::debug("{} Backend constructed ({} slots, write_enabled={})",
+                  backend_log_tag(), NUM_SLOTS, write_enabled_);
 }
 
 AmsBackendQidi::~AmsBackendQidi() = default;
@@ -389,25 +398,86 @@ PathSegment AmsBackendQidi::infer_error_segment() const {
 }
 
 // --- Filament operations ---
+//
+// All write-path methods are gated behind write_enabled_ (HELIX_QIDI_BOX_WRITE).
+// Default disabled: every operation returns not_supported so the read-only
+// state mirror can ship without risking unvalidated gcode on production
+// hardware. Sib6019 (issue #954 author) opts in via env var for field tests;
+// flip the gate to default-on once the gcode protocol is validated.
 
-AmsError AmsBackendQidi::load_filament(int /*slot_index*/) {
-    spdlog::warn("{} {} not yet implemented", backend_log_tag(), __func__);
-    return AmsErrorHelper::not_supported("QIDI Box load_filament");
+AmsError AmsBackendQidi::load_filament(int slot_index) {
+    if (!write_enabled_) {
+        return AmsErrorHelper::not_supported(
+            "QIDI Box write-path disabled (set HELIX_QIDI_BOX_WRITE=1 for field testing)");
+    }
+    int tool = -1;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (system_info_.units.empty()) {
+            return AmsErrorHelper::not_supported("QIDI Box: no unit configured");
+        }
+        const auto& slots = system_info_.units[0].slots;
+        if (slot_index < 0 || static_cast<size_t>(slot_index) >= slots.size()) {
+            return AmsErrorHelper::not_supported("QIDI Box: slot index out of range");
+        }
+        tool = slots[slot_index].mapped_tool;
+        if (tool < 0) {
+            tool = slot_index;
+        }
+    }
+    return execute_gcode("T" + std::to_string(tool));
 }
 
-AmsError AmsBackendQidi::unload_filament(int /*slot_index*/) {
-    spdlog::warn("{} {} not yet implemented", backend_log_tag(), __func__);
-    return AmsErrorHelper::not_supported("QIDI Box unload_filament");
+AmsError AmsBackendQidi::unload_filament(int slot_index) {
+    if (!write_enabled_) {
+        return AmsErrorHelper::not_supported(
+            "QIDI Box write-path disabled (set HELIX_QIDI_BOX_WRITE=1 for field testing)");
+    }
+    int tool = -1;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (system_info_.units.empty()) {
+            return AmsErrorHelper::not_supported("QIDI Box: no unit configured");
+        }
+        const auto& slots = system_info_.units[0].slots;
+        if (slot_index == -1) {
+            // Active slot: find the LOADED one.
+            for (const auto& s : slots) {
+                if (s.status == SlotStatus::LOADED) {
+                    tool = (s.mapped_tool >= 0) ? s.mapped_tool : s.slot_index;
+                    break;
+                }
+            }
+            if (tool < 0) {
+                return AmsErrorHelper::not_supported("QIDI Box: no slot currently loaded");
+            }
+        } else if (slot_index < 0 || static_cast<size_t>(slot_index) >= slots.size()) {
+            return AmsErrorHelper::not_supported("QIDI Box: slot index out of range");
+        } else {
+            tool = slots[slot_index].mapped_tool;
+            if (tool < 0) {
+                tool = slot_index;
+            }
+        }
+    }
+    return execute_gcode("UNLOAD_T" + std::to_string(tool));
 }
 
 AmsError AmsBackendQidi::select_slot(int /*slot_index*/) {
-    spdlog::warn("{} {} not yet implemented", backend_log_tag(), __func__);
-    return AmsErrorHelper::not_supported("QIDI Box select_slot");
+    // QIDI Box doesn't have a "select without loading" operation — load_filament
+    // is the only path. Reasonable callers should use load_filament directly.
+    return AmsErrorHelper::not_supported("QIDI Box: select_slot not supported (use load_filament)");
 }
 
-AmsError AmsBackendQidi::change_tool(int /*tool_number*/) {
-    spdlog::warn("{} {} not yet implemented", backend_log_tag(), __func__);
-    return AmsErrorHelper::not_supported("QIDI Box change_tool");
+AmsError AmsBackendQidi::change_tool(int tool_number) {
+    if (!write_enabled_) {
+        return AmsErrorHelper::not_supported(
+            "QIDI Box write-path disabled (set HELIX_QIDI_BOX_WRITE=1 for field testing)");
+    }
+    if (tool_number < 0) {
+        return AmsErrorHelper::not_supported("QIDI Box: tool number out of range");
+    }
+    return execute_gcode("T" + std::to_string(tool_number));
 }
 
 // --- Recovery ---
@@ -435,9 +505,29 @@ AmsError AmsBackendQidi::set_slot_info(int /*slot_index*/, const SlotInfo& /*inf
     return AmsErrorHelper::not_supported("QIDI Box set_slot_info");
 }
 
-AmsError AmsBackendQidi::set_tool_mapping(int /*tool_number*/, int /*slot_index*/) {
-    spdlog::warn("{} {} not yet implemented", backend_log_tag(), __func__);
-    return AmsErrorHelper::not_supported("QIDI Box set_tool_mapping");
+AmsError AmsBackendQidi::set_tool_mapping(int tool_number, int slot_index) {
+    if (!write_enabled_) {
+        return AmsErrorHelper::not_supported(
+            "QIDI Box write-path disabled (set HELIX_QIDI_BOX_WRITE=1 for field testing)");
+    }
+    if (tool_number < 0) {
+        return AmsErrorHelper::not_supported("QIDI Box: tool number out of range");
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (system_info_.units.empty()) {
+            return AmsErrorHelper::not_supported("QIDI Box: no unit configured");
+        }
+        const auto& slots = system_info_.units[0].slots;
+        if (slot_index < 0 || static_cast<size_t>(slot_index) >= slots.size()) {
+            return AmsErrorHelper::not_supported("QIDI Box: slot index out of range");
+        }
+    }
+    // box_extras.py stores `value_t<N> = "slot<M>"` — same shape we parse on
+    // the read-path. Quote the value to match Klipper's SAVE_VARIABLE syntax
+    // for string values.
+    return execute_gcode("SAVE_VARIABLE VARIABLE=value_t" + std::to_string(tool_number) +
+                         " VALUE=\"slot" + std::to_string(slot_index) + "\"");
 }
 
 void AmsBackendQidi::clear_slot_override(int /*slot_index*/) {

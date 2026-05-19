@@ -117,4 +117,11 @@ class AmsBackendQidi : public AmsSubscriptionBackend {
         int vendor_id = 0;   ///< Always 1 in the wild so far
     };
     std::vector<QidiSlotRfid> slot_rfid_;
+
+    /// Write-path gate. Defaults to value of HELIX_QIDI_BOX_WRITE env var
+    /// at construction (0/missing = disabled, anything else = enabled).
+    /// Sib6019 needs this for field testing; everyone else gets safe
+    /// not_supported responses so the read-only mirror can ship without
+    /// emitting unvalidated gcode to live hardware.
+    bool write_enabled_ = false;
 };
