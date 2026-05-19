@@ -1,24 +1,34 @@
 {
   "name": "Snapmaker U1",
-  "description": "Snapmaker U1 with standard Klipper start sequence",
+  "description": "Snapmaker U1 — matches real gcode_response strings emitted by the firmware during PRINT_START. Verified against live capture 2026-05-19. The Snapmaker U1 PRINT_START gcode_macro is essentially empty — all preprint phases (homing, heating, leveling, plate detection, cleaning, purging) are driven by the slicer-injected gcode running on a custom Klipper build that emits action-code transitions via SET_ACTION_CODE.",
   "progress_mode": "weighted",
-  "signal_formats": [],
+  "signal_formats": [
+    {
+      "prefix": "// Success: Set action code ",
+      "mappings": {
+        "BED_PREHEATING":        { "phase": "HEATING_BED",    "message": "Heating Bed..." },
+        "BED_PRESCANNING":       { "phase": "BED_MESH",       "message": "Pre-scanning Bed..." },
+        "BED_LEVELING":          { "phase": "BED_MESH",       "message": "Levelling Bed..." },
+        "DETECT_PLATE":          { "phase": "BED_MESH",       "message": "Detecting Plate..." },
+        "PRINT_BED_DETECTING":   { "phase": "BED_MESH",       "message": "Inspecting Bed..." },
+        "PRINT_SWITCH_CHECKING": { "phase": "INITIALIZING",   "message": "Checking Extruder..." },
+        "PRINT_RESUMING":        { "phase": "INITIALIZING",   "message": "Resuming Print..." },
+        "PRINT_REPLENISHING":    { "phase": "INITIALIZING",   "message": "Replenishing Filament..." },
+        "PRINT_PREEXTRUDING":    { "phase": "PURGING",        "message": "Pre-extruding..." }
+      }
+    }
+  ],
   "response_patterns": [
-    { "pattern": "G28|Homing|Home All Axes|homing", "phase": "HOMING", "message": "Homing...", "weight": 10 },
-    { "pattern": "M190|M140\\s+S[1-9]|Heating bed|Heat Bed|BED_TEMP|bed.*heat", "phase": "HEATING_BED", "message": "Heating Bed...", "weight": 20 },
-    { "pattern": "M109|M104\\s+S[1-9]|Heating (nozzle|hotend|extruder)|EXTRUDER_TEMP", "phase": "HEATING_NOZZLE", "message": "Heating Nozzle...", "weight": 20 },
-    { "pattern": "Z_TILT_ADJUST|z.?tilt.?adjust", "phase": "Z_TILT", "message": "Z Tilt Adjust...", "weight": 15 },
-    { "pattern": "BED_MESH_CALIBRATE|BED_MESH_PROFILE\\s+LOAD=|Loading bed mesh|mesh.*load", "phase": "BED_MESH", "message": "Loading Bed Mesh...", "weight": 15 },
-    { "pattern": "CLEAN_NOZZLE|NOZZLE_CLEAN|WIPE_NOZZLE|nozzle.?wipe|clean.?nozzle", "phase": "CLEANING", "message": "Cleaning Nozzle...", "weight": 10 },
-    { "pattern": "VORON_PURGE|LINE_PURGE|PURGE_LINE|Prime.?Line|Priming|purge.?line", "phase": "PURGING", "message": "Purging...", "weight": 10 }
+    { "pattern": "^// trigger_mcu_pos: \\{",   "phase": "HOMING",   "message": "Homing...",         "weight": 8  },
+    { "pattern": "^// probe_start_x: ",         "phase": "BED_MESH", "message": "Z Calibration...",  "weight": 5  }
   ],
   "phase_weights": {
-    "HOMING": 10,
-    "HEATING_BED": 20,
+    "HOMING": 5,
+    "HEATING_BED": 25,
     "HEATING_NOZZLE": 20,
-    "Z_TILT": 15,
-    "BED_MESH": 15,
-    "CLEANING": 10,
-    "PURGING": 10
+    "BED_MESH": 35,
+    "CLEANING": 5,
+    "PURGING": 5,
+    "INITIALIZING": 5
   }
 }

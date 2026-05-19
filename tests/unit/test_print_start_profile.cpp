@@ -878,3 +878,141 @@ TEST_CASE("PrintStartProfile: creality_k1 full print sequence progression",
     REQUIRE(detected.count(PrintStartPhase::PURGING) == 1);
     REQUIRE(total_weight == 95);
 }
+
+// ============================================================================
+// Snapmaker U1 Profile Tests
+//
+// Ground truth captured from a live U1 print on 2026-05-19 by tailing
+// /var/log/messages and observing every line that hit
+// PrintStartCollector::on_gcode_response. The Snapmaker U1 PRINT_START
+// gcode_macro is essentially empty — every preprint phase is driven by
+// slicer-injected gcode running on a Klipper fork that emits state
+// transitions via SET_ACTION_CODE. These tests codify the response
+// strings actually observed so a future profile edit can't silently
+// regress phase detection.
+// ============================================================================
+
+static std::shared_ptr<PrintStartProfile> get_snapmaker_u1_profile() {
+    return PrintStartProfile::load("snapmaker_u1");
+}
+
+TEST_CASE("PrintStartProfile: snapmaker_u1 profile loads",
+          "[profile][print][snapmaker]") {
+    auto profile = get_snapmaker_u1_profile();
+    REQUIRE(profile != nullptr);
+
+    if (profile->name().find("Snapmaker") == std::string::npos) {
+        SKIP("snapmaker_u1.json not available");
+    }
+
+    REQUIRE(profile->name() == "Snapmaker U1");
+    REQUIRE(profile->progress_mode() == PrintStartProfile::ProgressMode::WEIGHTED);
+    REQUIRE(profile->has_signal_formats());
+}
+
+TEST_CASE("PrintStartProfile: snapmaker_u1 action-code signals route to correct phase",
+          "[profile][print][snapmaker][signal]") {
+    auto profile = get_snapmaker_u1_profile();
+    REQUIRE(profile != nullptr);
+    if (profile->name().find("Snapmaker") == std::string::npos) {
+        SKIP("snapmaker_u1.json not available");
+    }
+
+    PrintStartProfile::MatchResult result;
+
+    // Each "// Success: Set action code <CODE>" line was observed verbatim in
+    // the 2026-05-19 capture. The mapping below is what the user actually
+    // sees; getting the message strings right matters because there is no
+    // other surface that explains which preprint sub-phase is running.
+    struct ActionCase {
+        std::string line;
+        PrintStartPhase expected_phase;
+        const char* expected_message;
+    };
+    std::vector<ActionCase> cases = {
+        {"// Success: Set action code BED_PREHEATING",
+         PrintStartPhase::HEATING_BED, "Heating Bed..."},
+        {"// Success: Set action code BED_PRESCANNING",
+         PrintStartPhase::BED_MESH, "Pre-scanning Bed..."},
+        {"// Success: Set action code BED_LEVELING",
+         PrintStartPhase::BED_MESH, "Levelling Bed..."},
+        {"// Success: Set action code DETECT_PLATE",
+         PrintStartPhase::BED_MESH, "Detecting Plate..."},
+        {"// Success: Set action code PRINT_BED_DETECTING",
+         PrintStartPhase::BED_MESH, "Inspecting Bed..."},
+        {"// Success: Set action code PRINT_SWITCH_CHECKING",
+         PrintStartPhase::INITIALIZING, "Checking Extruder..."},
+        {"// Success: Set action code PRINT_PREEXTRUDING",
+         PrintStartPhase::PURGING, "Pre-extruding..."},
+        {"// Success: Set action code PRINT_RESUMING",
+         PrintStartPhase::INITIALIZING, "Resuming Print..."},
+        {"// Success: Set action code PRINT_REPLENISHING",
+         PrintStartPhase::INITIALIZING, "Replenishing Filament..."},
+    };
+
+    for (const auto& c : cases) {
+        CAPTURE(c.line);
+        REQUIRE(profile->try_match_signal(c.line, result));
+        REQUIRE(result.phase == c.expected_phase);
+        REQUIRE(result.message == c.expected_message);
+    }
+
+    // IDLE action codes intentionally have no mapping — they bracket
+    // every real phase and should not steer the UI.
+    REQUIRE_FALSE(profile->try_match_signal(
+        "// Success: Set action code IDLE", result));
+}
+
+TEST_CASE("PrintStartProfile: snapmaker_u1 response patterns match real preprint lines",
+          "[profile][print][snapmaker]") {
+    auto profile = get_snapmaker_u1_profile();
+    REQUIRE(profile != nullptr);
+    if (profile->name().find("Snapmaker") == std::string::npos) {
+        SKIP("snapmaker_u1.json not available");
+    }
+
+    PrintStartProfile::MatchResult result;
+
+    // Klipper emits one of these per axis-trigger during G28. Both flavours
+    // (single axis, both axes) appeared in the capture. The pattern must
+    // anchor on the prefix so generic "trigger" strings don't false-match.
+    REQUIRE(profile->try_match_pattern(
+        "// trigger_mcu_pos: {'stepper_y': 29734, 'stepper_x': 26265}", result));
+    REQUIRE(result.phase == PrintStartPhase::HOMING);
+
+    REQUIRE(profile->try_match_pattern(
+        "// trigger_mcu_pos: {'stepper_x': -1832, 'stepper_y': -1561}", result));
+    REQUIRE(result.phase == PrintStartPhase::HOMING);
+
+    // Single-point Z probe before bed mesh. Snapmaker writes the probe
+    // origin via this signature once per probe initiation.
+    REQUIRE(profile->try_match_pattern(
+        "// probe_start_x: 5.30000, probe_start_y: 4.90156", result));
+    REQUIRE(result.phase == PrintStartPhase::BED_MESH);
+
+    // Negative cases — these must NOT match (they used to under the
+    // pre-2026-05-19 profile which keyed on command names that never
+    // actually appear in gcode_response).
+    REQUIRE_FALSE(profile->try_match_pattern("G28 X Y", result));
+    REQUIRE_FALSE(profile->try_match_pattern("M109 S250", result));
+    REQUIRE_FALSE(profile->try_match_pattern("BED_MESH_CALIBRATE", result));
+    REQUIRE_FALSE(profile->try_match_pattern("VORON_PURGE", result));
+    REQUIRE_FALSE(profile->try_match_pattern("CLEAN_NOZZLE", result));
+}
+
+TEST_CASE("PrintStartProfile: snapmaker_u1 phase weights sum reasonably",
+          "[profile][print][snapmaker]") {
+    auto profile = get_snapmaker_u1_profile();
+    REQUIRE(profile != nullptr);
+    if (profile->name().find("Snapmaker") == std::string::npos) {
+        SKIP("snapmaker_u1.json not available");
+    }
+
+    REQUIRE(profile->get_phase_weight(PrintStartPhase::HOMING) == 5);
+    REQUIRE(profile->get_phase_weight(PrintStartPhase::HEATING_BED) == 25);
+    REQUIRE(profile->get_phase_weight(PrintStartPhase::HEATING_NOZZLE) == 20);
+    REQUIRE(profile->get_phase_weight(PrintStartPhase::BED_MESH) == 35);
+    REQUIRE(profile->get_phase_weight(PrintStartPhase::INITIALIZING) == 5);
+    REQUIRE(profile->get_phase_weight(PrintStartPhase::CLEANING) == 5);
+    REQUIRE(profile->get_phase_weight(PrintStartPhase::PURGING) == 5);
+}
