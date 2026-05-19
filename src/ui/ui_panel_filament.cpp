@@ -469,9 +469,12 @@ void FilamentPanel::update_status() {
         status_msg = "Ready to load";
         update_status_icon("check", "success");
     } else if (nozzle_target_ >= min_extrude_temp_) {
-        // Nozzle heating in progress
-        std::snprintf(status_buf_, sizeof(status_buf_), lv_tr("Heating to %d°C..."),
-                      nozzle_target_);
+        // Nozzle heating in progress — show current AND target so the user can
+        // see ramp progress (#8: previously only target was visible, leaving
+        // the user staring at a static "Heating to 230°C..." for several
+        // minutes with no sign of life from the firmware).
+        std::snprintf(status_buf_, sizeof(status_buf_), lv_tr("Heating: %d / %d°C"),
+                      nozzle_current_, nozzle_target_);
         lv_subject_copy_string(&status_subject_, status_buf_);
         update_status_icon("flash", "warning");
         return; // Already updated, exit early
