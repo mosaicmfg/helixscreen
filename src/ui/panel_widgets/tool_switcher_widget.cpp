@@ -381,11 +381,15 @@ void ToolSwitcherWidget::show_tool_picker() {
     lv_obj_set_style_pad_gap(card, space_xs, 0);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(card, LV_DIR_VER);
+    // Leave scrollbar at its default (LV_SCROLLBAR_MODE_AUTO) so users see a visible
+    // indicator that more entries exist — this is a dropdown, not a drag-discovery surface.
 
     // Buttons in a simple column — one per tool
     // Context menu = single column of buttons directly in card
 
+    lv_obj_t* active_btn_in_picker = nullptr;
     for (size_t i = 0; i < tools.size(); ++i) {
         bool is_active = (static_cast<int>(i) == active);
 
@@ -406,6 +410,7 @@ void ToolSwitcherWidget::show_tool_picker() {
 
             // Active tool: use primary variant styling (let ui_button handle colors)
             if (is_active) {
+                active_btn_in_picker = picker_btn;
                 // ui_button "ghost" doesn't have a bg — set primary bg directly
                 lv_obj_set_style_bg_color(btn, theme_manager_get_color("primary"), 0);
                 lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
@@ -434,6 +439,22 @@ void ToolSwitcherWidget::show_tool_picker() {
 
     // Position context menu right above/below the widget
     lv_obj_update_layout(card);
+
+    // Cap card height at 60% of screen so a long tool list (e.g. AFC 15-lane)
+    // doesn't overflow vertically — once capped, the scrollable card lets the
+    // user reach hidden entries via vertical scroll.
+    int max_card_h = (screen_h * 6) / 10;
+    int natural_h = lv_obj_get_height(card);
+    if (natural_h > max_card_h) {
+        lv_obj_set_height(card, max_card_h);
+        lv_obj_update_layout(card);
+    }
+
+    // Scroll the active tool into view inside the (possibly clamped) card.
+    if (active_btn_in_picker) {
+        lv_obj_scroll_to_view(active_btn_in_picker, LV_ANIM_OFF);
+    }
+
     int card_h = lv_obj_get_height(card);
     int card_actual_w = lv_obj_get_width(card);
 
