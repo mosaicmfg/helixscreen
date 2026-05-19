@@ -160,9 +160,9 @@ HelixScreen has a **stub backend** for the Box (`AmsType::QIDI_BOX`, `AmsBackend
 
 Full context, references to the `qidi-community/Plus4-Wiki` open-source reimplementation, and the follow-up work list live in [`FILAMENT_MANAGEMENT.md` → QIDI Box](../FILAMENT_MANAGEMENT.md#qidi-box-qidi-plus4--q2--max4).
 
-Current Solution: Install community box firmware, [Bunny Box](https://github.com/Wazzup77/Bunny-Box) for box access. Most stock features currently work and extra features work while following the Bunny Box setup wiki.
+**Workaround today: [Bunny Box](https://github.com/Wazzup77/Bunny-Box)** — a community open-source replacement that reimplements the QIDI Box as a [Happy Hare](https://github.com/moggieuk/Happy-Hare) MMU. HelixScreen already has Happy Hare support, so a printer flashed with Bunny Box is controllable through HelixScreen via its existing Happy Hare integration. Plus 4 is the most mature target (tested on stock QIDI 1.7.3, FreeDi, and Kalico); Q2 is in active testing; Max 4 is not yet supported. Bunny Box currently depends on the maintainer's [Happy Hare fork](https://github.com/Wazzup77/Happy-Hare) for QIDI-specific hall-sensor and cutter handling, pending upstream merge.
 
-Stock integration is blocked on test-hardware access.
+Stock QIDI Box integration is blocked on test-hardware access.
 
 ## Known Limitations
 
