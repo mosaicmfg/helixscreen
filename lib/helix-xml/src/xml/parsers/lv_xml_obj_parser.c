@@ -102,6 +102,7 @@ void lv_xml_obj_apply(lv_xml_parser_state_t * state, const char ** attrs)
         else if(lv_streq("scroll_snap_x", name)) lv_obj_set_scroll_snap_x(item, lv_xml_scroll_snap_to_enum(value));
         else if(lv_streq("scroll_snap_y", name)) lv_obj_set_scroll_snap_y(item, lv_xml_scroll_snap_to_enum(value));
         else if(lv_streq("scrollbar_mode", name)) lv_obj_set_scrollbar_mode(item, lv_xml_scrollbar_mode_to_enum(value));
+        else if(lv_streq("scroll_dir", name)) lv_obj_set_scroll_dir(item, lv_xml_dir_to_enum(value));
 
         else if(lv_streq("hidden", name))               lv_obj_set_flag(item, LV_OBJ_FLAG_HIDDEN, lv_xml_to_bool(value));
         else if(lv_streq("hidden_if_prop_eq", name)) {
