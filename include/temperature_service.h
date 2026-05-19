@@ -182,6 +182,14 @@ class TemperatureService {
         return get_lifecycle(helix::HeaterType::Chamber);
     }
 
+    /// Switch the active extruder. Rebinds heater observers, replays graph
+    /// history, and rebuilds the mini combined graph against the new
+    /// extruder. Idempotent — no-op when `name` already matches the
+    /// current active extruder. Must be called from the LVGL/UI thread.
+    void switch_active_extruder(const std::string& name) {
+        select_extruder(name);
+    }
+
     void init_subjects();
     void deinit_subjects();
 
@@ -288,6 +296,11 @@ class TemperatureService {
     void rebuild_extruder_segments_impl();
 
     // ── Mini combined graph (filament panel) ────────────────────────────
+    // Container ptr is retained so select_extruder() can recreate the
+    // controller against the new active extruder. Owned by the filament
+    // panel's XML — its lifetime exceeds ours under normal teardown, but
+    // we guard with lv_obj_is_valid() before reuse just in case.
+    lv_obj_t* mini_graph_container_ = nullptr;
     std::unique_ptr<helix::TempGraphController> mini_graph_controller_;
 
     // ── Graph update throttling ─────────────────────────────────────────

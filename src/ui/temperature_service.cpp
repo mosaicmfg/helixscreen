@@ -1129,6 +1129,17 @@ void TemperatureService::select_extruder(const std::string& name) {
         replay_history_to_graph(HeaterType::Nozzle);
     }
 
+    // Rebuild the filament panel's mini graph against the new extruder
+    // (#9). Without this the controller stays bound to whichever extruder
+    // was active at setup_mini_combined_graph() time — typically T0, since
+    // the setup runs at panel construction — and the chart shows T0's cold
+    // baseline while the user is actively heating T1.
+    if (mini_graph_controller_ && mini_graph_container_ &&
+        lv_obj_is_valid(mini_graph_container_)) {
+        mini_graph_controller_.reset();
+        setup_mini_combined_graph(mini_graph_container_);
+    }
+
     rebuild_extruder_segments();
 }
 
@@ -1278,6 +1289,10 @@ void TemperatureService::setup_mini_combined_graph(lv_obj_t* container) {
         spdlog::warn("[TempPanel] setup_mini_combined_graph: null container");
         return;
     }
+    // Remember the container so select_extruder() can rebuild the mini
+    // graph against the new active extruder. Without this the graph is
+    // pinned to whichever extruder was active at first setup.
+    mini_graph_container_ = container;
 
     static constexpr int MINI_GRAPH_POINTS = 300;
 
