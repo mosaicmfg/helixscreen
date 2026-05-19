@@ -2,12 +2,15 @@
 
 #include "ams_backend_snapmaker.h"
 #include "ams_types.h"
+#include "app_globals.h"
 #include "filament_slot_override.h"
 #include "filament_slot_override_store.h"
 #include "moonraker_api_mock.h"
 #include "moonraker_client_mock.h"
 #include "printer_discovery.h"
 #include "printer_state.h"
+#include "../test_helpers/printer_state_test_access.h"
+#include "../ui_test_utils.h"
 
 #include <chrono>
 #include <filesystem>
@@ -926,4 +929,69 @@ TEST_CASE("Snapmaker auto-mirror uses OverwriteAlways policy after firmware writ
     std::string lower = color_str;
     for (auto& c : lower) c = static_cast<char>(std::tolower(c));
     CHECK(lower == "#112233");
+}
+
+// ============================================================================
+// prepare_for_resume — virtual_sdcard.is_active=false guard (#23)
+//
+// Snapmaker U1 paints a "paused" state on top of a dead virtual_sdcard after
+// a level-2 abort exception (dirty bed #532). prepare_for_resume must detect
+// this BEFORE running any recovery gcode and surface AmsResult::RESUME_REQUIRES_RESTART
+// so the dispatcher shows a "Restart from beginning?" modal instead of firing
+// a useless RESUME macro chain.
+// ============================================================================
+
+TEST_CASE("Snapmaker prepare_for_resume returns RESUME_REQUIRES_RESTART when SD inactive",
+          "[ams][snapmaker][resume]") {
+    lv_init_safe();
+    PrinterState& ps = get_printer_state();
+    PrinterStateTestAccess::reset(ps);
+    ps.init_subjects(false);
+
+    // Simulate Snapmaker dirty-bed scenario: state=paused with SD inactive.
+    json deactivated = {{"print_stats", {{"state", "paused"}}},
+                        {"virtual_sdcard", {{"is_active", false}}}};
+    ps.update_from_status(deactivated);
+    REQUIRE(ps.is_sdcard_active() == false);
+
+    AmsBackendSnapmaker backend(nullptr, nullptr);
+
+    AmsError captured{AmsResult::SUCCESS};
+    bool callback_fired = false;
+    backend.prepare_for_resume(/*slot_index=*/0, [&](const AmsError& err) {
+        callback_fired = true;
+        captured = err;
+    });
+
+    REQUIRE(callback_fired);
+    REQUIRE(captured.result == AmsResult::RESUME_REQUIRES_RESTART);
+    // user_msg is what the modal/toast layer reads.
+    REQUIRE_FALSE(captured.user_msg.empty());
+}
+
+TEST_CASE("Snapmaker prepare_for_resume proceeds normally when SD active",
+          "[ams][snapmaker][resume]") {
+    lv_init_safe();
+    PrinterState& ps = get_printer_state();
+    PrinterStateTestAccess::reset(ps);
+    ps.init_subjects(false);
+
+    json active = {{"print_stats", {{"state", "paused"}}},
+                   {"virtual_sdcard", {{"is_active", true}}}};
+    ps.update_from_status(active);
+    REQUIRE(ps.is_sdcard_active() == true);
+
+    AmsBackendSnapmaker backend(nullptr, nullptr);
+
+    AmsError captured{AmsResult::RESUME_REQUIRES_RESTART}; // start with a poison value
+    bool callback_fired = false;
+    // slot_index=-1 + no active tool resolution falls into the "no active tool" branch
+    // which immediately returns SUCCESS — proves the SD-active guard didn't trip.
+    backend.prepare_for_resume(/*slot_index=*/-1, [&](const AmsError& err) {
+        callback_fired = true;
+        captured = err;
+    });
+
+    REQUIRE(callback_fired);
+    REQUIRE(captured.result != AmsResult::RESUME_REQUIRES_RESTART);
 }

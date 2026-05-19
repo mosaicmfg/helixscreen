@@ -62,6 +62,10 @@ enum class AmsResult {
     // Feature not available
     NOT_SUPPORTED, ///< Feature not supported by this backend
 
+    // Resume preparation control flow
+    RESUME_REQUIRES_RESTART, ///< RESUME cannot proceed — virtual_sdcard inactive,
+                             ///< caller must offer "restart from beginning" UX
+
     // Generic
     UNKNOWN_ERROR ///< Unexpected error condition
 };
@@ -125,6 +129,8 @@ inline const char* ams_result_to_string(AmsResult result) {
         return "Spool Not Found";
     case AmsResult::NOT_SUPPORTED:
         return "Not Supported";
+    case AmsResult::RESUME_REQUIRES_RESTART:
+        return "Resume Requires Restart";
     default:
         return "Unknown Error";
     }
@@ -407,5 +413,26 @@ class AmsErrorHelper {
     static AmsError invalid_parameter(const std::string& detail) {
         return AmsError(AmsResult::WRONG_STATE, detail, "Invalid parameter",
                         "Check the provided value and try again");
+    }
+
+    /**
+     * @brief Create a result that tells the resume dispatcher to surface a
+     * restart-from-beginning modal instead of firing RESUME.
+     *
+     * Used when virtual_sdcard.is_active=false coexists with
+     * print_stats.state="paused" — a state Snapmaker U1 enters after a
+     * level-2 abort exception (dirty bed #532, sensor failures, etc.).
+     * pause_resume.resume() runs to completion but has no SD context, so
+     * the print is effectively terminated; the only recovery is
+     * SDCARD_RESET_FILE + CANCEL_PRINT_BASE + a fresh print start.
+     *
+     * @param detail Optional technical detail (logged, not user-shown)
+     */
+    static AmsError resume_requires_restart(const std::string& detail = "") {
+        return AmsError(AmsResult::RESUME_REQUIRES_RESTART,
+                        detail.empty() ? "virtual_sdcard.is_active=false; RESUME would no-op"
+                                       : detail,
+                        "Print Was Terminated",
+                        "Restart from the beginning to recover");
     }
 };
