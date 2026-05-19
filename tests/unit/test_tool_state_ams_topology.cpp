@@ -1,8 +1,10 @@
 // Copyright (C) 2025-2026 356C LLC
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "tool_state.h"
+#include "ams_backend.h"
+#include "ams_state.h"
 #include "lvgl_test_fixture.h"
+#include "tool_state.h"
 #include "ui_update_queue.h"
 
 #include "../catch_amalgamated.hpp"
@@ -88,4 +90,30 @@ TEST_CASE_METHOD(ToolStateFixture,
 
     // After clear, tools_ is empty (callers must invoke init_tools again to repopulate)
     REQUIRE(ToolState::instance().tool_count() == 0);
+}
+
+TEST_CASE_METHOD(ToolStateFixture,
+                 "[ToolState][ams-topology] AFC mock with 4 lanes drives ToolState",
+                 "[tool-state][ams][afc][ams-topology]") {
+    auto& ams = AmsState::instance();
+    ams.init_subjects(/*register_xml=*/false);
+
+    auto mock = AmsBackend::create_mock(4);
+    REQUIRE(mock != nullptr);
+    auto caps = mock->get_tool_mapping_capabilities();
+    if (!caps.supported)
+        return; // Mock lacks tool multiplexing; skipped.
+
+    ams.set_backend(std::move(mock));
+    ams.sync_from_backend();
+    UpdateQueue::instance().drain();
+
+    REQUIRE(ToolState::instance().tool_count() == 4);
+    REQUIRE(ToolState::instance().ams_topology_active());
+
+    // Defensive cleanup: drop the override + backend so later tests (which share
+    // the AmsState / ToolState singletons) don't inherit a stale topology.
+    ToolState::instance().clear_ams_topology();
+    ams.clear_backends();
+    UpdateQueue::instance().drain();
 }

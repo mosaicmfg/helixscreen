@@ -35,7 +35,9 @@
 #include <atomic>
 #include <cctype>
 #include <cstring>
+#include <optional>
 #include <unordered_map>
+#include <vector>
 
 using namespace helix;
 
@@ -50,6 +52,35 @@ struct AsyncSyncData {
     bool full_sync;
     int slot_index; // Only used if full_sync == false
 };
+
+// Build a ToolTopology from a backend that multiplexes tools. Returns std::nullopt
+// if the backend does not own the tool list (e.g., AD5X CFS, ACE — single tool,
+// many slots). Falls back to a 1:1 mapping if the backend reports tool-mapping
+// support but returns an empty mapping vector.
+std::optional<helix::ToolTopology> build_ams_topology(AmsBackend* backend, int backend_index) {
+    if (!backend)
+        return std::nullopt;
+    auto caps = backend->get_tool_mapping_capabilities();
+    if (!caps.supported)
+        return std::nullopt;
+
+    std::vector<int> mapping = backend->get_tool_mapping();
+    if (mapping.empty()) {
+        // Fallback: default 1:1 from slot count
+        int n = backend->get_system_info().total_slots;
+        mapping.resize(static_cast<size_t>(n));
+        for (int i = 0; i < n; ++i)
+            mapping[static_cast<size_t>(i)] = i;
+    }
+
+    helix::ToolTopology topo;
+    topo.tool_count = static_cast<int>(mapping.size());
+    topo.tool_to_slot = std::move(mapping);
+    topo.active_tool = backend->get_current_tool();
+    topo.tool_name_prefix = "T";
+    topo.backend_index = backend_index;
+    return topo;
+}
 
 } // namespace
 
@@ -951,6 +982,16 @@ void AmsState::sync_from_backend() {
     }
     if (lv_subject_get_int(&ams_current_tool_) != info.current_tool) {
         lv_subject_set_int(&ams_current_tool_, info.current_tool);
+    }
+
+    // Push tool topology to ToolState when the active backend multiplexes tools.
+    // Otherwise leave ToolState in its extruder-enumerated state.
+    if (auto topo = build_ams_topology(backend, 0)) {
+        helix::ToolState::instance().set_ams_topology(*topo);
+    } else if (helix::ToolState::instance().ams_topology_active()) {
+        // Backend stopped multiplexing (e.g., AMS removed). Drop the override
+        // so callers can rebuild tools_ from extruders.
+        helix::ToolState::instance().clear_ams_topology();
     }
 
     // Tool text formatting (ams_current_tool_text_) handled by UI-layer observer
