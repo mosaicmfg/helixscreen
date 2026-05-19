@@ -10,6 +10,7 @@
 #include "ui_ams_slot_layout.h"
 #include "ui_error_reporting.h"
 #include "ui_event_safety.h"
+#include "ui_external_spool_menu.h"
 #include "ui_filament_path_canvas.h"
 #include "ui_nav_manager.h"
 #include "ui_overlay_qr_scanner.h"
@@ -1201,58 +1202,8 @@ void AmsOverviewPanel::on_bypass_spool_clicked(lv_event_t* e) {
 }
 
 void AmsOverviewPanel::handle_bypass_click() {
-    if (!parent_screen_ || !system_path_) {
-        return;
-    }
-
-    // Capture click point from input device for menu positioning
-    lv_point_t click_pt = {0, 0};
-    lv_indev_t* indev = lv_indev_active();
-    if (indev) {
-        lv_indev_get_point(indev, &click_pt);
-    }
-
-    // Create context menu on first use
-    if (!context_menu_) {
-        context_menu_ = std::make_unique<helix::ui::AmsContextMenu>();
-    }
-
-    // Set callback to handle menu actions for external spool
-    context_menu_->set_action_callback(
-        [this](helix::ui::AmsContextMenu::MenuAction action, int /*slot*/) {
-            switch (action) {
-            case helix::ui::AmsContextMenu::MenuAction::EDIT:
-            case helix::ui::AmsContextMenu::MenuAction::SPOOLMAN:
-                show_edit_modal(-2);
-                break;
-
-            case helix::ui::AmsContextMenu::MenuAction::SCAN_QR: {
-                auto& scanner = helix::ui::get_qr_scanner_overlay();
-                scanner.show_for_active_spool(parent_screen_, [](const SpoolInfo& spool) {
-                    SlotInfo info;
-                    apply_spool_to_slot(info, spool);
-                    AmsState::instance().set_external_spool_info(info);
-                    spdlog::info("[AmsOverview] QR scan assigned spool #{} to external spool",
-                                 spool.id);
-                });
-                break;
-            }
-
-            case helix::ui::AmsContextMenu::MenuAction::CLEAR_SPOOL:
-                AmsState::instance().clear_external_spool_info();
-                // bypass display update handled reactively by external_spool_observer_
-                NOTIFY_INFO(lv_tr("External spool cleared"));
-                break;
-
-            case helix::ui::AmsContextMenu::MenuAction::CANCELLED:
-            default:
-                break;
-            }
-        });
-
-    // Position menu at click point, show for external spool
-    context_menu_->set_click_point(click_pt);
-    context_menu_->show_for_external_spool(parent_screen_, system_path_);
+    helix::ui::show_external_spool_menu(parent_screen_, system_path_, context_menu_,
+                                        [this]() { show_edit_modal(-2); });
 }
 
 void AmsOverviewPanel::refresh_bypass_display() {
