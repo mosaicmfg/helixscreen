@@ -187,6 +187,19 @@ class PrintStartCollector : public std::enable_shared_from_this<PrintStartCollec
     bool check_k2_cfs_signal(const std::string& line);
 
     /**
+     * @brief Reset mesh probe counters on BED_MESH entry / sub-phase change
+     *
+     * Some firmwares (Snapmaker U1) route multiple distinct probe operations
+     * through a single BED_MESH phase enum, varying only the status message
+     * between them (Pre-scanning Bed, Levelling Bed, Detecting Plate,
+     * Inspecting Bed). The probe counters need to reset between sub-phases
+     * so the displayed "(N/M)" doesn't roll past M. Caller must hold
+     * state_mutex_.
+     */
+    void maybe_reset_for_mesh_subphase_locked(helix::PrintStartPhase next_phase,
+                                              const std::string& next_message);
+
+    /**
      * @brief Update phase and recalculate progress (weighted mode)
      */
     void update_phase(helix::PrintStartPhase phase, const char* message);
@@ -316,6 +329,16 @@ class PrintStartCollector : public std::enable_shared_from_this<PrintStartCollec
     double mesh_last_probe_x_ = 0.0;
     double mesh_last_probe_y_ = 0.0;
     bool mesh_has_last_probe_pos_ = false;
+
+    // Sub-phase tracking within BED_MESH. Some firmwares (Snapmaker U1) route
+    // multiple distinct probe operations through one phase enum but vary the
+    // status message — e.g. Pre-scanning Bed → Levelling Bed → Detecting
+    // Plate → Inspecting Bed, each emitting its own probe-line burst. We
+    // reset the probe counters when this message changes while the phase
+    // stays BED_MESH so the displayed (N/M) doesn't roll past M. Also used
+    // as the human label when rendering "<sub-phase> (N/M)" so the user sees
+    // which sub-phase they're in. Empty when not in BED_MESH.
+    std::string current_mesh_message_;
 
     /// Max gap between consecutive probe lines before resetting counters.
     /// Handles printers that emit "probe at" for non-mesh operations (e.g.

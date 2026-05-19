@@ -25,6 +25,24 @@ using json = nlohmann::json;
 // Config path for pre-print prediction history
 static constexpr const char* PREPRINT_HISTORY_PATH = "/print_start_history/entries";
 
+namespace {
+/// Strip trailing "..." / spaces from a status message so the displayed
+/// "(N/M)" suffix doesn't read "Pre-scanning Bed... (3)". Returns the
+/// trimmed string by value; if input is empty, returns empty.
+std::string trim_trailing_ellipsis(const std::string& s) {
+    auto end = s.size();
+    while (end > 0) {
+        char c = s[end - 1];
+        if (c == '.' || c == ' ' || c == '\t') {
+            --end;
+        } else {
+            break;
+        }
+    }
+    return s.substr(0, end);
+}
+} // namespace
+
 // ============================================================================
 // STATIC PATTERN DEFINITIONS
 // ============================================================================
@@ -99,6 +117,7 @@ void PrintStartCollector::start() {
         mesh_has_last_probe_pos_ = false;
         pre_mesh_probe_count_ = 0;
         pre_mesh_last_probe_time_ = {};
+        current_mesh_message_.clear();
         // Snapshot stale subject values so fallbacks only trigger on real changes
         baseline_layer_ = lv_subject_get_int(state_.get_print_layer_current_subject());
         baseline_progress_ = lv_subject_get_int(state_.get_print_progress_subject());
@@ -298,6 +317,7 @@ void PrintStartCollector::reset() {
         mesh_has_last_probe_pos_ = false;
         pre_mesh_probe_count_ = 0;
         pre_mesh_last_probe_time_ = {};
+        current_mesh_message_.clear();
     }
     fallbacks_enabled_.store(false);
 
@@ -654,16 +674,19 @@ void PrintStartCollector::on_gcode_response(const json& msg) {
                 // so skip the per-probe counting below and return.
                 char msg_buf[64];
                 int count, total;
+                std::string label;
                 {
                     std::lock_guard<std::mutex> lock(state_mutex_);
                     count = mesh_probe_fallback_count_;
                     total = mesh_probe_total_;
+                    label = current_mesh_message_.empty()
+                                ? lv_tr("Bed Mesh")
+                                : trim_trailing_ellipsis(current_mesh_message_);
                 }
                 if (total > 0) {
-                    snprintf(msg_buf, sizeof(msg_buf), "%s (%d/%d)", lv_tr("Bed Mesh"), count,
-                             total);
+                    snprintf(msg_buf, sizeof(msg_buf), "%s (%d/%d)", label.c_str(), count, total);
                 } else {
-                    snprintf(msg_buf, sizeof(msg_buf), "%s (%d)", lv_tr("Bed Mesh"), count);
+                    snprintf(msg_buf, sizeof(msg_buf), "%s (%d)", label.c_str(), count);
                 }
                 state_.set_print_start_state(PrintStartPhase::BED_MESH, msg_buf,
                                              calculate_progress());
@@ -678,6 +701,7 @@ void PrintStartCollector::on_gcode_response(const json& msg) {
                 // "Probing point X/Y" — firmware provides current and total
                 int progress;
                 char msg_buf[64];
+                std::string label;
                 {
                     std::lock_guard<std::mutex> lock(state_mutex_);
                     auto now = std::chrono::steady_clock::now();
@@ -710,10 +734,13 @@ void PrintStartCollector::on_gcode_response(const json& msg) {
                     mesh_probe_current_ = pp->current;
                     mesh_probe_total_ = pp->total;
                     progress = calculate_progress_locked();
+                    label = current_mesh_message_.empty()
+                                ? lv_tr("Bed Mesh")
+                                : trim_trailing_ellipsis(current_mesh_message_);
                 }
                 spdlog::debug("[PrintStartCollector] Mesh probe {}/{} ({:.1f}s/probe)", pp->current,
                               pp->total, mesh_seconds_per_probe_);
-                snprintf(msg_buf, sizeof(msg_buf), "%s (%d/%d)", lv_tr("Bed Mesh"), pp->current,
+                snprintf(msg_buf, sizeof(msg_buf), "%s (%d/%d)", label.c_str(), pp->current,
                          pp->total);
                 state_.set_print_start_state(PrintStartPhase::BED_MESH, msg_buf, progress);
                 return; // Handled — skip check_phase_patterns
@@ -728,6 +755,7 @@ void PrintStartCollector::on_gcode_response(const json& msg) {
                 int total;
                 int progress;
                 bool is_new_point = false;
+                std::string label;
                 {
                     std::lock_guard<std::mutex> lock(state_mutex_);
                     auto now = std::chrono::steady_clock::now();
@@ -784,16 +812,19 @@ void PrintStartCollector::on_gcode_response(const json& msg) {
                     count = mesh_probe_fallback_count_;
                     total = mesh_probe_total_;
                     progress = calculate_progress_locked();
+                    label = current_mesh_message_.empty()
+                                ? lv_tr("Bed Mesh")
+                                : trim_trailing_ellipsis(current_mesh_message_);
                 }
                 if (is_new_point) {
                     spdlog::debug("[PrintStartCollector] Mesh point #{}/{} ({:.1f}s/point)", count,
                                   total, mesh_seconds_per_probe_);
                     char msg_buf[64];
                     if (total > 0) {
-                        snprintf(msg_buf, sizeof(msg_buf), "%s (%d/%d)", lv_tr("Bed Mesh"), count,
+                        snprintf(msg_buf, sizeof(msg_buf), "%s (%d/%d)", label.c_str(), count,
                                  total);
                     } else {
-                        snprintf(msg_buf, sizeof(msg_buf), "%s (%d)", lv_tr("Bed Mesh"), count);
+                        snprintf(msg_buf, sizeof(msg_buf), "%s (%d)", label.c_str(), count);
                     }
                     state_.set_print_start_state(PrintStartPhase::BED_MESH, msg_buf, progress);
                 }
@@ -952,6 +983,39 @@ bool PrintStartCollector::check_k2_cfs_signal(const std::string& line) {
     return false;
 }
 
+/// Reset mesh probe counters when entering BED_MESH or when the BED_MESH
+/// status message changes (sub-phase transition on firmwares that route
+/// multiple distinct probe operations through one phase enum, e.g.
+/// Snapmaker U1: Pre-scanning → Levelling → Detecting Plate → Inspecting
+/// Bed). Caller must hold state_mutex_.
+void PrintStartCollector::maybe_reset_for_mesh_subphase_locked(PrintStartPhase next_phase,
+                                                               const std::string& next_message) {
+    if (next_phase != PrintStartPhase::BED_MESH) {
+        if (current_phase_ == PrintStartPhase::BED_MESH) {
+            current_mesh_message_.clear();
+        }
+        return;
+    }
+    const bool entering = (current_phase_ != PrintStartPhase::BED_MESH);
+    const bool message_changed = !entering && (next_message != current_mesh_message_);
+    if (!entering && !message_changed) {
+        return;
+    }
+    current_mesh_message_ = next_message;
+    mesh_probe_current_ = 0;
+    mesh_probe_total_ = 0;
+    mesh_probe_fallback_count_ = 0;
+    mesh_first_probe_time_ = {};
+    mesh_last_probe_time_ = {};
+    mesh_seconds_per_probe_ = 0.0f;
+    mesh_has_last_probe_pos_ = false;
+    pre_mesh_probe_count_ = 0;
+    if (message_changed) {
+        spdlog::debug("[PrintStartCollector] BED_MESH sub-phase change → '{}' (counters reset)",
+                      next_message);
+    }
+}
+
 void PrintStartCollector::update_phase(PrintStartPhase phase, const char* message) {
     int progress;
     bool should_save = false;
@@ -971,6 +1035,7 @@ void PrintStartCollector::update_phase(PrintStartPhase phase, const char* messag
             current_phase_ != phase) {
             pre_mesh_probe_count_ = 0;
         }
+        maybe_reset_for_mesh_subphase_locked(phase, message ? message : "");
         current_phase_ = phase;
         detected_phases_.insert(phase); // Track for progress calculation
 
@@ -1028,6 +1093,7 @@ void PrintStartCollector::update_phase(PrintStartPhase phase, const std::string&
             current_phase_ != phase) {
             pre_mesh_probe_count_ = 0;
         }
+        maybe_reset_for_mesh_subphase_locked(phase, message);
         current_phase_ = phase;
         detected_phases_.insert(phase);
 

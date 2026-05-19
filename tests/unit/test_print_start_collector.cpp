@@ -2098,3 +2098,114 @@ TEST_CASE_METHOD(VoronCollectorFixture,
     REQUIRE(msg.find("(3") != std::string::npos);
     REQUIRE(msg.find("(7") == std::string::npos);
 }
+
+// ============================================================================
+// Snapmaker U1 sub-phase counter regression — the U1 routes four distinct
+// probe operations (Pre-scanning, Levelling, Detecting Plate, Inspecting
+// Bed) through one BED_MESH phase enum, switching only the message between
+// them. The probe counter must reset between sub-phases so the displayed
+// "(N/M)" doesn't accumulate to "(20/16)".
+// ============================================================================
+
+namespace {
+class SnapmakerCollectorFixture : public PrintStartCollectorHeaterFixture {
+  public:
+    SnapmakerCollectorFixture() {
+        collector_->set_profile(PrintStartProfile::load("snapmaker_u1"));
+    }
+
+    void feed_gcode(const std::string& line) {
+        nlohmann::json msg = {{"method", "notify_gcode_response"}, {"params", {line}}};
+        client().dispatch_method_callback("notify_gcode_response", msg);
+        drain_async_updates();
+    }
+};
+} // namespace
+
+TEST_CASE_METHOD(SnapmakerCollectorFixture,
+                 "Snapmaker U1: BED_MESH sub-phase change resets probe counter",
+                 "[print][collector][snapmaker][bed_mesh]") {
+    collector().start();
+    drain_async_updates();
+
+    // Sub-phase 1: Pre-scanning. Three probes → "Pre-scanning Bed (3)".
+    feed_gcode("// Success: Set action code BED_PRESCANNING");
+    REQUIRE(get_current_phase() == PrintStartPhase::BED_MESH);
+    feed_gcode("// probe at 10.000,10.000 is z=-0.100000");
+    feed_gcode("// probe at 50.000,10.000 is z=-0.105000");
+    feed_gcode("// probe at 90.000,10.000 is z=-0.110000");
+
+    std::string after_prescan = get_current_message();
+    INFO("After pre-scan: " << after_prescan);
+    REQUIRE(after_prescan.find("Pre-scanning") != std::string::npos);
+    REQUIRE(after_prescan.find("(3") != std::string::npos);
+
+    // Sub-phase 2: Levelling. Counter MUST reset — five probes here should
+    // display "(1)".."(5)", not "(4)".."(8)".
+    feed_gcode("// Success: Set action code BED_LEVELING");
+    feed_gcode("// probe at 10.000,10.000 is z=-0.200000");
+
+    std::string after_first_level_probe = get_current_message();
+    INFO("After first levelling probe: " << after_first_level_probe);
+    REQUIRE(after_first_level_probe.find("Levelling") != std::string::npos);
+    // Must NOT carry the 3 pre-scan probes
+    REQUIRE(after_first_level_probe.find("(4") == std::string::npos);
+    REQUIRE(after_first_level_probe.find("(1") != std::string::npos);
+
+    feed_gcode("// probe at 50.000,10.000 is z=-0.205000");
+    feed_gcode("// probe at 90.000,10.000 is z=-0.210000");
+
+    std::string after_level = get_current_message();
+    INFO("After three levelling probes: " << after_level);
+    REQUIRE(after_level.find("Levelling") != std::string::npos);
+    REQUIRE(after_level.find("(3") != std::string::npos);
+    REQUIRE(after_level.find("(6") == std::string::npos);
+
+    // Sub-phase 3: Detecting Plate. Counter resets again.
+    feed_gcode("// Success: Set action code DETECT_PLATE");
+    feed_gcode("// probe at 100.000,100.000 is z=-0.300000");
+
+    std::string after_detect = get_current_message();
+    INFO("After detect probe: " << after_detect);
+    REQUIRE(after_detect.find("Detecting") != std::string::npos);
+    REQUIRE(after_detect.find("(1") != std::string::npos);
+    REQUIRE(after_detect.find("(4") == std::string::npos);
+    REQUIRE(after_detect.find("(7") == std::string::npos);
+}
+
+TEST_CASE_METHOD(SnapmakerCollectorFixture,
+                 "Snapmaker U1: BED_MESH display uses sub-phase label (no ellipsis)",
+                 "[print][collector][snapmaker][bed_mesh]") {
+    collector().start();
+    drain_async_updates();
+
+    feed_gcode("// Success: Set action code BED_PRESCANNING");
+    feed_gcode("// probe at 10.000,10.000 is z=-0.100000");
+
+    std::string msg = get_current_message();
+    INFO("Sub-phase label: " << msg);
+    // Trailing ellipsis stripped before the count: "Pre-scanning Bed (1)",
+    // not "Pre-scanning Bed... (1)".
+    REQUIRE(msg.find("Pre-scanning Bed (") != std::string::npos);
+    REQUIRE(msg.find("Bed... (") == std::string::npos);
+}
+
+TEST_CASE_METHOD(SnapmakerCollectorFixture,
+                 "Snapmaker U1: same sub-phase repeated → counter keeps incrementing",
+                 "[print][collector][snapmaker][bed_mesh]") {
+    collector().start();
+    drain_async_updates();
+
+    // Same action code twice in a row must NOT reset the counter — only
+    // a *change* in message resets.
+    feed_gcode("// Success: Set action code BED_LEVELING");
+    feed_gcode("// probe at 10.000,10.000 is z=-0.100000");
+    feed_gcode("// probe at 50.000,10.000 is z=-0.105000");
+    feed_gcode("// Success: Set action code BED_LEVELING"); // same message
+    feed_gcode("// probe at 90.000,10.000 is z=-0.110000");
+
+    std::string msg = get_current_message();
+    INFO("After repeated BED_LEVELING: " << msg);
+    REQUIRE(msg.find("(3") != std::string::npos);
+    REQUIRE(msg.find("(1)") == std::string::npos);
+}
