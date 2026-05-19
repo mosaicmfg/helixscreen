@@ -741,8 +741,8 @@ void AmsPanel::setup_bypass_spool() {
 
     bypass_widgets_ = helix::ui::bypass_spool_create(
         path_container,
-        [](void* user_data) {
-            if (auto* self = static_cast<AmsPanel*>(user_data)) {
+        [](lv_event_t* e) {
+            if (auto* self = static_cast<AmsPanel*>(lv_event_get_user_data(e))) {
                 self->show_edit_modal(-2);
             }
         },

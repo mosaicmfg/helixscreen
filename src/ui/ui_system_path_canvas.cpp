@@ -67,12 +67,6 @@ struct SystemPathData {
     // Bypass spool state (for spool box rendering)
     bool bypass_has_spool = false;
 
-    // Cached bypass spool box position (in absolute screen coords) — read by
-    // the owning panel via ui_system_path_canvas_get_bypass_spool_pos() so it
-    // can place its BypassSpoolWidgets overlay at the right spot.
-    int32_t bypass_spool_x = 0;
-    int32_t bypass_spool_y = 0;
-    bool bypass_spool_pos_valid = false;
     int32_t cached_sensor_r = 0;
 
     // Per-unit hub sensor states
@@ -118,6 +112,35 @@ static std::unordered_map<lv_obj_t*, SystemPathData*> s_registry;
 static SystemPathData* get_data(lv_obj_t* obj) {
     auto it = s_registry.find(obj);
     return (it != s_registry.end()) ? it->second : nullptr;
+}
+
+// Bypass geometry shared by the draw callback and the public position getter.
+// Single source of truth so the panel-side widget overlay stays anchored to
+// the drawn merge point.
+struct BypassGeometry {
+    int32_t bypass_x;
+    int32_t merge_y;
+    int32_t center_x; // hub center (already shifted left when bypass is present)
+};
+static BypassGeometry compute_bypass_geometry(const SystemPathData* data,
+                                              const lv_area_t& obj_coords) {
+    int32_t width = lv_area_get_width(&obj_coords);
+    int32_t height = lv_area_get_height(&obj_coords);
+    int32_t x_off = obj_coords.x1;
+    int32_t y_off = obj_coords.y1;
+
+    // Hub shifts ~10% left to make room for the bypass path on the right
+    // (single-tool, has_bypass — multi_tool path doesn't render bypass).
+    int32_t center_x = x_off + width / 2 - width / 10;
+    int32_t hub_right = center_x + data->hub_width / 2;
+    int32_t bypass_x = hub_right + width / 8;
+
+    int32_t hub_y = y_off + (int32_t)(height * HUB_Y_RATIO);
+    int32_t hub_h = (int32_t)(height * HUB_HEIGHT_RATIO);
+    int32_t nozzle_y = y_off + (int32_t)(height * NOZZLE_Y_RATIO);
+    int32_t merge_y = (hub_y + hub_h / 2) + (nozzle_y - (hub_y + hub_h / 2)) / 3;
+
+    return {bypass_x, merge_y, center_x};
 }
 
 // Load theme-aware colors, fonts, and sizes
@@ -1009,37 +1032,21 @@ static void system_path_draw_cb(lv_event_t* e) {
             }
         }
 
-        // Draw bypass path lines (if supported). The spool box + "Bypass"
-        // label are NOT drawn here — they're rendered as floating widgets by
-        // the owning panel via BypassSpoolWidgets so both panels share one
-        // implementation. We still cache the spool position so the panel can
-        // place its widget overlay at the right spot.
+        // Draw bypass merge line. Spool + labels are rendered by the panel
+        // via the shared BypassSpoolWidgets overlay centered on the merge
+        // point — same model as ui_filament_path_canvas, so both AMS panels
+        // present the bypass identically.
         if (data->has_bypass) {
-            int32_t hub_right = center_x + data->hub_width / 2;
-            int32_t bypass_x = hub_right + width / 8;
+            BypassGeometry bg = compute_bypass_geometry(data, obj_coords);
             bool bp_active = data->bypass_active;
-
             lv_color_t bp_color = bp_active ? lv_color_hex(data->bypass_color) : idle_color;
             int32_t bp_width = bp_active ? line_active : line_idle;
 
-            int32_t hub_bottom = hub_y + hub_h / 2;
-            int32_t bypass_merge_y = hub_bottom + (nozzle_y - hub_bottom) / 3;
-            int32_t spool_y = bypass_merge_y - sensor_r * 3;
-
-            // Cache absolute-screen position for the panel to read via the
-            // getter. Same coord space used elsewhere in this draw function
-            // (x_off/y_off come from lv_obj_get_coords).
-            data->bypass_spool_x = bypass_x;
-            data->bypass_spool_y = spool_y;
-            data->bypass_spool_pos_valid = true;
-
-            // Vertical line from where the spool sits down to the merge point.
-            draw_line(layer, bypass_x, spool_y + sensor_r * 2, bypass_x, bypass_merge_y, bp_color,
-                      bp_width);
-            // Horizontal line from merge to hub
-            draw_line(layer, bypass_x, bypass_merge_y, center_x + sensor_r, bypass_merge_y,
+            // Horizontal line from spool/merge to hub (line ends inside the
+            // spool widget; the widget is opaque so the overlap isn't visible).
+            draw_line(layer, bg.bypass_x, bg.merge_y, bg.center_x + sensor_r, bg.merge_y,
                       bp_color, bp_width);
-            draw_sensor_dot(layer, center_x, bypass_merge_y, bp_color, bp_active, sensor_r);
+            draw_sensor_dot(layer, bg.center_x, bg.merge_y, bp_color, bp_active, sensor_r);
         }
 
         // Draw combiner hub
@@ -1484,17 +1491,24 @@ void ui_system_path_canvas_set_bypass_has_spool(lv_obj_t* obj, bool has_spool) {
     }
 }
 
-bool ui_system_path_canvas_get_bypass_spool_pos(lv_obj_t* obj, int32_t* cx_out,
+bool ui_system_path_canvas_get_bypass_merge_pos(lv_obj_t* obj, int32_t* cx_out,
                                                 int32_t* cy_out) {
     auto* data = get_data(obj);
-    if (!data || !data->bypass_spool_pos_valid) {
+    if (!data || !data->has_bypass || data->total_tools > 1) {
         return false;
     }
+    lv_obj_update_layout(obj);
+    lv_area_t obj_coords;
+    lv_obj_get_coords(obj, &obj_coords);
+    if (lv_area_get_width(&obj_coords) <= 0 || lv_area_get_height(&obj_coords) <= 0) {
+        return false;
+    }
+    BypassGeometry bg = compute_bypass_geometry(data, obj_coords);
     if (cx_out) {
-        *cx_out = data->bypass_spool_x;
+        *cx_out = bg.bypass_x;
     }
     if (cy_out) {
-        *cy_out = data->bypass_spool_y;
+        *cy_out = bg.merge_y;
     }
     return true;
 }

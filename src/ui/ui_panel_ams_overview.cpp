@@ -193,16 +193,14 @@ void AmsOverviewPanel::setup(lv_obj_t* panel, lv_obj_t* parent_screen) {
             lv_obj_set_size(system_path_, LV_PCT(100), LV_PCT(100));
             spdlog::debug("[{}] Created system path canvas", get_name());
 
-            // Create the shared bypass-spool overlay. The canvas no longer
-            // draws the spool box / "Bypass" label / material label — those
-            // are siblings positioned over the canvas at the bypass endpoint.
             bypass_widgets_ = helix::ui::bypass_spool_create(
                 system_path_area_, &AmsOverviewPanel::on_bypass_spool_clicked, this);
+            // SIZE_CHANGED only — listening to DRAW events would invalidate
+            // during render and trip lv_inv_area assertions in LVGL 9.
             lv_obj_add_event_cb(
                 system_path_,
                 [](lv_event_t* e) {
-                    auto* self =
-                        static_cast<AmsOverviewPanel*>(lv_event_get_user_data(e));
+                    auto* self = static_cast<AmsOverviewPanel*>(lv_event_get_user_data(e));
                     if (self) {
                         self->update_bypass_widgets_position();
                     }
@@ -1196,9 +1194,8 @@ void AmsOverviewPanel::show_detail_context_menu(int slot_index, lv_obj_t* near_w
 // Bypass Spool Interaction
 // ============================================================================
 
-void AmsOverviewPanel::on_bypass_spool_clicked(void* user_data) {
-    auto* self = static_cast<AmsOverviewPanel*>(user_data);
-    if (self) {
+void AmsOverviewPanel::on_bypass_spool_clicked(lv_event_t* e) {
+    if (auto* self = static_cast<AmsOverviewPanel*>(lv_event_get_user_data(e))) {
         self->handle_bypass_click();
     }
 }
@@ -1297,13 +1294,10 @@ void AmsOverviewPanel::update_bypass_widgets_position() {
     if (!bypass_widgets_.valid() || !system_path_ || !system_path_area_) {
         return;
     }
-    // The canvas caches the bypass spool position in absolute screen coords.
-    // Translate into system_path_area_ coords (the widgets' parent) by
-    // subtracting the area's content origin.
     int32_t abs_cx = 0;
     int32_t abs_cy = 0;
-    if (!ui_system_path_canvas_get_bypass_spool_pos(system_path_, &abs_cx, &abs_cy)) {
-        return; // Canvas hasn't drawn yet — try again on next size change.
+    if (!ui_system_path_canvas_get_bypass_merge_pos(system_path_, &abs_cx, &abs_cy)) {
+        return;
     }
     lv_obj_update_layout(system_path_area_);
     lv_area_t parent_abs;

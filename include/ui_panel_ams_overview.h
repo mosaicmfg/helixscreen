@@ -141,7 +141,7 @@ class AmsOverviewPanel : public PanelBase {
     void handle_bypass_click();
     void refresh_bypass_display();
     void show_edit_modal(int slot_index);
-    static void on_bypass_spool_clicked(void* user_data);
+    static void on_bypass_spool_clicked(lv_event_t* e);
 
     // === Sidebar ===
     std::unique_ptr<helix::ui::AmsOperationSidebar> sidebar_;

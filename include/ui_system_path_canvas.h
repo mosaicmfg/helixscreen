@@ -121,10 +121,12 @@ void ui_system_path_canvas_set_bypass(lv_obj_t* obj, bool has_bypass, bool bypas
 /// Set whether an external spool is assigned to bypass
 void ui_system_path_canvas_set_bypass_has_spool(lv_obj_t* obj, bool has_spool);
 
-/// Read the canvas's most-recently-drawn bypass spool position (absolute
-/// screen coords). The panel uses this to place the shared BypassSpoolWidgets
-/// overlay on top of the canvas. Returns false before the first draw.
-bool ui_system_path_canvas_get_bypass_spool_pos(lv_obj_t* obj, int32_t* cx_out,
+/// Compute where the bypass tube terminates at the merge point (absolute
+/// screen coords). The panel anchors its shared BypassSpoolWidgets overlay
+/// such that the spool sits a short visible tube segment above this point.
+/// Returns false when bypass isn't supported or the canvas hasn't been laid
+/// out yet.
+bool ui_system_path_canvas_get_bypass_merge_pos(lv_obj_t* obj, int32_t* cx_out,
                                                 int32_t* cy_out);
 
 /**
