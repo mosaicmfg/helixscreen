@@ -4,6 +4,7 @@
 
 #include "ams_subscription_backend.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -124,4 +125,23 @@ class AmsBackendQidi : public AmsSubscriptionBackend {
     /// not_supported responses so the read-only mirror can ship without
     /// emitting unvalidated gcode to live hardware.
     bool write_enabled_ = false;
+
+  public:
+    /// Temperature profile for a single fila entry from
+    /// officiall_filas_list.cfg. Public so test friend can return one.
+    struct FilaProfile {
+        int nozzle_min = 0;
+        int nozzle_max = 0;
+        int box_min = 0;
+        int box_max = 0;
+    };
+
+  private:
+    /// Parse a ConfigParser-formatted officiall_filas_list.cfg payload and
+    /// populate fila_profiles_. Tolerant of whitespace, blank lines, and
+    /// `#` / `;` comments. Non-`fila<N>` sections are ignored.
+    void apply_filas_list(const std::string& content);
+
+    /// fila_id (1-99) → temperature profile, populated by apply_filas_list().
+    std::map<int, FilaProfile> fila_profiles_;
 };

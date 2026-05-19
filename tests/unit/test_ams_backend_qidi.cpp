@@ -11,6 +11,8 @@
 
 #include "hv/json.hpp"
 
+#include <optional>
+#include <string>
 #include <vector>
 
 using json = nlohmann::json;
@@ -39,6 +41,16 @@ class QidiBoxTestAccess {
     }
     static void set_write_enabled(AmsBackendQidi& b, bool on) {
         b.write_enabled_ = on;
+    }
+    static void apply_filas_list(AmsBackendQidi& b, const std::string& content) {
+        b.apply_filas_list(content);
+    }
+    static std::optional<AmsBackendQidi::FilaProfile> get_profile(
+        const AmsBackendQidi& b, int fila_id) {
+        auto it = b.fila_profiles_.find(fila_id);
+        if (it == b.fila_profiles_.end())
+            return std::nullopt;
+        return it->second;
     }
 };
 
@@ -623,4 +635,106 @@ TEST_CASE("QIDI Box write-path rejects out-of-range slot/tool indices",
         REQUIRE_FALSE(backend.set_tool_mapping(0, 99).success());
     }
     REQUIRE(backend.sent.empty());
+}
+
+// =====================================================================
+// apply_filas_list: parse officiall_filas_list.cfg (ConfigParser INI)
+// =====================================================================
+// box_extras.py looks up the printer-local file at
+//   /home/mks/printer_data/config/officiall_filas_list.cfg
+// using ConfigParser. Sections are `[fila<N>]` (N = filament_slot<N>
+// index, 1-99) and each section carries min_temp / max_temp (nozzle)
+// plus box_min_temp / box_max_temp (drying chamber). We fetch the file
+// via Moonraker's file API and parse the same INI shape.
+
+TEST_CASE("QIDI Box apply_filas_list parses sections into fila_profiles_",
+          "[ams][qidi_box]") {
+    AmsBackendQidi backend(nullptr, nullptr);
+    const std::string cfg = R"INI(
+[fila1]
+min_temp = 200
+max_temp = 220
+box_min_temp = 40
+box_max_temp = 60
+
+[fila2]
+min_temp = 240
+max_temp = 260
+box_min_temp = 65
+box_max_temp = 80
+)INI";
+
+    QidiBoxTestAccess::apply_filas_list(backend, cfg);
+
+    auto p1 = QidiBoxTestAccess::get_profile(backend, 1);
+    REQUIRE(p1.has_value());
+    REQUIRE(p1->nozzle_min == 200);
+    REQUIRE(p1->nozzle_max == 220);
+    REQUIRE(p1->box_min == 40);
+    REQUIRE(p1->box_max == 60);
+
+    auto p2 = QidiBoxTestAccess::get_profile(backend, 2);
+    REQUIRE(p2.has_value());
+    REQUIRE(p2->nozzle_min == 240);
+    REQUIRE(p2->nozzle_max == 260);
+}
+
+TEST_CASE("QIDI Box apply_filas_list tolerates whitespace, comments, blank lines",
+          "[ams][qidi_box]") {
+    AmsBackendQidi backend(nullptr, nullptr);
+    const std::string cfg = R"INI(
+# leading comment
+; semicolon-style comment
+
+  [fila5]
+    min_temp   =   195
+   max_temp=215   ; inline tail (ignored)
+box_min_temp = 35
+box_max_temp = 55
+
+# trailing comment
+)INI";
+
+    QidiBoxTestAccess::apply_filas_list(backend, cfg);
+    auto p = QidiBoxTestAccess::get_profile(backend, 5);
+    REQUIRE(p.has_value());
+    REQUIRE(p->nozzle_min == 195);
+    REQUIRE(p->nozzle_max == 215);
+    REQUIRE(p->box_min == 35);
+    REQUIRE(p->box_max == 55);
+}
+
+TEST_CASE("QIDI Box apply_filas_list ignores non-fila sections",
+          "[ams][qidi_box]") {
+    AmsBackendQidi backend(nullptr, nullptr);
+    const std::string cfg = R"INI(
+[printer]
+kinematics = corexy
+
+[fila7]
+min_temp = 230
+max_temp = 250
+box_min_temp = 0
+box_max_temp = 0
+)INI";
+
+    QidiBoxTestAccess::apply_filas_list(backend, cfg);
+    REQUIRE(QidiBoxTestAccess::get_profile(backend, 7).has_value());
+    // No spurious profile from [printer] (parses as fila_id 0 only if we
+    // mistakenly accept any section).
+    REQUIRE_FALSE(QidiBoxTestAccess::get_profile(backend, 0).has_value());
+}
+
+TEST_CASE("QIDI Box parse_save_variables applies cached profile to SlotInfo temps",
+          "[ams][qidi_box]") {
+    AmsBackendQidi backend(nullptr, nullptr);
+    // Cache one profile, then mirror a slot pointing to it.
+    QidiBoxTestAccess::apply_filas_list(backend,
+                                        "[fila3]\nmin_temp=205\nmax_temp=225\n"
+                                        "box_min_temp=45\nbox_max_temp=65\n");
+    QidiBoxTestAccess::parse_vars(backend, json{{"filament_slot0", 3}});
+
+    auto info = backend.get_system_info();
+    REQUIRE(info.units[0].slots[0].nozzle_temp_min == 205);
+    REQUIRE(info.units[0].slots[0].nozzle_temp_max == 225);
 }

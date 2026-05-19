@@ -6,8 +6,11 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <optional>
+#include <sstream>
 #include <string>
 
 // Stub backend for the QIDI Box filament changer. Read-path mirrors
@@ -117,7 +120,7 @@ void AmsBackendQidi::on_started() {
     client_->send_jsonrpc(
         "printer.objects.query", params,
         [this, token](nlohmann::json response) {
-            // L081 Mechanism C: defer member access to main thread.
+            // [L081] Mechanism C: defer member access to main thread.
             token.defer("AmsBackendQidi::on_started_apply",
                         [this, response = std::move(response)]() {
                             apply_query_response(response);
@@ -125,6 +128,26 @@ void AmsBackendQidi::on_started() {
         });
     spdlog::info("{} Bootstrap query issued for save_variables + box_extras",
                  backend_log_tag());
+
+    // Also fetch officiall_filas_list.cfg so the temperature profile cache
+    // is ready by the time filament_slot<N> entries arrive. The path is the
+    // canonical Klipper config location used by box_extras.py.
+    if (api_) {
+        auto fila_token = lifetime_.token();
+        api_->transfers().download_file(
+            "config", "officiall_filas_list.cfg",
+            [this, fila_token](const std::string& body) {
+                // [L081] Defer apply onto main thread — apply_filas_list
+                // touches member state under mutex_.
+                fila_token.defer("AmsBackendQidi::filas_list_apply",
+                                 [this, body]() { apply_filas_list(body); });
+            },
+            [this](const MoonrakerError& err) {
+                spdlog::debug("{} officiall_filas_list.cfg fetch failed: {} "
+                              "(non-fatal — temps stay at defaults)",
+                              backend_log_tag(), err.message);
+            });
+    }
 }
 
 void AmsBackendQidi::apply_query_response(const nlohmann::json& response) {
@@ -360,7 +383,106 @@ void AmsBackendQidi::parse_save_variables(const nlohmann::json& variables) {
             it != variables.end() && it->is_number_integer()) {
             slot_rfid_[i].vendor_id = it->get<int>();
         }
+        // Apply cached fila profile (from officiall_filas_list.cfg) when
+        // we've seen a filament_id and have the matching section cached.
+        if (slot_rfid_[i].filament_id > 0) {
+            auto p = fila_profiles_.find(slot_rfid_[i].filament_id);
+            if (p != fila_profiles_.end()) {
+                unit_ref.slots[i].nozzle_temp_min = p->second.nozzle_min;
+                unit_ref.slots[i].nozzle_temp_max = p->second.nozzle_max;
+            }
+        }
     }
+}
+
+void AmsBackendQidi::apply_filas_list(const std::string& content) {
+    // Minimal ConfigParser-compatible INI: `[section]` headers, `key = value`
+    // lines, `#` or `;` comments. Only sections matching `fila<N>` populate
+    // the cache; everything else is silently ignored. Trailing tail content
+    // after the value is dropped at the first whitespace+`#`/`;`.
+    auto trim = [](std::string s) {
+        const auto not_space = [](unsigned char c) { return !std::isspace(c); };
+        s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
+        s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
+        return s;
+    };
+    auto parse_int_field = [&](const std::string& v, int& out) {
+        // Drop inline `;` / `#` tail if present.
+        std::string body = v;
+        for (char ch : {';', '#'}) {
+            auto pos = body.find(ch);
+            if (pos != std::string::npos) {
+                body.erase(pos);
+            }
+        }
+        try {
+            out = std::stoi(trim(body));
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    };
+
+    std::map<int, FilaProfile> next;
+    std::optional<int> current_id;
+    FilaProfile current;
+
+    auto flush = [&]() {
+        if (current_id) {
+            next[*current_id] = current;
+            current_id.reset();
+            current = FilaProfile{};
+        }
+    };
+
+    std::istringstream iss(content);
+    std::string line;
+    while (std::getline(iss, line)) {
+        std::string t = trim(line);
+        if (t.empty() || t.front() == '#' || t.front() == ';') {
+            continue;
+        }
+        if (t.front() == '[' && t.back() == ']') {
+            flush();
+            std::string section = trim(t.substr(1, t.size() - 2));
+            // Only `fila<digits>` sections.
+            if (section.rfind("fila", 0) == 0) {
+                try {
+                    int id = std::stoi(section.substr(4));
+                    if (id > 0) {
+                        current_id = id;
+                    }
+                } catch (const std::exception&) {
+                    // Malformed section name — fall through to ignore.
+                }
+            }
+            continue;
+        }
+        if (!current_id) {
+            continue;
+        }
+        auto eq = t.find('=');
+        if (eq == std::string::npos) {
+            continue;
+        }
+        std::string key = trim(t.substr(0, eq));
+        std::string val = t.substr(eq + 1);
+        if (key == "min_temp") {
+            parse_int_field(val, current.nozzle_min);
+        } else if (key == "max_temp") {
+            parse_int_field(val, current.nozzle_max);
+        } else if (key == "box_min_temp") {
+            parse_int_field(val, current.box_min);
+        } else if (key == "box_max_temp") {
+            parse_int_field(val, current.box_max);
+        }
+    }
+    flush();
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    fila_profiles_ = std::move(next);
+    spdlog::info("{} Loaded {} fila profile(s) from officiall_filas_list.cfg",
+                 backend_log_tag(), fila_profiles_.size());
 }
 
 // --- State queries ---
