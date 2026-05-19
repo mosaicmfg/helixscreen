@@ -4,6 +4,7 @@
 #include "async_lifetime_guard.h"
 #include "panel_widget.h"
 #include "ui_observer_guard.h"
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -38,6 +39,11 @@ class ToolSwitcherWidget : public PanelWidget {
     ObserverGuard tool_count_observer_;
 
     std::vector<lv_obj_t*> pill_buttons_;
+
+    // Grid layout descriptors for multi-row pill layout. LVGL stores these
+    // pointers (no copy), so the backing arrays must outlive the layout.
+    std::vector<int32_t> grid_col_dsc_;
+    std::vector<int32_t> grid_row_dsc_;
 
     // MUST stay declared LAST: reverse-declaration destruction makes this the
     // first member torn down, invalidating every captured token before any

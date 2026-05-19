@@ -131,13 +131,58 @@ void ToolSwitcherWidget::rebuild_pills() {
     }
 
     int space_xs = resolve_space_token("space_xs", 4);
+    int btn_min_h = resolve_space_token("space_xl", 24);
+    int btn_min_w = resolve_space_token("button_height_sm", 40);
 
-    // Choose flex direction based on widget shape
-    // 1x2 (tall) = column, otherwise row
+    // Layout strategy:
+    //  - colspan == 1 && rowspan >= 2: single tall column of pills (legacy 1x2 path).
+    //  - otherwise: pick row count from available container height — if the widget
+    //    is tall enough for two pill rows, split pills across 2 rows via a grid;
+    //    otherwise keep the single flex row. Always horizontal-scroll for overflow.
+    //  - Cap rows at 2: "split in two", not "stack like a virtual keyboard".
+    int total = static_cast<int>(tools.size());
+    int rows = 1;
+    int cols = total;
+    bool use_grid = false;
+
     if (current_colspan_ == 1 && current_rowspan_ >= 2) {
+        // Tall narrow widget — vertical pill column (legacy behavior).
         lv_obj_set_flex_flow(container, LV_FLEX_FLOW_COLUMN);
     } else {
-        lv_obj_set_flex_flow(container, LV_FLEX_FLOW_ROW);
+        // Measure container height to decide whether 2 rows fit.
+        // Force a layout pass first; rebuild can fire pre-layout (e.g. from
+        // observers during attach) and lv_obj_get_height() would return 0.
+        lv_obj_update_layout(container);
+        int container_h = lv_obj_get_content_height(container);
+        if (container_h <= 0) {
+            container_h = lv_obj_get_height(container);
+        }
+        int pill_min_h = btn_min_w; // square-ish pill, use button_height_sm as min row height
+        int row_gap = space_xs;
+        int fit_rows = (container_h > 0)
+                           ? std::max(1, (container_h + row_gap) / (pill_min_h + row_gap))
+                           : 1;
+        int preferred_rows = std::min(2, fit_rows); // cap at 2 rows per spec
+
+        if (preferred_rows >= 2 && total >= 2) {
+            rows = preferred_rows;
+            cols = (total + rows - 1) / rows; // ceil(total / rows)
+            if (cols < 1) cols = 1;
+            use_grid = true;
+
+            grid_col_dsc_.assign(static_cast<size_t>(cols), LV_GRID_CONTENT);
+            grid_col_dsc_.push_back(LV_GRID_TEMPLATE_LAST);
+            grid_row_dsc_.assign(static_cast<size_t>(rows), LV_GRID_FR(1));
+            grid_row_dsc_.push_back(LV_GRID_TEMPLATE_LAST);
+            lv_obj_set_grid_dsc_array(container, grid_col_dsc_.data(), grid_row_dsc_.data());
+            lv_obj_set_layout(container, LV_LAYOUT_GRID);
+            lv_obj_set_scroll_dir(container, LV_DIR_HOR);
+            lv_obj_set_style_pad_row(container, space_xs, 0);
+            lv_obj_set_style_pad_column(container, space_xs, 0);
+        } else {
+            // Single-row flex (existing behavior, horizontal scroll for overflow).
+            lv_obj_set_flex_flow(container, LV_FLEX_FLOW_ROW);
+        }
     }
     lv_obj_set_style_pad_gap(container, space_xs, 0);
 
@@ -154,9 +199,18 @@ void ToolSwitcherWidget::rebuild_pills() {
             continue;
         }
 
-        lv_obj_set_flex_grow(btn, 1);
-        lv_obj_set_height(btn, LV_SIZE_CONTENT);
-        int btn_min_h = resolve_space_token("space_xl", 24);
+        if (use_grid) {
+            // Row-major placement: T0..Tcols-1 on row 0, Tcols.. on row 1, etc.
+            int row = static_cast<int>(i) / cols;
+            int col = static_cast<int>(i) % cols;
+            lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH, row, 1);
+            // Keep pill tappable even when the column shrinks to content.
+            lv_obj_set_style_min_width(btn, btn_min_w, 0);
+            lv_obj_set_height(btn, LV_SIZE_CONTENT);
+        } else {
+            lv_obj_set_flex_grow(btn, 1);
+            lv_obj_set_height(btn, LV_SIZE_CONTENT);
+        }
         lv_obj_set_style_min_height(btn, btn_min_h, 0);
         lv_obj_set_style_radius(btn, btn_min_h / 2, 0);
         lv_obj_set_style_pad_ver(btn, resolve_space_token("space_xxs", 4), 0);
@@ -182,7 +236,8 @@ void ToolSwitcherWidget::rebuild_pills() {
         lv_obj_scroll_to_view(pill_buttons_[active], LV_ANIM_OFF);
     }
 
-    spdlog::debug("[ToolSwitcher] Built {} pill buttons, active={}", tools.size(), active);
+    spdlog::debug("[ToolSwitcher] Built {} pill buttons, active={}, layout={} ({}x{})",
+                  tools.size(), active, use_grid ? "grid" : "flex", rows, cols);
 }
 
 void ToolSwitcherWidget::on_active_tool_changed(int tool_index) {
