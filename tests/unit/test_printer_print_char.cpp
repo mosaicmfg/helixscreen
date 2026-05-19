@@ -480,6 +480,56 @@ TEST_CASE("Print characterization: terminal state progress guard",
 }
 
 // ============================================================================
+// virtual_sdcard.is_active tracking — distinct from PrintJobState because
+// a print can be `paused` with is_active=false (Snapmaker U1 dirty-bed
+// exception deactivates SD; RESUME is a no-op in that state).
+// ============================================================================
+
+TEST_CASE("PrinterPrintState: sdcard_active reflects virtual_sdcard.is_active",
+          "[characterization][print][sdcard]") {
+    lv_init_safe();
+
+    PrinterState& state = get_printer_state();
+    PrinterStateTestAccess::reset(state);
+    state.init_subjects(false);
+
+    SECTION("Default before any status update is false") {
+        REQUIRE(state.is_sdcard_active() == false);
+    }
+
+    SECTION("Sets true when firmware reports is_active=true") {
+        json msg = {{"virtual_sdcard", {{"is_active", true}}}};
+        state.update_from_status(msg);
+        REQUIRE(state.is_sdcard_active() == true);
+    }
+
+    SECTION("Goes false when SD playback deactivates (dirty-bed scenario)") {
+        json active = {{"print_stats", {{"state", "printing"}}},
+                       {"virtual_sdcard", {{"is_active", true}}}};
+        state.update_from_status(active);
+        REQUIRE(state.is_sdcard_active() == true);
+
+        // Firmware exception (Snapmaker dirty-bed level-2 abort): state
+        // becomes paused but SD playback deactivates simultaneously.
+        json deactivated = {{"print_stats", {{"state", "paused"}}},
+                            {"virtual_sdcard", {{"is_active", false}}}};
+        state.update_from_status(deactivated);
+        REQUIRE(state.is_sdcard_active() == false);
+    }
+
+    SECTION("Absent field preserves previous value") {
+        json active = {{"virtual_sdcard", {{"is_active", true}}}};
+        state.update_from_status(active);
+        REQUIRE(state.is_sdcard_active() == true);
+
+        // Partial update without is_active — must not clobber state.
+        json partial = {{"virtual_sdcard", {{"progress", 0.5}}}};
+        state.update_from_status(partial);
+        REQUIRE(state.is_sdcard_active() == true);
+    }
+}
+
+// ============================================================================
 // Layer Tracking Tests
 // ============================================================================
 

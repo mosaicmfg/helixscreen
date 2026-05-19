@@ -292,6 +292,27 @@ class PrinterPrintState {
     }
 
     /**
+     * @brief True when Klipper's virtual_sdcard is actively playing back gcode.
+     *
+     * Distinct from PrintJobState — `state=="paused"` can coexist with
+     * `is_active==false` (e.g. Snapmaker U1 dirty-bed exception, level-2
+     * aborts, or anything that calls SDCARD_RESET_FILE without first
+     * cancelling). In that "paused but inactive" state a plain RESUME is a
+     * no-op: pause_resume.resume() runs the macro chain but has no SD
+     * context to resume, so the print is effectively terminated.
+     *
+     * Backends use this to detect dirty-bed/abort scenarios in
+     * prepare_for_resume and surface a "Restart from beginning?" UX instead
+     * of firing a useless RESUME.
+     *
+     * Main-thread only (updated by update_from_status from the notification
+     * pump). Default false until the first status update.
+     */
+    bool is_sdcard_active() const {
+        return sdcard_active_;
+    }
+
+    /**
      * @brief Set print start phase and update message/progress
      *
      * Thread-safe: Uses helix::ui::queue_update() for main-thread execution.
@@ -485,6 +506,12 @@ class PrinterPrintState {
     // When false, current_layer is estimated from progress * total_layers.
     // Atomic: written from background thread (gcode fallback), read from main thread (UI).
     std::atomic<bool> has_real_layer_data_{false};
+
+    // virtual_sdcard.is_active — true while Klipper is actively playing back
+    // gcode from the SD/file. Distinct from PrintJobState (a print can be
+    // paused with is_active=false; see is_sdcard_active() docs). Main-thread
+    // only, updated from update_from_status.
+    bool sdcard_active_ = false;
 
     // Slicer progress from display_status (M73 gcode command)
     // When active, preferred over virtual_sdcard file-position progress

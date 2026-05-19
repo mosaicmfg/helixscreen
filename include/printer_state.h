@@ -515,6 +515,19 @@ class PrinterState {
     }
 
     /**
+     * @brief True when Klipper's virtual_sdcard.is_active is reporting
+     * active gcode playback.
+     *
+     * Distinct from PrintJobState — a `paused` print can have
+     * is_active=false (Snapmaker U1 dirty-bed exception). Used by
+     * AmsBackend::prepare_for_resume to detect terminated-with-exception
+     * state and switch to "Restart from beginning?" UX.
+     */
+    [[nodiscard]] bool is_sdcard_active() const {
+        return print_domain_.is_sdcard_active();
+    }
+
+    /**
      * @brief Reset UI state when starting a new print
      *
      * Clears the print_complete flag and resets progress to prepare for

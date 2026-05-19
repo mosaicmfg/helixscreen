@@ -553,6 +553,13 @@ void PrinterPrintState::update_from_status(const nlohmann::json& status) {
     if (status.contains("virtual_sdcard")) {
         const auto& sdcard = status["virtual_sdcard"];
 
+        // SD playback active flag — drives prepare_for_resume's dirty-bed
+        // restart UX. Coexists independently with PrintJobState; do not
+        // gate on other fields being present.
+        if (sdcard.contains("is_active") && sdcard["is_active"].is_boolean()) {
+            sdcard_active_ = sdcard["is_active"].get<bool>();
+        }
+
         if (sdcard.contains("progress") && sdcard["progress"].is_number()) {
             int file_progress_pct = helix::units::json_to_percent(sdcard, "progress");
 

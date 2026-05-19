@@ -879,7 +879,12 @@ json MoonrakerDiscoverySequence::build_subscription_objects(
     // print_stats.info.{current_layer,total_layer} (slicer-supplied via
     // SET_PRINT_STATS_INFO), with virtual_sdcard.layer / layer_count taking
     // over when info isn't populated. PrinterPrintState reads both.
-    subscription_objects["virtual_sdcard"] = json::array({"progress", "layer", "layer_count"});
+    // is_active distinguishes "paused but resumable" from "paused but
+    // SD playback was deactivated" (Snapmaker U1 dirty-bed exception,
+    // level-2 aborts, post-SDCARD_RESET_FILE). prepare_for_resume reads
+    // it to decide between RESUME and "Restart from beginning?" UX.
+    subscription_objects["virtual_sdcard"] =
+        json::array({"progress", "layer", "layer_count", "is_active"});
     subscription_objects["toolhead"] =
         json::array({"position", "homed_axes", "kinematics", "extruder", "max_velocity",
                      "axis_minimum", "axis_maximum"});

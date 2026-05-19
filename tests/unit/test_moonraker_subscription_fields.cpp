@@ -139,10 +139,13 @@ TEST_CASE("Subscription: virtual_sdcard fields cover printer_print_state reads",
 
     // virtual_sdcard provides: progress (always), layer / layer_count
     // (fallback for SET_PRINT_STATS_INFO-less slicers — see
-    // PrinterPrintState::update_from_status precedence logic).
+    // PrinterPrintState::update_from_status precedence logic), and
+    // is_active (drives Resume vs Restart UX when SD playback is
+    // deactivated by a firmware exception).
     REQUIRE(has_field(subs, "virtual_sdcard", "progress"));
     REQUIRE(has_field(subs, "virtual_sdcard", "layer"));
     REQUIRE(has_field(subs, "virtual_sdcard", "layer_count"));
+    REQUIRE(has_field(subs, "virtual_sdcard", "is_active"));
 }
 
 TEST_CASE("Subscription: heaters narrow to {temperature, target}", "[moonraker][subscription]") {
