@@ -173,11 +173,21 @@ class PrintStartProfile {
         return silent_progression_;
     }
 
+    /// True when this printer uses adaptive bed-mesh probing (slicer overrides
+    /// MESH_MIN/MESH_MAX). The configfile probe_count overstates the actual
+    /// probe count (Snapmaker U1: 169 config vs ~16 adaptive), so the
+    /// collector skips that fallback and shows a live count without a total
+    /// until a `probed_matrix` from a prior print is available.
+    bool adaptive_meshing() const {
+        return adaptive_meshing_;
+    }
+
   private:
     std::string name_;
     std::string description_;
     bool is_default_{false};
     ProgressMode progress_mode_ = ProgressMode::WEIGHTED;
+    bool adaptive_meshing_{false};
     std::vector<SignalFormat> signal_formats_;
     std::vector<ResponsePattern> response_patterns_;
     std::unordered_map<helix::PrintStartPhase, int> phase_weights_;

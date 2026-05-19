@@ -1661,7 +1661,14 @@ void PrintStartCollector::query_mesh_probe_count() {
                 // fall through to config
             }
 
-            if (total == 0) {
+            // Skip configfile probe_count fallback for printers using adaptive
+            // bed-mesh probing — the slicer passes MESH_MIN/MESH_MAX overrides
+            // and the configured grid (e.g. 13x13 = 169) overstates the actual
+            // probe count by ~5x. Better to show "Bed Mesh (N)" without total
+            // than "Bed Mesh (5/169)" lying.
+            const bool skip_config_fallback =
+                self->profile_ && self->profile_->adaptive_meshing();
+            if (total == 0 && !skip_config_fallback) {
                 try {
                     const auto& settings = response["result"]["status"]["configfile"]["settings"];
                     if (settings.contains("bed_mesh") &&

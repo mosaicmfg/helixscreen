@@ -584,6 +584,31 @@ TEST_CASE("PrintStartProfile: progress mode detection", "[profile][print]") {
 }
 
 // ============================================================================
+// Adaptive bed-mesh flag
+// ============================================================================
+
+TEST_CASE("PrintStartProfile: adaptive_meshing flag parses correctly",
+          "[profile][print][mesh]") {
+    SECTION("Snapmaker U1 declares adaptive_meshing=true") {
+        auto profile = PrintStartProfile::load("snapmaker_u1");
+        REQUIRE(profile != nullptr);
+        REQUIRE(profile->adaptive_meshing() == true);
+    }
+
+    SECTION("Default profile does not declare adaptive_meshing") {
+        auto profile = PrintStartProfile::load_default();
+        REQUIRE(profile != nullptr);
+        REQUIRE(profile->adaptive_meshing() == false);
+    }
+
+    SECTION("Forge-X profile does not declare adaptive_meshing") {
+        auto profile = PrintStartProfile::load("forge_x");
+        REQUIRE(profile != nullptr);
+        REQUIRE(profile->adaptive_meshing() == false);
+    }
+}
+
+// ============================================================================
 // Missing Profile Fallback
 // ============================================================================
 

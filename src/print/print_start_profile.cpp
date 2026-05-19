@@ -227,6 +227,11 @@ bool PrintStartProfile::parse_json(const json& j, const std::string& source_path
         description_ = j["description"].get<std::string>();
     }
 
+    // Adaptive bed-mesh probing (optional, defaults to false)
+    if (j.contains("adaptive_meshing") && j["adaptive_meshing"].is_boolean()) {
+        adaptive_meshing_ = j["adaptive_meshing"].get<bool>();
+    }
+
     // Progress mode (optional, defaults to weighted)
     if (j.contains("progress_mode") && j["progress_mode"].is_string()) {
         std::string mode_str = to_upper(j["progress_mode"].get<std::string>());

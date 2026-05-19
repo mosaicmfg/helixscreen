@@ -2,6 +2,7 @@
   "name": "Snapmaker U1",
   "description": "Snapmaker U1 — matches real gcode_response strings emitted by the firmware during PRINT_START. Verified against live capture 2026-05-19. The Snapmaker U1 PRINT_START gcode_macro is essentially empty — all preprint phases (homing, heating, leveling, plate detection, cleaning, purging) are driven by the slicer-injected gcode running on a custom Klipper build that emits action-code transitions via SET_ACTION_CODE.",
   "progress_mode": "weighted",
+  "adaptive_meshing": true,
   "signal_formats": [
     {
       "prefix": "// Success: Set action code ",
