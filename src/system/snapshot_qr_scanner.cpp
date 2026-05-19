@@ -75,12 +75,16 @@ void SnapshotQrScanner::frame_consumed() {
 }
 
 void SnapshotQrScanner::poll_loop() {
-    auto token = lifetime_.token();
     int backoff_ms = 0;
 
     spdlog::debug("[SnapshotQR] Poll loop started (interval={}ms)", kPollIntervalMs);
 
-    while (!token.expired() && running_.load()) {
+    // poll_thread_ is dtor-joined by stop(), which sets running_ = false
+    // before joining. running_ is the only exit signal we need — using
+    // lifetime_.token() on a bg thread would trip the L081 runtime detector
+    // even though this thread is dtor-joined, because the detector matches
+    // on program counter, not on join semantics.
+    while (running_.load()) {
         if (!frame_pending_.load()) {
             if (fetch_and_decode()) {
                 backoff_ms = 0;
@@ -91,9 +95,7 @@ void SnapshotQrScanner::poll_loop() {
 
         // Sleep in small increments so we can exit quickly
         int sleep_ms = backoff_ms > 0 ? backoff_ms : kPollIntervalMs;
-        for (int elapsed = 0;
-             elapsed < sleep_ms && !token.expired() && running_.load();
-             elapsed += kPollStepMs) {
+        for (int elapsed = 0; elapsed < sleep_ms && running_.load(); elapsed += kPollStepMs) {
             std::this_thread::sleep_for(std::chrono::milliseconds(kPollStepMs));
         }
     }
@@ -103,8 +105,6 @@ void SnapshotQrScanner::poll_loop() {
 
 bool SnapshotQrScanner::fetch_and_decode() {
     if (snapshot_url_.empty()) return false;
-
-    auto token = lifetime_.token();
 
     spdlog::info("[SnapshotQR] Fetching snapshot from {}", snapshot_url_);
 
@@ -116,7 +116,7 @@ bool SnapshotQrScanner::fetch_and_decode() {
 
     auto resp = requests::request(req);
 
-    if (token.expired() || !running_.load()) return false;
+    if (!running_.load()) return false;
 
     if (!resp || resp->status_code < 200 || resp->status_code >= 300) {
         spdlog::debug("[SnapshotQR] Snapshot fetch failed (status={})",
