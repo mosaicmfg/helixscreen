@@ -792,6 +792,22 @@ TEST_CASE("QIDI Box is_tool_change=1 sets action to LOADING",
     REQUIRE(backend.get_system_info().action == AmsAction::LOADING);
 }
 
+TEST_CASE("QIDI Box get_slot_info returns valid SlotInfo for expanded slots (box_count>1)",
+          "[ams][qidi_box]") {
+    AmsBackendQidi backend(nullptr, nullptr);
+    // Default backend is 4 slots; expand to 8 (box_count=2).
+    QidiBoxTestAccess::parse_vars(backend, json{
+                                               {"box_count", 2},
+                                               {"slot5", 2}, // mark slot 5 LOADED
+                                           });
+
+    auto info = backend.get_slot_info(5);
+    REQUIRE(info.slot_index == 5);
+    REQUIRE(info.status == SlotStatus::LOADED);
+    // Index past the expanded count still rejects.
+    REQUIRE(backend.get_slot_info(99).slot_index == -1);
+}
+
 TEST_CASE("QIDI Box is_tool_change=0 returns action to IDLE",
           "[ams][qidi_box]") {
     AmsBackendQidi backend(nullptr, nullptr);

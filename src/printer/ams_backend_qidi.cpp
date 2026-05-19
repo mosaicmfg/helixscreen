@@ -522,7 +522,7 @@ AmsSystemInfo AmsBackendQidi::get_system_info() const {
 
 SlotInfo AmsBackendQidi::get_slot_info(int slot_index) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (slot_index < 0 || slot_index >= NUM_SLOTS) {
+    if (slot_index < 0 || slot_index >= system_info_.total_slots) {
         return SlotInfo{};
     }
     const auto* slot = system_info_.get_slot_global(slot_index);
