@@ -3,6 +3,9 @@
 #include "ams_backend_qidi.h"
 #include "ams_error.h"
 #include "ams_types.h"
+#include "moonraker_api_mock.h"
+#include "moonraker_client_mock.h"
+#include "printer_state.h"
 
 #include "../catch_amalgamated.hpp"
 
@@ -566,6 +569,36 @@ TEST_CASE("QIDI Box set_tool_mapping emits SAVE_VARIABLE for value_t<N>",
     REQUIRE(err.success());
     REQUIRE(backend.sent.size() == 1);
     REQUIRE(backend.sent[0] == "SAVE_VARIABLE VARIABLE=value_t1 VALUE=\"slot3\"");
+}
+
+// =====================================================================
+// Full-stack integration: on_started actually fires the bootstrap query
+// =====================================================================
+// Unit-style tests (above) cover what we DO with response data, but they
+// pass nullptr for the Moonraker stack so they don't prove on_started()
+// even dispatches the query. This test wires up the full MoonrakerClientMock
+// stack and asserts the dispatch happened with the expected method.
+//
+// One integration test catches the wiring; the unit-style tests cover the
+// dense behaviour. Both have a job.
+
+TEST_CASE("QIDI Box on_started dispatches printer.objects.query (integration)",
+          "[ams][qidi_box][integration]") {
+    MoonrakerClientMock client(MoonrakerClientMock::PrinterType::VORON_24);
+    helix::PrinterState state;
+    state.init_subjects(false);
+    MoonrakerAPIMock api(client, state);
+
+    AmsBackendQidi backend(&api, &client);
+    REQUIRE(client.last_send_method().empty());
+
+    auto err = backend.start();
+    REQUIRE(err.success());
+
+    // start() calls on_started() which must dispatch printer.objects.query.
+    // last_send_method() is captured synchronously inside the mock so we can
+    // assert without UpdateQueue draining.
+    REQUIRE(client.last_send_method() == "printer.objects.query");
 }
 
 TEST_CASE("QIDI Box write-path rejects out-of-range slot/tool indices",
