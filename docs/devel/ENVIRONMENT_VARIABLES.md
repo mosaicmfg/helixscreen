@@ -747,6 +747,26 @@ Set the initial state of filament sensors.
 HELIX_MOCK_FILAMENT_STATE="fsensor:empty" ./build/bin/helix-screen --test
 ```
 
+### `HELIX_QIDI_BOX_WRITE`
+
+Enable the write-path on the QIDI Box AMS backend. Read-only state mirroring is always available, but `load_filament`, `unload_filament`, `change_tool`, and `set_tool_mapping` are gated behind this flag so unvalidated gcode never reaches live hardware in production builds. Intended for field testing against real hardware (issue [#954](https://github.com/prestonbrown/helixscreen/issues/954)).
+
+| Property | Value |
+|----------|-------|
+| **Values** | `1` / any non-empty non-`0` string (enable), unset / `0` (default — disabled) |
+| **Default** | Unset |
+| **File** | `src/printer/ams_backend_qidi.cpp` |
+
+```bash
+# Field-testing build with QIDI Box write-path active
+HELIX_QIDI_BOX_WRITE=1 ./build/bin/helix-screen
+
+# Or persistent: add to ~/helixscreen/config/helixscreen.env
+HELIX_QIDI_BOX_WRITE=1
+```
+
+When disabled (the default), all write operations return `not_supported` with a message pointing the caller at this flag. Read-only operations (state queries, slot info, system info) work in either mode.
+
 ### `HELIX_FORCE_RUNOUT_MODAL`
 
 Force the filament runout guidance modal to appear even when an AMS/MMU system is present. Normally, runout modals are suppressed for AMS systems because filament runout during swaps is expected behavior.
