@@ -117,3 +117,27 @@ TEST_CASE_METHOD(ToolStateFixture,
     ams.clear_backends();
     UpdateQueue::instance().drain();
 }
+
+TEST_CASE_METHOD(ToolStateFixture,
+                 "[ToolState][ams-topology] update_from_status is ignored when AMS owns active tool",
+                 "[tool-state][ams][ams-topology]") {
+    helix::ToolTopology topo;
+    topo.tool_count = 4;
+    topo.active_tool = 2;
+    topo.tool_to_slot = {0, 1, 2, 3};
+    helix::ToolState::instance().set_ams_topology(topo);
+    UpdateQueue::instance().drain();
+
+    // Simulate Klipper telling us "toolchanger says T0, toolhead is on extruder0".
+    // Under AMS topology, ToolState should ignore both and stay on T2.
+    nlohmann::json status = {{"toolchanger", {{"tool_number", 0}}},
+                             {"toolhead", {{"extruder", "extruder"}}}};
+    helix::ToolState::instance().update_from_status(status);
+    UpdateQueue::instance().drain();
+
+    REQUIRE(helix::ToolState::instance().active_tool_index() == 2);
+
+    // Cleanup so the override doesn't leak to later tests in this TU.
+    helix::ToolState::instance().clear_ams_topology();
+    UpdateQueue::instance().drain();
+}

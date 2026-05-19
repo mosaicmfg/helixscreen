@@ -78,6 +78,15 @@ void ToolState::deinit_subjects() {
     active_tool_index_ = 0;
     spool_assignments_loaded_ = false;
 
+    // Drop any AMS-backend override so the next init_subjects() / init_tools()
+    // starts from a clean extruder-enumerated state. Without this, test fixtures
+    // (and reconnect paths) inherit stale ams_topology_active_=true, which then
+    // causes sync_from_backend() on a non-multiplexing backend to wipe tools_.
+    ams_topology_active_ = false;
+    ams_topology_tool_count_ = 0;
+    ams_topology_tool_to_slot_.clear();
+    ams_topology_tool_name_prefix_ = "T";
+
     subjects_.deinit_all();
     subjects_initialized_ = false;
 }
@@ -85,6 +94,14 @@ void ToolState::deinit_subjects() {
 void ToolState::init_tools(const helix::PrinterDiscovery& hardware) {
     // Clear existing tools
     tools_.clear();
+
+    // init_tools enumerates tools from extruders/toolchanger — semantically
+    // incompatible with an AMS-backend topology override. Drop any prior
+    // override so callers see a consistent extruder-derived list.
+    ams_topology_active_ = false;
+    ams_topology_tool_count_ = 0;
+    ams_topology_tool_to_slot_.clear();
+    ams_topology_tool_name_prefix_ = "T";
 
     if (hardware.has_snapmaker()) {
         // Snapmaker U1: 4 fixed toolheads, not using viesturz tool objects
@@ -241,6 +258,11 @@ void ToolState::clear_ams_topology() {
 
 void ToolState::update_from_status(const nlohmann::json& status) {
     if (tools_.empty()) {
+        return;
+    }
+
+    if (ams_topology_active_) {
+        // AMS owns active tool; ignore toolchanger.tool_number / toolhead.extruder.
         return;
     }
 
