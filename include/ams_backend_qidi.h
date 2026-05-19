@@ -87,4 +87,12 @@ class AmsBackendQidi : public AmsSubscriptionBackend {
     const char* backend_log_tag() const override {
         return "[AMS QIDI Box]";
     }
+
+  private:
+    friend class QidiBoxTestAccess;
+
+    /// Apply a save_variables snapshot onto system_info_ / per-slot state.
+    /// Input is the inner `variables` object (already unwrapped from the
+    /// `save_variables.variables` envelope).
+    void parse_save_variables(const nlohmann::json& variables);
 };

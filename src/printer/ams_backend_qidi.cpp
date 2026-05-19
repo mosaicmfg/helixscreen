@@ -6,18 +6,40 @@
 
 #include <spdlog/spdlog.h>
 
-// Stub backend for the QIDI Box filament changer. Every operation logs a
-// "not yet implemented" warning and returns a sensible no-op. See the
-// class comment in ams_backend_qidi.h for protocol-reference pointers.
-//
-// TODO(qidi-box): replace with real implementation once a PLUS4 / Q2 / MAX4
-// test device is available. Protocol lives in the qidi-community
-// "customisable_qidibox_firmware" project (Plus4-Wiki repo).
+#include <optional>
+#include <string>
+
+// Stub backend for the QIDI Box filament changer. Read-path mirrors
+// save_variables onto AmsSystemInfo; write-path (load/unload/change_tool)
+// is still not implemented pending field-test access (issue #954 brought
+// the protocol reference; hardware validation still gated on Sib6019).
 //
 // TODO(qidi-box): drop a `qidi_box_64.png` (and matching .svg / `_512.png`
 // if other backends carry them) into assets/images/ams/ to match the logo
 // convention used by afc_64.png, box_turtle_64.png, happy_hare_64.png, etc.
 // The QIDI wordmark / box silhouette is fine — no in-app scaling required.
+
+namespace {
+// Parse `"slot<N>"` into N when valid and within [0, slot_count).
+// Returns nullopt for the box_extras.py sentinel `"slot-1"` (nothing
+// loaded) and for any other malformed input. Used to decode the
+// `value_t<T>` and `last_load_slot` save_variables, both of which carry
+// slot references in this format.
+std::optional<int> parse_slot_name(const std::string& val, int slot_count) {
+    if (val.rfind("slot", 0) != 0) {
+        return std::nullopt;
+    }
+    try {
+        int idx = std::stoi(val.substr(4));
+        if (idx >= 0 && idx < slot_count) {
+            return idx;
+        }
+    } catch (const std::exception&) {
+        // Bad slot string — fall through to nullopt
+    }
+    return std::nullopt;
+}
+} // namespace
 
 AmsBackendQidi::AmsBackendQidi(MoonrakerAPI* api, helix::MoonrakerClient* client)
     : AmsSubscriptionBackend(api, client) {
@@ -67,10 +89,134 @@ void AmsBackendQidi::on_started() {
     // Intentionally no subscription work: we have nothing to subscribe to yet.
 }
 
-void AmsBackendQidi::handle_status_update(const nlohmann::json& /*notification*/) {
-    // No protocol wired up — ignore status notifications. Left as a no-op
-    // (rather than a log) to avoid spamming the log on every unrelated
-    // Moonraker notify_status_update the subscription machinery may deliver.
+void AmsBackendQidi::handle_status_update(const nlohmann::json& notification) {
+    if (!notification.is_object()) {
+        return;
+    }
+    // Moonraker delivers save_variables changes as
+    // `{"save_variables": {"variables": {...}}}`. Unwrap and feed the inner
+    // variables payload to parse_save_variables. Other fields (heater
+    // temps, box_stepper status objects, aht20_f humidity) are not yet
+    // consumed — they'll be added as separate state-mirror cycles land.
+    auto sv_it = notification.find("save_variables");
+    if (sv_it != notification.end() && sv_it->is_object()) {
+        auto vars_it = sv_it->find("variables");
+        if (vars_it != sv_it->end() && vars_it->is_object()) {
+            parse_save_variables(*vars_it);
+        }
+    }
+}
+
+void AmsBackendQidi::parse_save_variables(const nlohmann::json& variables) {
+    if (!variables.is_object() || system_info_.units.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // enable_box: master gate set by box_extras. 1 = active, 0/missing =
+    // installed-but-disabled. Treat as the unit's "connected" state.
+    auto enable_it = variables.find("enable_box");
+    if (enable_it != variables.end() && enable_it->is_number_integer()) {
+        system_info_.units[0].connected = (enable_it->get<int>() != 0);
+    }
+
+    // box_count: number of physical boxes detected by box_detect.py via USB
+    // enumeration. Each box has 4 slots; chainable up to 4 boxes / 16 slots.
+    // Resize the unit's slot vector to match, preserving any existing data
+    // for slots that remain valid.
+    auto box_count_it = variables.find("box_count");
+    if (box_count_it != variables.end() && box_count_it->is_number_integer()) {
+        int box_count = box_count_it->get<int>();
+        if (box_count >= 1 && box_count <= 4) {
+            const int desired_slots = box_count * NUM_SLOTS;
+            AmsUnit& unit = system_info_.units[0];
+            if (static_cast<int>(unit.slots.size()) != desired_slots) {
+                unit.slots.resize(static_cast<size_t>(desired_slots));
+                for (size_t i = 0; i < unit.slots.size(); ++i) {
+                    unit.slots[i].slot_index = static_cast<int>(i);
+                    unit.slots[i].global_index = static_cast<int>(i);
+                    if (unit.slots[i].mapped_tool < 0) {
+                        unit.slots[i].mapped_tool = static_cast<int>(i);
+                    }
+                }
+                unit.slot_count = desired_slots;
+                system_info_.total_slots = desired_slots;
+            }
+        }
+    }
+
+    AmsUnit& unit_ref = system_info_.units[0];
+
+    // value_t<N> = "slot<M>" — tool N prints from slot M. Apply over the
+    // default tool=slot mapping established when the unit was sized.
+    const int slot_count = static_cast<int>(unit_ref.slots.size());
+    for (size_t t = 0; t < unit_ref.slots.size(); ++t) {
+        const std::string key = "value_t" + std::to_string(t);
+        auto vt_it = variables.find(key);
+        if (vt_it == variables.end() || !vt_it->is_string()) {
+            continue;
+        }
+        if (auto idx = parse_slot_name(vt_it->get<std::string>(), slot_count)) {
+            unit_ref.slots[*idx].mapped_tool = static_cast<int>(t);
+        }
+    }
+
+    // Per-slot state from `slot<N>` save_variables. box_stepper.py state
+    // machine values:
+    //   0  = empty
+    //   1  = available (parked in box)
+    //   2  = loaded all the way to extruder
+    //   3  = mid-transition (treat as available; action belongs on system_info_.action)
+    //   -1 = slot load failed
+    //   -2 = extruder load failed
+    //   -3 = runout-during-print
+    // Negative values all map to BLOCKED so the UI surfaces an error chip.
+    for (size_t i = 0; i < unit_ref.slots.size(); ++i) {
+        const std::string key = "slot" + std::to_string(i);
+        auto slot_it = variables.find(key);
+        if (slot_it == variables.end() || !slot_it->is_number_integer()) {
+            continue;
+        }
+        const int state = slot_it->get<int>();
+        SlotStatus mapped;
+        switch (state) {
+        case 0:
+            mapped = SlotStatus::EMPTY;
+            break;
+        case 1:
+        case 3:
+            mapped = SlotStatus::AVAILABLE;
+            break;
+        case 2:
+            mapped = SlotStatus::LOADED;
+            break;
+        default:
+            // -1, -2, -3 — all error states
+            mapped = (state < 0) ? SlotStatus::BLOCKED : SlotStatus::UNKNOWN;
+            break;
+        }
+        unit_ref.slots[i].status = mapped;
+    }
+
+    // last_load_slot is box_extras.py's authoritative "which slot is in the
+    // extruder right now" signal. Two outcomes:
+    //   "slot<N>"  → promote slot N to LOADED (covers the case where the
+    //                per-slot signal hasn't caught up, e.g. recovery paths)
+    //   "slot-1"   → demote any slot still claiming LOADED to AVAILABLE
+    //                (nothing is in the extruder anymore)
+    auto load_it = variables.find("last_load_slot");
+    if (load_it != variables.end() && load_it->is_string()) {
+        const std::string val = load_it->get<std::string>();
+        if (val == "slot-1") {
+            for (auto& slot : unit_ref.slots) {
+                if (slot.status == SlotStatus::LOADED) {
+                    slot.status = SlotStatus::AVAILABLE;
+                }
+            }
+        } else if (auto idx = parse_slot_name(val, slot_count)) {
+            unit_ref.slots[*idx].status = SlotStatus::LOADED;
+        }
+    }
 }
 
 // --- State queries ---

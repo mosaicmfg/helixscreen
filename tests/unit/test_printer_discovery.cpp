@@ -1396,3 +1396,103 @@ TEST_CASE("PrinterDiscovery: Happy Hare takes priority over IFS sensors",
     REQUIRE(discovery.has_mmu());
     REQUIRE(discovery.mmu_type() == AmsType::HAPPY_HARE);
 }
+
+// ==========================================================================
+// QIDI Box Detection
+// ==========================================================================
+// The QIDI Box is a hub-style filament changer for Plus 4 / Q2 / Max 4.
+// Klipper loads custom extensions that register objects under these names:
+//   - `box_stepper slot<N>` (one per physical slot; 4 per box, 1-4 boxes)
+//   - `box_extras` (coordinator: b_endstop / e_endstop / button state)
+//   - `box_rfid card_reader_<N>` (2 readers per box)
+//   - `heater_generic heater_box<N>` (drying heater per box)
+//   - `aht20_f heater_box<N>` (humidity sensor co-located with heater)
+//
+// Detection key: presence of any `box_stepper slot*` object. That's the
+// unambiguous signal — the other names ride along.
+
+TEST_CASE("PrinterDiscovery detects QIDI Box via box_stepper objects",
+          "[printer_discovery][qidi_box]") {
+    helix::PrinterDiscovery discovery;
+    discovery.parse_objects(nlohmann::json::array({
+        "extruder",
+        "heater_bed",
+        "box_extras",
+        "box_stepper slot0",
+        "box_stepper slot1",
+        "box_stepper slot2",
+        "box_stepper slot3",
+        "heater_generic heater_box1",
+        "aht20_f heater_box1",
+        "box_rfid card_reader_1",
+        "box_rfid card_reader_2",
+    }));
+
+    REQUIRE(discovery.has_mmu());
+    REQUIRE(discovery.mmu_type() == AmsType::QIDI_BOX);
+    REQUIRE(discovery.detected_ams_systems().size() == 1);
+    REQUIRE(discovery.detected_ams_systems()[0].type == AmsType::QIDI_BOX);
+}
+
+TEST_CASE("PrinterDiscovery counts QIDI Box slots from box_stepper objects",
+          "[printer_discovery][qidi_box]") {
+    // The backend needs to know how many slots exist to size system_info_
+    // correctly. Slot count = number of `box_stepper slot*` objects.
+
+    SECTION("Single box: 4 slots") {
+        helix::PrinterDiscovery discovery;
+        discovery.parse_objects(nlohmann::json::array({
+            "box_stepper slot0",
+            "box_stepper slot1",
+            "box_stepper slot2",
+            "box_stepper slot3",
+        }));
+        REQUIRE(discovery.qidi_box_slot_count() == 4);
+    }
+
+    SECTION("Two boxes: 8 slots") {
+        helix::PrinterDiscovery discovery;
+        nlohmann::json objects = nlohmann::json::array();
+        for (int i = 0; i < 8; ++i) {
+            objects.push_back("box_stepper slot" + std::to_string(i));
+        }
+        discovery.parse_objects(objects);
+        REQUIRE(discovery.qidi_box_slot_count() == 8);
+    }
+
+    SECTION("Four boxes: 16 slots (max)") {
+        helix::PrinterDiscovery discovery;
+        nlohmann::json objects = nlohmann::json::array();
+        for (int i = 0; i < 16; ++i) {
+            objects.push_back("box_stepper slot" + std::to_string(i));
+        }
+        discovery.parse_objects(objects);
+        REQUIRE(discovery.qidi_box_slot_count() == 16);
+    }
+
+    SECTION("No QIDI Box: slot count is 0") {
+        helix::PrinterDiscovery discovery;
+        discovery.parse_objects(nlohmann::json::array({"extruder", "heater_bed"}));
+        REQUIRE(discovery.qidi_box_slot_count() == 0);
+    }
+}
+
+TEST_CASE("PrinterDiscovery: Happy Hare takes priority over QIDI Box",
+          "[printer_discovery][qidi_box]") {
+    // Happy Hare is a generic MMU and wins over hardware-specific backends
+    // (matches AD5X IFS priority semantics). If both objects appear in
+    // printer.objects.list, mmu_type() must be HAPPY_HARE.
+    helix::PrinterDiscovery discovery;
+    discovery.parse_objects(nlohmann::json::array({
+        "mmu",
+        "box_stepper slot0",
+        "box_stepper slot1",
+        "box_stepper slot2",
+        "box_stepper slot3",
+    }));
+
+    REQUIRE(discovery.has_mmu());
+    REQUIRE(discovery.mmu_type() == AmsType::HAPPY_HARE);
+    // QIDI slot counter must NOT increment when Happy Hare claims the slot.
+    REQUIRE(discovery.qidi_box_slot_count() == 0);
+}

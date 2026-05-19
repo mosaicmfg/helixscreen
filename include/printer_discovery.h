@@ -300,6 +300,20 @@ class PrinterDiscovery {
                 mmu_type_ = AmsType::AD5X_IFS;
                 filament_sensor_names_.push_back(name);
             }
+            // QIDI Box detection — custom Klipper extension on Plus 4 / Q2 / Max 4
+            // registers `box_stepper slot<N>` per physical slot (4 per box,
+            // 1-4 boxes chainable to 16 slots). Presence of any `box_stepper
+            // slot*` object is the unambiguous detection signal; the per-name
+            // count gives the physical slot count.
+            else if (name.rfind("box_stepper slot", 0) == 0) {
+                if (!has_mmu_) {
+                    has_mmu_ = true;
+                    mmu_type_ = AmsType::QIDI_BOX;
+                }
+                if (mmu_type_ == AmsType::QIDI_BOX) {
+                    ++qidi_box_slot_count_;
+                }
+            }
             // Snapmaker U1 detection — filament_detect is unique to U1 firmware
             else if (name == "filament_detect") {
                 has_snapmaker_ = true;
@@ -455,6 +469,9 @@ class PrinterDiscovery {
                 detected_ams_systems_.push_back({AmsType::CFS, "CFS"});
             } else if (mmu_type_ == AmsType::ACE) {
                 detected_ams_systems_.push_back({AmsType::ACE, "ACE"});
+            } else if (mmu_type_ == AmsType::QIDI_BOX) {
+                // i18n: do not translate - product name
+                detected_ams_systems_.push_back({AmsType::QIDI_BOX, "QIDI Box"});
             }
         } else if (has_snapmaker_) {
             // Native Snapmaker filament system (no aftermarket MMU)
@@ -598,6 +615,7 @@ class PrinterDiscovery {
         has_fan_feedback_ = false;
         is_kalico_ = false;
         mmu_type_ = AmsType::NONE;
+        qidi_box_slot_count_ = 0;
         detected_ams_systems_.clear();
 
         // Printer info
@@ -786,6 +804,15 @@ class PrinterDiscovery {
     /// @brief Alias for mmu_type() - compatibility with PrinterCapabilities API
     [[nodiscard]] AmsType get_mmu_type() const {
         return mmu_type_;
+    }
+
+    /// @brief Physical slot count for a detected QIDI Box (0 if none).
+    ///
+    /// Derived from the number of `box_stepper slot<N>` objects in
+    /// printer.objects.list. Values 4/8/12/16 for 1-4 boxes chained.
+    /// Returns 0 when mmu_type() != QIDI_BOX.
+    [[nodiscard]] int qidi_box_slot_count() const {
+        return qidi_box_slot_count_;
     }
 
     /// @brief All detected AMS/filament systems (may include multiple backends)
@@ -1180,6 +1207,7 @@ class PrinterDiscovery {
     bool has_timelapse_ = false;
     bool has_exclude_object_ = false;
     bool has_screws_tilt_ = false;
+    int qidi_box_slot_count_ = 0; ///< Count of `box_stepper slot<N>` objects (QIDI Box)
     bool has_klippain_shaketune_ = false;
     bool has_speaker_ = false;
     bool has_fan_feedback_ = false;
