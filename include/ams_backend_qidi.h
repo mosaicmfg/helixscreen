@@ -95,4 +95,15 @@ class AmsBackendQidi : public AmsSubscriptionBackend {
     /// Input is the inner `variables` object (already unwrapped from the
     /// `save_variables.variables` envelope).
     void parse_save_variables(const nlohmann::json& variables);
+
+    /// Raw RFID indices read from save_variables. Per-slot side-table so we
+    /// don't pollute SlotInfo with backend-specific fields. Resolution to
+    /// material/color/brand happens via the officiall_filas_list.cfg lookup
+    /// (separate cycle). 0 = unknown.
+    struct QidiSlotRfid {
+        int filament_id = 0; ///< 1-99, index into officiall_filas_list.cfg
+        int color_id = 0;    ///< 1-24, palette index
+        int vendor_id = 0;   ///< Always 1 in the wild so far
+    };
+    std::vector<QidiSlotRfid> slot_rfid_;
 };

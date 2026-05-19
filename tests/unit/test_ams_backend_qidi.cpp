@@ -19,6 +19,15 @@ class QidiBoxTestAccess {
     static void handle_status(AmsBackendQidi& b, const json& n) {
         b.handle_status_update(n);
     }
+    static int filament_id(const AmsBackendQidi& b, int slot) {
+        return b.slot_rfid_.at(static_cast<size_t>(slot)).filament_id;
+    }
+    static int color_id(const AmsBackendQidi& b, int slot) {
+        return b.slot_rfid_.at(static_cast<size_t>(slot)).color_id;
+    }
+    static int vendor_id(const AmsBackendQidi& b, int slot) {
+        return b.slot_rfid_.at(static_cast<size_t>(slot)).vendor_id;
+    }
 };
 
 // Build a Moonraker-shaped status notification carrying save_variables.
@@ -246,4 +255,71 @@ TEST_CASE("QIDI Box last_load_slot=slot-1 means nothing is in the extruder",
 
     REQUIRE(backend.get_system_info().units[0].slots[2].status ==
             SlotStatus::AVAILABLE);
+}
+
+// =====================================================================
+// parse_save_variables: RFID per-slot indices
+// =====================================================================
+// box_extras.py writes save_variables.variables.filament_slot<N> (1-99,
+// index into officiall_filas_list.cfg), color_slot<N> (1-24, index into
+// the color palette), and vendor_slot<N> (always 1 in the wild so far).
+// The backend captures the raw IDs into a private side-table; resolution
+// to material/color happens in a follow-up cycle once the cfg resolver
+// lands.
+
+TEST_CASE("QIDI Box filament_slot<N> captures raw RFID material index",
+          "[ams][qidi_box]") {
+    AmsBackendQidi backend(nullptr, nullptr);
+
+    QidiBoxTestAccess::parse_vars(backend, json{
+                                               {"filament_slot0", 42},
+                                               {"filament_slot1", 7},
+                                           });
+
+    REQUIRE(QidiBoxTestAccess::filament_id(backend, 0) == 42);
+    REQUIRE(QidiBoxTestAccess::filament_id(backend, 1) == 7);
+    // Unset slots default to 0 (= unknown).
+    REQUIRE(QidiBoxTestAccess::filament_id(backend, 2) == 0);
+    REQUIRE(QidiBoxTestAccess::filament_id(backend, 3) == 0);
+}
+
+TEST_CASE("QIDI Box color_slot<N> captures raw RFID color index",
+          "[ams][qidi_box]") {
+    AmsBackendQidi backend(nullptr, nullptr);
+
+    QidiBoxTestAccess::parse_vars(backend, json{
+                                               {"color_slot0", 3},  // some palette index
+                                               {"color_slot2", 24}, // max palette index
+                                           });
+
+    REQUIRE(QidiBoxTestAccess::color_id(backend, 0) == 3);
+    REQUIRE(QidiBoxTestAccess::color_id(backend, 2) == 24);
+    REQUIRE(QidiBoxTestAccess::color_id(backend, 1) == 0);
+}
+
+TEST_CASE("QIDI Box vendor_slot<N> captures raw RFID vendor index",
+          "[ams][qidi_box]") {
+    AmsBackendQidi backend(nullptr, nullptr);
+
+    QidiBoxTestAccess::parse_vars(backend, json{
+                                               {"vendor_slot0", 1},
+                                               {"vendor_slot3", 1},
+                                           });
+
+    REQUIRE(QidiBoxTestAccess::vendor_id(backend, 0) == 1);
+    REQUIRE(QidiBoxTestAccess::vendor_id(backend, 3) == 1);
+    REQUIRE(QidiBoxTestAccess::vendor_id(backend, 1) == 0);
+}
+
+TEST_CASE("QIDI Box RFID side-table resizes with box_count",
+          "[ams][qidi_box]") {
+    AmsBackendQidi backend(nullptr, nullptr);
+
+    QidiBoxTestAccess::parse_vars(backend, json{
+                                               {"box_count", 2},
+                                               {"filament_slot7", 99},
+                                           });
+
+    REQUIRE(QidiBoxTestAccess::filament_id(backend, 7) == 99);
+    REQUIRE(QidiBoxTestAccess::filament_id(backend, 0) == 0);
 }

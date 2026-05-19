@@ -74,6 +74,7 @@ AmsBackendQidi::AmsBackendQidi(MoonrakerAPI* api, helix::MoonrakerClient* client
     }
 
     system_info_.units.push_back(std::move(unit));
+    slot_rfid_.resize(NUM_SLOTS);
 
     spdlog::debug("{} Stub backend constructed ({} slots, no protocol implemented)",
                   backend_log_tag(), NUM_SLOTS);
@@ -132,6 +133,7 @@ void AmsBackendQidi::parse_save_variables(const nlohmann::json& variables) {
             AmsUnit& unit = system_info_.units[0];
             if (static_cast<int>(unit.slots.size()) != desired_slots) {
                 unit.slots.resize(static_cast<size_t>(desired_slots));
+                slot_rfid_.resize(static_cast<size_t>(desired_slots));
                 for (size_t i = 0; i < unit.slots.size(); ++i) {
                     unit.slots[i].slot_index = static_cast<int>(i);
                     unit.slots[i].global_index = static_cast<int>(i);
@@ -215,6 +217,31 @@ void AmsBackendQidi::parse_save_variables(const nlohmann::json& variables) {
             }
         } else if (auto idx = parse_slot_name(val, slot_count)) {
             unit_ref.slots[*idx].status = SlotStatus::LOADED;
+        }
+    }
+
+    // Per-slot RFID indices written by box_extras.py:
+    //   filament_slot<N> = material index 1-99 (officiall_filas_list.cfg)
+    //   color_slot<N>    = palette index 1-24
+    //   vendor_slot<N>   = vendor index (always 1 observed so far)
+    // Captured raw into slot_rfid_; resolved to material/color/brand by a
+    // separate cfg-file lookup (not yet implemented).
+    if (slot_rfid_.size() < unit_ref.slots.size()) {
+        slot_rfid_.resize(unit_ref.slots.size());
+    }
+    for (size_t i = 0; i < unit_ref.slots.size(); ++i) {
+        const std::string suffix = std::to_string(i);
+        if (auto it = variables.find("filament_slot" + suffix);
+            it != variables.end() && it->is_number_integer()) {
+            slot_rfid_[i].filament_id = it->get<int>();
+        }
+        if (auto it = variables.find("color_slot" + suffix);
+            it != variables.end() && it->is_number_integer()) {
+            slot_rfid_[i].color_id = it->get<int>();
+        }
+        if (auto it = variables.find("vendor_slot" + suffix);
+            it != variables.end() && it->is_number_integer()) {
+            slot_rfid_[i].vendor_id = it->get<int>();
         }
     }
 }
