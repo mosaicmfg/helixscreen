@@ -961,6 +961,18 @@ TEST_CASE("PrintStartProfile: snapmaker_u1 action-code signals route to correct 
     // every real phase and should not steer the UI.
     REQUIRE_FALSE(profile->try_match_signal(
         "// Success: Set action code IDLE", result));
+
+    // Future Snapmaker firmware revisions may emit action codes we
+    // don't know about yet; they must fall through cleanly (no false
+    // match into an unrelated phase).
+    REQUIRE_FALSE(profile->try_match_signal(
+        "// Success: Set action code FOO_UNKNOWN", result));
+
+    // try_match_signal trims trailing whitespace (parser handles \r
+    // line endings from some firmware variants).
+    REQUIRE(profile->try_match_signal(
+        "// Success: Set action code BED_PREHEATING\r", result));
+    REQUIRE(result.phase == PrintStartPhase::HEATING_BED);
 }
 
 TEST_CASE("PrintStartProfile: snapmaker_u1 response patterns match real preprint lines",
