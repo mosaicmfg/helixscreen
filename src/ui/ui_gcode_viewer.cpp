@@ -422,6 +422,64 @@ static bool has_gcode_data(const gcode_viewer_state_t* st) {
     return st->gcode_file || (st->streaming_controller_ && st->streaming_controller_->is_open());
 }
 
+#ifdef ENABLE_3D_RENDERER
+/// Build a 3D RibbonGeometry from a parsed gcode file using the memory budget
+/// system. Returns nullptr if the budget tier forces 2D or the build exceeds
+/// the budget. Shared between the initial async-load path and the on-demand
+/// path that fires when the user switches to 3D mode after starting in 2D.
+static std::unique_ptr<helix::gcode::RibbonGeometry>
+build_3d_geometry_in_budget(const helix::gcode::ParsedGCodeFile& file, const char* context_tag) {
+    helix::gcode::GeometryBudgetManager budget_mgr;
+    size_t available_kb = budget_mgr.read_system_available_kb();
+    size_t budget = budget_mgr.calculate_budget(available_kb);
+    auto budget_config = budget_mgr.select_tier(file.total_segments, budget);
+
+    spdlog::info("[GCode Viewer] {}: {}MB available, {}MB budget, {} segments -> tier {}",
+                 context_tag, available_kb / 1024, budget / (1024 * 1024), file.total_segments,
+                 budget_config.tier);
+
+    if (budget_config.tier > 3) {
+        spdlog::info("[GCode Viewer] {}: tier {} — skipping 3D geometry build", context_tag,
+                     budget_config.tier);
+        return nullptr;
+    }
+
+    helix::gcode::GeometryBuilder builder;
+    if (!file.tool_color_palette.empty()) {
+        builder.set_tool_color_palette(file.tool_color_palette);
+    }
+    if (file.perimeter_extrusion_width_mm > 0.0f) {
+        builder.set_extrusion_width(file.perimeter_extrusion_width_mm);
+    } else if (file.extrusion_width_mm > 0.0f) {
+        builder.set_extrusion_width(file.extrusion_width_mm);
+    }
+    builder.set_layer_height(file.layer_height_mm);
+    builder.set_budget_tube_sides(budget_config.tube_sides);
+    builder.set_budget_limit(budget_config.budget_bytes);
+
+    helix::gcode::SimplificationOptions opts{
+        .tolerance_mm = budget_config.simplification_tolerance,
+        .min_segment_length_mm = 0.05f,
+        .max_direction_change_deg = budget_config.tier >= 3   ? 45.0f
+                                    : budget_config.tier == 2 ? 30.0f
+                                                              : 15.0f};
+
+    auto geometry = std::make_unique<helix::gcode::RibbonGeometry>(builder.build(file, opts));
+
+    if (builder.was_budget_exceeded()) {
+        spdlog::warn("[GCode Viewer] {}: budget exceeded — falling back to 2D", context_tag);
+        return nullptr;
+    }
+
+    spdlog::info("[GCode Viewer] {}: built geometry: {} vertices, {} triangles (tier {})",
+                 context_tag, geometry->vertices.size(),
+                 geometry->extrusion_triangle_count + geometry->travel_triangle_count,
+                 budget_config.tier);
+    geometry->prepare_interleaved_buffers();
+    return geometry;
+}
+#endif
+
 // ==============================================
 // Event Callbacks
 // ==============================================
@@ -1531,80 +1589,16 @@ static void ui_gcode_viewer_load_file_async(lv_obj_t* obj, const char* file_path
                               result->gcode_file->total_segments);
 
 #ifdef ENABLE_3D_RENDERER
-                // PHASE 2: Budget-aware 3D geometry build
+                // PHASE 2: Budget-aware 3D geometry build.
+                // Built at load time only when 3D is the active render mode. The 2D path
+                // skips this (saves CPU + memory); if the user later switches to 3D the
+                // build runs on demand from ui_gcode_viewer_set_render_mode().
+                // Segments are deliberately retained even after the build so the 2D
+                // renderer can walk them when the user switches back.
                 if (!st->is_using_2d_mode()) {
-                    // Assess system memory and calculate budget
-                    helix::gcode::GeometryBudgetManager budget_mgr;
-                    size_t available_kb = budget_mgr.read_system_available_kb();
-                    size_t budget = budget_mgr.calculate_budget(available_kb);
-
-                    auto budget_config =
-                        budget_mgr.select_tier(result->gcode_file->total_segments, budget);
-
-                    spdlog::info("[GCode Viewer] Memory: {}MB available, {}MB budget, "
-                                 "{} segments -> tier {}",
-                                 available_kb / 1024, budget / (1024 * 1024),
-                                 result->gcode_file->total_segments, budget_config.tier);
-
-                    if (budget_config.tier <= 3) {
-                        // Tier 1-3: Build 3D geometry with budget constraints
-                        auto configure_builder = [&](helix::gcode::GeometryBuilder& builder) {
-                            if (!result->gcode_file->tool_color_palette.empty()) {
-                                builder.set_tool_color_palette(
-                                    result->gcode_file->tool_color_palette);
-                            }
-                            if (result->gcode_file->perimeter_extrusion_width_mm > 0.0f) {
-                                builder.set_extrusion_width(
-                                    result->gcode_file->perimeter_extrusion_width_mm);
-                            } else if (result->gcode_file->extrusion_width_mm > 0.0f) {
-                                builder.set_extrusion_width(result->gcode_file->extrusion_width_mm);
-                            }
-                            builder.set_layer_height(result->gcode_file->layer_height_mm);
-                            builder.set_budget_tube_sides(budget_config.tube_sides);
-                            builder.set_budget_limit(budget_config.budget_bytes);
-                        };
-
-                        {
-                            helix::gcode::GeometryBuilder builder;
-                            configure_builder(builder);
-
-                            helix::gcode::SimplificationOptions opts{
-                                .tolerance_mm = budget_config.simplification_tolerance,
-                                .min_segment_length_mm = 0.05f,
-                                .max_direction_change_deg = budget_config.tier >= 3   ? 45.0f
-                                                            : budget_config.tier == 2 ? 30.0f
-                                                                                      : 15.0f};
-
-                            result->geometry = std::make_unique<helix::gcode::RibbonGeometry>(
-                                builder.build(*result->gcode_file, opts));
-
-                            if (builder.was_budget_exceeded()) {
-                                spdlog::warn("[GCode Viewer] Budget exceeded — falling back to 2D");
-                                result->geometry.reset();
-                                result->force_2d = true;
-                            } else {
-                                spdlog::info("[GCode Viewer] Built geometry: "
-                                             "{} vertices, {} triangles (tier {})",
-                                             result->geometry->vertices.size(),
-                                             result->geometry->extrusion_triangle_count +
-                                                 result->geometry->travel_triangle_count,
-                                             budget_config.tier);
-                                // Pre-compute interleaved vertex buffers on background thread
-                                // so UI thread only does fast GL upload (no
-                                // dequantization/expansion)
-                                result->geometry->prepare_interleaved_buffers();
-                            }
-                        }
-
-                        if (!result->force_2d) {
-                            size_t freed = result->gcode_file->clear_segments();
-                            spdlog::info("[GCode Viewer] Freed {} MB of parsed segment data",
-                                         freed / (1024 * 1024));
-                        }
-                    } else {
-                        // Tier 4-5: Skip geometry build entirely
-                        spdlog::info("[GCode Viewer] Tier {} — skipping 3D geometry build",
-                                     budget_config.tier);
+                    result->geometry =
+                        build_3d_geometry_in_budget(*result->gcode_file, "Initial load");
+                    if (!result->geometry) {
                         result->force_2d = true;
                     }
                 } else {
@@ -1983,6 +1977,28 @@ void ui_gcode_viewer_set_render_mode(lv_obj_t* obj, GcodeViewerRenderMode mode) 
             st->layer_renderer_2d_->set_ssao_enabled(true);
         }
     }
+
+#ifdef ENABLE_3D_RENDERER
+    // If switching to 3D and the GLES renderer has no geometry (file was loaded
+    // in 2D mode so the build was skipped), build it on demand now. Without this
+    // the 3D viewer paints an empty background after a live 2D→3D switch.
+    if (!st->is_using_2d_mode() && st->gcode_file && st->renderer_ &&
+        !st->renderer_->has_geometry()) {
+        auto geometry = build_3d_geometry_in_budget(*st->gcode_file, "On-demand 3D switch");
+        if (geometry) {
+            st->renderer_->set_prebuilt_geometry(std::move(geometry), st->gcode_file->filename);
+            if (st->camera_) {
+                st->camera_->fit_to_bounds(st->gcode_file->global_bounding_box);
+            }
+            st->needs_3d_refresh_ = true;
+        } else {
+            // Budget refused — stay in 2D and revert the mode flag so future state
+            // queries (is_using_2d_mode, draw_cb dispatch) keep using the 2D path.
+            spdlog::warn("[GCode Viewer] 3D switch refused by memory budget; staying in 2D");
+            st->render_mode_ = GcodeViewerRenderMode::Layer2D;
+        }
+    }
+#endif
 
     lv_obj_invalidate(obj);
 }

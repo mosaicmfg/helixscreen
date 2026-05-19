@@ -161,6 +161,13 @@ class GCodeGLESRenderer {
         return geometry_ && !geometry_uploaded_;
     }
 
+    /// True if geometry has been set via set_prebuilt_geometry(). Used by the
+    /// viewer widget to decide whether a live 2D→3D switch needs an on-demand
+    /// geometry build (initial load in 2D mode skips the build).
+    bool has_geometry() const {
+        return geometry_ != nullptr;
+    }
+
     // ====== Color / Material ======
 
     void set_filament_color(const std::string& hex_color);
