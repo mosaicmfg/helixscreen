@@ -882,6 +882,8 @@ void FilamentPanel::handle_load_button() {
         return;
     }
 
+    snapshot_prior_heater_target();
+
     if (!is_extrusion_allowed()) {
         start_preheat_for_op(PreheatOp::LOAD);
         return;
@@ -915,6 +917,8 @@ void FilamentPanel::handle_unload_button() {
         return;
     }
 
+    snapshot_prior_heater_target();
+
     if (!is_extrusion_allowed()) {
         start_preheat_for_op(PreheatOp::UNLOAD);
         return;
@@ -945,6 +949,8 @@ void FilamentPanel::handle_extrude_button() {
         cancel_pending_preheat();
         return;
     }
+
+    snapshot_prior_heater_target();
 
     if (!is_extrusion_allowed()) {
         start_preheat_for_op(PreheatOp::EXTRUDE);
@@ -998,6 +1004,8 @@ void FilamentPanel::handle_purge_button() {
         cancel_pending_preheat();
         return;
     }
+
+    snapshot_prior_heater_target();
 
     if (!is_extrusion_allowed()) {
         start_preheat_for_op(PreheatOp::PURGE);
@@ -1111,6 +1119,8 @@ void FilamentPanel::handle_retract_button() {
         cancel_pending_preheat();
         return;
     }
+
+    snapshot_prior_heater_target();
 
     if (!is_extrusion_allowed()) {
         start_preheat_for_op(PreheatOp::RETRACT);
@@ -1872,15 +1882,34 @@ const char* FilamentPanel::preheat_op_name(PreheatOp op) {
     }
 }
 
+// Reads the live extruder target subject rather than the cached
+// nozzle_target_ member — set_material() overwrites nozzle_target_ with
+// the preset's preview temperature, so it's unreliable here.
+int FilamentPanel::current_extruder_target() const {
+    auto* subj = printer_state_.get_active_extruder_target_subject();
+    return subj ? centi_to_degrees(lv_subject_get_int(subj)) : 0;
+}
+
+// Called at op-handler entry (not inside start_preheat_for_op) so the
+// hot-nozzle path that skips preheat still records what the user had
+// commanded; restore_heater_after_preheat() consults this to decide
+// whether to schedule the post-op cooldown.
+void FilamentPanel::snapshot_prior_heater_target() {
+    prior_nozzle_target_ = current_extruder_target();
+}
+
 void FilamentPanel::start_preheat_for_op(PreheatOp op) {
     auto [target, material_name] = resolve_preheat_temp();
 
-    // Snapshot heater state before we change it
-    prior_nozzle_target_ = nozzle_target_;
     pending_preheat_op_ = op;
     pending_preheat_target_ = target;
 
-    if (api_) {
+    // Belt-and-suspenders with the snapshot in restore_heater_after_preheat:
+    // skipping the SET_HEATER call here avoids a brief 240→200→240 dip
+    // through Klipper, while the prior_nozzle_target_ snapshot guarantees
+    // the heater isn't turned off when the op completes.
+    const int real_target = current_extruder_target();
+    if (api_ && real_target < target) {
         api_->set_temperature(
             printer_state_.active_extruder_name(), static_cast<double>(target), []() {},
             [](const MoonrakerError& /*err*/) {});
@@ -1892,8 +1921,9 @@ void FilamentPanel::start_preheat_for_op(PreheatOp op) {
         NOTIFY_INFO(lv_tr("Heating to {}°C for {}..."), target, material_name);
     }
 
-    spdlog::info("[{}] Starting preheat to {}°C ({}) for {}", get_name(), target,
-                 material_name.empty() ? "fallback" : material_name, preheat_op_name(op));
+    spdlog::info("[{}] Starting preheat to {}°C ({}) for {} (prior_target={}, real_target={})",
+                 get_name(), target, material_name.empty() ? "fallback" : material_name,
+                 preheat_op_name(op), prior_nozzle_target_, real_target);
 }
 
 void FilamentPanel::check_pending_preheat() {

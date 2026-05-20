@@ -390,6 +390,9 @@ class FilamentPanel : public PanelBase {
     void run_filament_macro(const std::string& macro_name, const std::string& op_label,
                             const helix::MacroParamResult& params);
 
+    int current_extruder_target() const;
+    void snapshot_prior_heater_target();
+
     //
     // === Static Trampolines ===
     //
