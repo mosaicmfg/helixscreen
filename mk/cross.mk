@@ -2718,7 +2718,7 @@ release-snapmaker-u1: | build/snapmaker-u1/bin/helix-screen
 	@# Install Snapmaker U1 preset as default config (skips hardware wizard on first run)
 	@rm -f $(RELEASE_DIR)/helixscreen/config/settings-test.json $(RELEASE_DIR)/helixscreen/config/helixconfig.json $(RELEASE_DIR)/helixscreen/config/helixconfig-test.json
 	$(call release-strip-pii,$(RELEASE_DIR)/helixscreen)
-	@cp assets/config/presets/snapmaker-u1.json $(RELEASE_DIR)/helixscreen/config/settings.json
+	@cp assets/config/presets/snapmaker_u1.json $(RELEASE_DIR)/helixscreen/config/settings.json
 	@echo "  $(DIM)Included pre-configured config/settings.json for Snapmaker U1$(RESET)"
 	@cp scripts/$(INSTALLER_FILENAME) $(RELEASE_DIR)/helixscreen/ 2>/dev/null || true
 	@chmod +x $(RELEASE_DIR)/helixscreen/$(INSTALLER_FILENAME) 2>/dev/null || true
