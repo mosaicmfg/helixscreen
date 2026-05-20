@@ -10,7 +10,7 @@
 
 ## 0. Stock Plus 4 display architecture (why HelixScreen on-device install is blocked)
 
-The stock Plus 4 ships with an **MKS PI smart-panel** — the same architecture used across the 3-series (X-Max 3, X-Plus 3, X-Smart 3, Q1 Pro). It is a standalone microcontroller-driven HMI (TJC / Nextion clone) wired to the mainboard over serial UART, **not** a Linux framebuffer. The panel runs its own firmware and *is* the UI; the Klipper host pushes UI state and pre-rendered thumbnails into it via TJC commands.
+The stock Plus 4 ships with an **MKS PI smart-panel** — the same architecture used across the 3-series (X-Max 3, X-Plus 3, X-Smart 3, Q1 Pro). It is a standalone microcontroller-driven HMI (TJC is the original Chinese OEM; Nextion is the same panel family licensed for global distribution) wired to the mainboard over serial UART, **not** a Linux framebuffer. The panel runs its own firmware and *is* the UI; the Klipper host pushes UI state and pre-rendered thumbnails into it via TJC commands.
 
 ### Thumbnail pipeline
 

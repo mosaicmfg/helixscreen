@@ -40,7 +40,7 @@ The only way to run HelixScreen on-device on a Plus 4 or 3-series printer is to 
 QIDI uses two generations of mainboard:
 
 - **Older models (X-Smart 3, X-Plus 3, X-Max 3, Q1 Pro, Plus 4):** MKSPI boards with Rockchip RK3328, ARM Cortex-A53 (aarch64), 1 GB RAM. These all use TJC HMI serial displays.
-- **Newer models (Q2, Max4):** New-generation boards with quad-core ARM Cortex-A35 (aarch64), ~498 MB RAM. **Q2 and Max 4** drive Linux framebuffer displays from the SoC. The **Plus 4** ships with the same new-gen board but keeps a TJC HMI serial display — same display class as the 3-series.
+- **Newer models (Q2, Max 4):** New-generation boards with quad-core ARM Cortex-A35 (aarch64), ~498 MB RAM. Both drive Linux framebuffer displays from the SoC.
 
 "On-device" below means whether HelixScreen can replace the printer's built-in display. **All six models work as remote targets regardless of this column.**
 
@@ -144,7 +144,7 @@ Ensure the user running HelixScreen has read permissions on the event device. Ru
 
 HelixScreen auto-detects all six supported QIDI models (X-Smart 3, X-Plus 3, X-Max 3, Q1 Pro, Plus 4, Q2) using several heuristics:
 
-- Hostname patterns (`qidi`, `x-max`, `x-plus`, `x-smart`, `xsmart`, `q1`, `Plus 4`)
+- Hostname patterns (`qidi`, `x-max`, `x-plus`, `x-smart`, `xsmart`, `q1`, `plus4`, `plus-4`)
 - Active chamber heater presence (X-Plus 3, X-Max 3, Q1 Pro, Plus 4 -- X-Smart 3 has a passive enclosure with no heater)
 - MCU identification patterns (RP2040 toolhead -- QIDI dual-MCU signature)
 - Build volume dimensions
@@ -212,7 +212,7 @@ HelixScreen has a **read-only state mirror** and a **gated write-path** for the 
 - No `qidi_box_64.png` logo asset yet — `AmsState::get_system_logo_path()` returns nullptr for `"qidi box"`, UI falls back to a generic AMS chip.
 - Write-path needs field validation against real hardware. Tracking via issue #954.
 
-Full context and references to the `qidi-community/Plus 4-Wiki` open-source reimplementation live in [`FILAMENT_MANAGEMENT.md` → QIDI Box](../FILAMENT_MANAGEMENT.md#qidi-box-qidi-Plus 4--q2--max4).
+Full context and references to the `qidi-community/Plus4-Wiki` open-source reimplementation live in [`FILAMENT_MANAGEMENT.md` → QIDI Box](../FILAMENT_MANAGEMENT.md#qidi-box-qidi-plus4--q2--max4).
 
 **Alternative path: [Bunny Box](https://github.com/Wazzup77/Bunny-Box)** — a community open-source replacement that reimplements the QIDI Box as a [Happy Hare](https://github.com/moggieuk/Happy-Hare) MMU. HelixScreen already has Happy Hare support, so a printer flashed with Bunny Box is controllable through HelixScreen via its existing Happy Hare integration. Plus 4 is the most mature target (tested on stock QIDI 1.7.3, FreeDi, and Kalico); Q2 is in active testing; Max 4 is not yet supported. Bunny Box currently depends on the maintainer's [Happy Hare fork](https://github.com/Wazzup77/Happy-Hare) for QIDI-specific hall-sensor and cutter handling, pending upstream merge.
 
