@@ -1067,7 +1067,11 @@ void DisplayManager::disable_input_briefly() {
     // Schedule re-enable after 200ms via LVGL timer
     lv_timer_create(reenable_input_cb, 200, nullptr);
 
-    spdlog::debug("[DisplayManager] Input disabled for 200ms (wake-only touch)");
+    // info-level so the wake-gate window is captured in debug bundles by
+    // default — diagnoses "tapped Resume but nothing happened" reports
+    // (#22) by letting us correlate user-reported tap times with the
+    // 200ms blackout window.
+    spdlog::info("[DisplayManager] Wake-gate engaged: input disabled for 200ms");
 }
 
 void DisplayManager::reenable_input_cb(lv_timer_t* timer) {
@@ -1083,7 +1087,7 @@ void DisplayManager::reenable_input_cb(lv_timer_t* timer) {
     // Delete the one-shot timer
     lv_timer_delete(timer);
 
-    spdlog::debug("[DisplayManager] Input re-enabled after wake");
+    spdlog::info("[DisplayManager] Wake-gate released: input re-enabled");
 }
 
 // ============================================================================
@@ -1112,10 +1116,12 @@ void DisplayManager::sleep_aware_read_cb(lv_indev_t* indev, lv_indev_data_t* dat
         if (dm->m_display_sleeping) {
             dm->m_wake_requested = true;
             data->state = LV_INDEV_STATE_RELEASED; // Absorb - LVGL sees no press
-            spdlog::debug("[DisplayManager] Touch absorbed while sleeping, wake requested");
+            spdlog::info("[DisplayManager] Wake touch absorbed at ({},{}) while sleeping",
+                         data->point.x, data->point.y);
         } else if (dm->m_display_dimmed) {
             dm->m_wake_requested = true;
-            spdlog::debug("[DisplayManager] Touch during dim, wake requested");
+            spdlog::info("[DisplayManager] Wake touch at ({},{}) while dim — passing through",
+                         data->point.x, data->point.y);
         }
     }
 }
