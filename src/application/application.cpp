@@ -1217,6 +1217,41 @@ bool Application::init_display() {
         theme_manager_refresh_layout_constants(disp);
         layout.init(w, h);
 
+        // OverlayBase-derived overlays cache their root widget across show/hide
+        // cycles, so the width baked in at creation time stays stale when the
+        // canvas shrinks (e.g., Android Keep Navigation Bar pins a side bar
+        // that insets the LVGL surface). Walk the screen children and re-apply
+        // the current overlay_panel_width_full / overlay_panel_width to any
+        // widget named *_overlay so existing overlays reflow without needing
+        // to be destroyed and recreated.
+        const char* width_full_str =
+            lv_xml_get_const(nullptr, "overlay_panel_width_full");
+        const char* width_str =
+            lv_xml_get_const(nullptr, "overlay_panel_width");
+        if (width_full_str && width_str) {
+            int32_t width_full = std::atoi(width_full_str);
+            int32_t width_std = std::atoi(width_str);
+            lv_obj_t* screen = lv_screen_active();
+            if (screen) {
+                uint32_t n = lv_obj_get_child_count(screen);
+                for (uint32_t i = 0; i < n; i++) {
+                    lv_obj_t* child = lv_obj_get_child(screen, i);
+                    const char* name = lv_obj_get_name(child);
+                    if (!name) continue;
+                    size_t len = std::strlen(name);
+                    if (len < 8) continue;
+                    if (std::strcmp(name + len - 8, "_overlay") != 0) continue;
+                    int32_t cur = lv_obj_get_width(child);
+                    // Most overlays use _full; some narrower panels use the
+                    // standard variant. Decide by which is closer to current.
+                    int32_t target =
+                        std::abs(cur - width_std) < std::abs(cur - width_full)
+                            ? width_std : width_full;
+                    lv_obj_set_width(child, target);
+                }
+            }
+        }
+
         spdlog::info("[Application] Resize: refreshed theme + layout for {}x{} ({})",
                      w, h, layout.name());
     });
