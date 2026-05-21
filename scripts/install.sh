@@ -429,7 +429,7 @@ _resolve_primary_group() {
 }
 
 # Detect platform
-# Returns: "ad5m", "ad5x", "cc1", "k1", "k2", "pi", "pi32", "snapmaker-u1", "x86", or "unsupported"
+# Returns: "ad5m", "ad5x", "cc1", "k1", "k2", "m1", "pi", "pi32", "snapmaker-u1", "x86", or "unsupported"
 detect_platform() {
     local arch kernel
     arch=$(uname -m)
@@ -515,6 +515,29 @@ detect_platform() {
         fi
         if [ "$u1_markers" -ge 2 ]; then
             echo "snapmaker-u1"
+            return 0
+        fi
+    fi
+
+    # Artillery M1 Pro (systemd Debian SBC running stock Artillery firmware).
+    # MUST come before the generic Debian SBC fallback since M1 is Debian-based
+    # and would otherwise be misdetected as plain "pi" — which would skip the
+    # M1-specific competing-UI shutdown (algo_app.service + makerbase-client).
+    # Fingerprints: the two stock services live under systemd; either physical
+    # unit files or systemctl listing them is enough.
+    if [ "$arch" = "aarch64" ] || [ "$arch" = "armv7l" ]; then
+        local m1_markers=0
+        [ -f /etc/systemd/system/algo_app.service ] && m1_markers=$((m1_markers + 1))
+        [ -f /etc/systemd/system/makerbase-client.services ] && m1_markers=$((m1_markers + 1))
+        [ -f /lib/systemd/system/algo_app.service ] && m1_markers=$((m1_markers + 1))
+        [ -f /lib/systemd/system/makerbase-client.services ] && m1_markers=$((m1_markers + 1))
+        if [ "$m1_markers" = 0 ] && command -v systemctl >/dev/null 2>&1; then
+            if systemctl list-unit-files 2>/dev/null | grep -qE '^(algo_app\.service|makerbase-client\.services)\b'; then
+                m1_markers=1
+            fi
+        fi
+        if [ "$m1_markers" -ge 1 ]; then
+            echo "m1"
             return 0
         fi
     fi
@@ -5391,13 +5414,18 @@ install_platform_hooks() {
     case "${AD5M_FIRMWARE:-}" in
         forge_x)     platform_hook="ad5m-forgex" ;;
         klipper_mod) platform_hook="ad5m-kmod" ;;
+        zmod)        platform_hook="ad5m-zmod" ;;
     esac
 
-    # Platform hooks (pi32 shares Pi hooks)
+    # Platform hooks (pi32 shares Pi hooks; AD5X shares the ad5m-zmod hook
+    # because both run ZMOD firmware with the same /data layout).
     case "$platform" in
         pi|pi32)       platform_hook="pi" ;;
         k1)            platform_hook="k1" ;;
         k2)            platform_hook="k2" ;;
+        cc1)           platform_hook="cc1" ;;
+        m1)            platform_hook="m1" ;;
+        ad5x)          platform_hook="ad5m-zmod" ;;
         snapmaker-u1)  platform_hook="snapmaker-u1" ;;
     esac
 

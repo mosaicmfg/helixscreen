@@ -65,13 +65,18 @@ install_platform_hooks() {
     case "${AD5M_FIRMWARE:-}" in
         forge_x)     platform_hook="ad5m-forgex" ;;
         klipper_mod) platform_hook="ad5m-kmod" ;;
+        zmod)        platform_hook="ad5m-zmod" ;;
     esac
 
-    # Platform hooks (pi32 shares Pi hooks)
+    # Platform hooks (pi32 shares Pi hooks; AD5X shares the ad5m-zmod hook
+    # because both run ZMOD firmware with the same /data layout).
     case "$platform" in
         pi|pi32)       platform_hook="pi" ;;
         k1)            platform_hook="k1" ;;
         k2)            platform_hook="k2" ;;
+        cc1)           platform_hook="cc1" ;;
+        m1)            platform_hook="m1" ;;
+        ad5x)          platform_hook="ad5m-zmod" ;;
         snapmaker-u1)  platform_hook="snapmaker-u1" ;;
     esac
 
