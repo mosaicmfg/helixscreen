@@ -107,6 +107,7 @@
 #include "ui_settings_sensors.h"
 #include "ui_severity_card.h"
 #include "ui_status_pill.h"
+#include "helix_sparkline.h"
 #include "ui_switch.h"
 #include "ui_temp_display.h"
 #include "ui_theme_editor_overlay.h"
@@ -1455,6 +1456,7 @@ bool Application::register_widgets() {
     ui_bed_mesh_register();
     ui_gcode_viewer_register();
     ui_gradient_canvas_register();
+    helix::ui::register_helix_sparkline_widget();
 
     // Initialize component systems
     ui_component_header_bar_init();
