@@ -5,6 +5,7 @@
 #include "static_subject_registry.h"
 #include "subject_managed_panel.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <spdlog/spdlog.h>
 
@@ -124,10 +125,34 @@ void PerformanceState::apply_sample(const PerfSample& s) {
     int tick = lv_subject_get_int(&s_history_tick_) + 1;
     lv_subject_set_int(&s_history_tick_, tick);
 
-    update_about_summary();
+    update_about_summary(s);
 }
 
-void PerformanceState::update_about_summary() { /* Task 4 */ }
+void PerformanceState::update_about_summary(const PerfSample& s) {
+    const int cpu         = lv_subject_get_int(&s_host_cpu_pct_);
+    const int cpu_present = lv_subject_get_int(&s_host_cpu_pct_present_);
+
+    int mcu_load = -1;
+    // Prefer the MCU literally named "mcu"; fall back to the first entry.
+    auto it = std::find_if(s.mcus.begin(), s.mcus.end(),
+                           [](const McuStat& m) { return m.name == "mcu"; });
+    if (it == s.mcus.end() && !s.mcus.empty()) {
+        it = s.mcus.begin();
+    }
+    if (it != s.mcus.end() && it->load) {
+        mcu_load = static_cast<int>(*it->load * 100.0f + 0.5f);
+    }
+
+    char tmp[64];
+    if (cpu_present && mcu_load >= 0) {
+        snprintf(tmp, sizeof(tmp), "%d%% CPU \xc2\xb7 %d%% MCU", cpu, mcu_load);
+    } else if (cpu_present) {
+        snprintf(tmp, sizeof(tmp), "%d%% CPU", cpu);
+    } else {
+        snprintf(tmp, sizeof(tmp), "\xe2\x80\x94");
+    }
+    lv_subject_copy_string(&s_about_summary_, tmp);
+}
 void PerformanceState::update_mcu_subjects(const std::vector<McuStat>&) { /* Task 5 */ }
 
 void PerformanceState::push_history(const std::string& key, float value) {

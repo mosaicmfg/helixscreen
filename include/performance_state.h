@@ -51,7 +51,7 @@ class PerformanceState {
 
     // ---- Main-thread sample application ----
     void apply_sample(const PerfSample& sample);
-    void update_about_summary();
+    void update_about_summary(const PerfSample& s);
     void update_mcu_subjects(const std::vector<McuStat>& mcus);
     void push_history(const std::string& key, float value);
     static std::string mcu_safe_name(const std::string& raw);

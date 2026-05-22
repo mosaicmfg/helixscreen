@@ -121,3 +121,37 @@ TEST_CASE_METHOD(PerfStateFixture,
     REQUIRE(lv_subject_get_int(lv_xml_get_subject(nullptr, "perf_host_mem_present")) == 0);
     REQUIRE(lv_subject_get_int(lv_xml_get_subject(nullptr, "perf_host_cpu_temp_present")) == 0);
 }
+
+TEST_CASE_METHOD(PerfStateFixture,
+                 "PerformanceState about summary reflects host + first MCU",
+                 "[performance]") {
+    using helix::perf::PerfSample;
+    using helix::perf::McuStat;
+
+    PerfSample s;
+    s.host_cpu_pct = 37.0f;
+    McuStat m; m.name = "mcu"; m.load = 0.14f;
+    s.mcus.push_back(m);
+
+    PerformanceState::instance().push_sample_for_testing(s);
+    UpdateQueueTestAccess::drain(UpdateQueue::instance());
+
+    const char* summary =
+        lv_subject_get_string(lv_xml_get_subject(nullptr, "perf_about_summary"));
+    REQUIRE(std::string(summary) == "37% CPU \xc2\xb7 14% MCU");
+}
+
+TEST_CASE_METHOD(PerfStateFixture,
+                 "PerformanceState about summary drops MCU when none",
+                 "[performance]") {
+    using helix::perf::PerfSample;
+    PerfSample s;
+    s.host_cpu_pct = 37.0f;
+
+    PerformanceState::instance().push_sample_for_testing(s);
+    UpdateQueueTestAccess::drain(UpdateQueue::instance());
+
+    const char* summary =
+        lv_subject_get_string(lv_xml_get_subject(nullptr, "perf_about_summary"));
+    REQUIRE(std::string(summary) == "37% CPU");
+}
