@@ -3,11 +3,11 @@
 #pragma once
 
 #include "async_lifetime_guard.h"
+#include "lvgl/lvgl.h"
 #include "performance_source.h"
 #include "subject_managed_panel.h"
 
 #include <array>
-#include <lvgl.h>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -26,7 +26,7 @@ class PerformanceState {
 
     /// Register subjects and self-register cleanup. Idempotent.
     /// Called from Application::init_subsystems() after MoonrakerAPI is up.
-    void init_subjects(bool register_xml = true);
+    void init_subjects();
 
     /// Tear down subjects. Called from StaticSubjectRegistry on shutdown.
     void deinit_subjects();
@@ -81,6 +81,12 @@ class PerformanceState {
         lv_subject_t load_pct{};
         lv_subject_t retrans{};
         lv_subject_t present{};
+
+        ~McuSubjects() {
+            lv_subject_deinit(&load_pct);
+            lv_subject_deinit(&retrans);
+            lv_subject_deinit(&present);
+        }
     };
     std::unordered_map<std::string, std::unique_ptr<McuSubjects>> mcu_subjects_;
 

@@ -16,7 +16,7 @@ PerformanceState& PerformanceState::instance() {
     return s;
 }
 
-void PerformanceState::init_subjects(bool /*register_xml*/) {
+void PerformanceState::init_subjects() {
     if (initialized_) {
         return;
     }
