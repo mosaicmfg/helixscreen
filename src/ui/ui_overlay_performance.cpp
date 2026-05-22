@@ -44,6 +44,12 @@ lv_obj_t* UiOverlayPerformance::create(lv_obj_t* parent) {
     return root_;
 }
 
+void UiOverlayPerformance::reset_for_testing() {
+    mcu_names_observer_.reset();
+    root_     = nullptr;
+    mcu_card_ = nullptr;
+}
+
 void UiOverlayPerformance::rebuild_mcu_rows() {
     if (!mcu_card_) return;
     helix::ui::safe_clean_children(mcu_card_);

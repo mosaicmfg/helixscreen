@@ -29,6 +29,10 @@ class UiOverlayPerformance {
     lv_obj_t* create(lv_obj_t* parent);
     lv_obj_t* root() { return root_; }
 
+    /// Clear cached root/card pointers and observer so create() can be called
+    /// again after the LVGL display has been reinitialized (test use only).
+    void reset_for_testing();
+
   private:
     UiOverlayPerformance() = default;
 
