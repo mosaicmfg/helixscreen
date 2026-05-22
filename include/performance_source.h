@@ -15,7 +15,7 @@ namespace perf {
 struct McuStat {
     std::string name;             ///< e.g. "mcu", "mcu sb"
     std::optional<float> load;    ///< awake/wall over the last sample window
-    std::optional<uint64_t> retransmits;
+    std::optional<uint64_t> retransmits; ///< cumulative counter; UI displays raw value
 };
 
 /// One full sample emitted by an IPerformanceSource. Optionals carry the
