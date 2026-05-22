@@ -32,6 +32,50 @@ void MoonrakerPerformanceSource::start() {
     if (running_) return;
     running_ = true;
 
+    // Subscribe to live proc_stat push notifications. These persist across
+    // reconnects, so register them once up front (no WS needed).
+    // register_method_callback delivers the full WS message to the callback;
+    // params are at j["params"][0].
+    api_->register_method_callback(
+        "notify_proc_stat_update", kHandlerName,
+        lifetime_.bg_cb("MoonrakerPerformanceSource::notify_proc_stat",
+                        [this](const json& j) {
+                            // Runs on main thread via bg_cb defer.
+                            if (!j.contains("params") || !j["params"].is_array() ||
+                                j["params"].empty())
+                                return;
+                            const json& body = j["params"][0];
+                            if (body.is_object()) on_proc_stat_payload(body);
+                        }));
+
+    // Re-discover on Klippy ready (handles firmware restarts where MCU objects
+    // may change — e.g. secondary MCU added or renamed in printer.cfg).
+    api_->register_method_callback(
+        "notify_klippy_ready", kHandlerName,
+        lifetime_.bg_cb("MoonrakerPerformanceSource::notify_klippy_ready",
+                        [this](const json&) {
+                            // Runs on main thread via bg_cb defer.
+                            run_initial_handshake();
+                        }));
+
+    // Hook the WS connect event. The handshake (initial REST proc_stats +
+    // rediscover_mcus) requires the WS to be CONNECTED and the HTTP base URL
+    // to be set. PerformanceState::set_source() runs at app init, BEFORE
+    // Application calls api->set_http_base_url() and m_moonraker->connect(),
+    // so firing the handshake here would lose the discovery RPC (rejected by
+    // ready_to_send) and the initial REST (HTTP base URL not configured).
+    // add_connected_observer fires immediately if already connected, or on
+    // the next WS open / Klippy ready transition.
+    api_->get_client().add_connected_observer(
+        kHandlerName,
+        lifetime_.bg_cb("MoonrakerPerformanceSource::on_connected",
+                        [this]() {
+                            // Runs on main thread via bg_cb defer.
+                            run_initial_handshake();
+                        }));
+}
+
+void MoonrakerPerformanceSource::run_initial_handshake() {
     // Initial host-stats snapshot via REST GET /machine/proc_stats.
     // RestResponse.data contains the full JSON-RPC-like body; the actual
     // payload is under resp.data["result"].
@@ -49,33 +93,8 @@ void MoonrakerPerformanceSource::start() {
                             }
                         }));
 
-    // Subscribe to live proc_stat push notifications.
-    // register_method_callback delivers the full WS message to the callback;
-    // params are at j["params"][0].
-    api_->register_method_callback(
-        "notify_proc_stat_update", kHandlerName,
-        lifetime_.bg_cb("MoonrakerPerformanceSource::notify_proc_stat",
-                        [this](const json& j) {
-                            // Runs on main thread via bg_cb defer.
-                            if (!j.contains("params") || !j["params"].is_array() ||
-                                j["params"].empty())
-                                return;
-                            const json& body = j["params"][0];
-                            if (body.is_object()) on_proc_stat_payload(body);
-                        }));
-
-    // Discover MCUs and set up subscriptions.
+    // Discover MCUs and set up subscriptions for live updates.
     rediscover_mcus();
-
-    // Re-discover on Klippy ready (handles firmware restarts where MCU objects
-    // may change — e.g. secondary MCU added or renamed in printer.cfg).
-    api_->register_method_callback(
-        "notify_klippy_ready", kHandlerName,
-        lifetime_.bg_cb("MoonrakerPerformanceSource::notify_klippy_ready",
-                        [this](const json&) {
-                            // Runs on main thread via bg_cb defer.
-                            rediscover_mcus();
-                        }));
 }
 
 void MoonrakerPerformanceSource::stop() {
@@ -85,9 +104,10 @@ void MoonrakerPerformanceSource::stop() {
     // Invalidate the lifetime guard — all in-flight bg_cb wrappers become no-ops.
     lifetime_.invalidate();
 
-    // Unregister persistent method callbacks.
+    // Unregister persistent method callbacks + the on-connected observer.
     api_->unregister_method_callback("notify_proc_stat_update", kHandlerName);
     api_->unregister_method_callback("notify_klippy_ready",     kHandlerName);
+    api_->get_client().remove_connected_observer(kHandlerName);
 
     // Drop the notify_status_update subscription registered for MCU live updates.
     if (status_sub_id_ != 0) {

@@ -1040,16 +1040,74 @@ void MoonrakerClient::get_gcode_store(
 
 void MoonrakerClient::invoke_connected_callback(const std::function<void()>& cb,
                                                 const char* cause) {
-    if (!cb) {
-        return;
+    if (cb) {
+        try {
+            cb();
+        } catch (const std::exception& e) {
+            LOG_ERROR_INTERNAL("[Moonraker Client] {} callback threw exception: {}", cause,
+                               e.what());
+        } catch (...) {
+            LOG_ERROR_INTERNAL("[Moonraker Client] {} callback threw unknown exception", cause);
+        }
     }
-    try {
-        cb();
-    } catch (const std::exception& e) {
-        LOG_ERROR_INTERNAL("[Moonraker Client] {} callback threw exception: {}", cause, e.what());
-    } catch (...) {
-        LOG_ERROR_INTERNAL("[Moonraker Client] {} callback threw unknown exception", cause);
+
+    // Fan out to any registered observers. Copy under lock to avoid holding the
+    // mutex while user code runs.
+    std::vector<std::pair<std::string, std::function<void()>>> observers_copy;
+    {
+        std::lock_guard<std::mutex> lock(connected_observers_mutex_);
+        observers_copy.reserve(connected_observers_.size());
+        for (const auto& [name, fn] : connected_observers_) {
+            observers_copy.emplace_back(name, fn);
+        }
     }
+    for (auto& [name, fn] : observers_copy) {
+        if (!fn) continue;
+        try {
+            fn();
+        } catch (const std::exception& e) {
+            LOG_ERROR_INTERNAL("[Moonraker Client] {} observer '{}' threw exception: {}", cause,
+                               name, e.what());
+        } catch (...) {
+            LOG_ERROR_INTERNAL("[Moonraker Client] {} observer '{}' threw unknown exception", cause,
+                               name);
+        }
+    }
+}
+
+void MoonrakerClient::add_connected_observer(const std::string& handler_name,
+                                             std::function<void()> cb) {
+    bool fire_immediately = false;
+    std::function<void()> immediate_cb;
+    {
+        std::lock_guard<std::mutex> lock(connected_observers_mutex_);
+        connected_observers_[handler_name] = cb;
+        if (connection_state_.load(std::memory_order_acquire) == ConnectionState::CONNECTED) {
+            fire_immediately = true;
+            immediate_cb = cb;
+        }
+    }
+    if (fire_immediately && immediate_cb) {
+        // Already-connected handshake: fire on the caller's thread (typically
+        // the main/UI thread). Observers that need to touch LVGL should defer
+        // via UpdateQueue / AsyncLifetimeGuard::bg_cb themselves.
+        try {
+            immediate_cb();
+        } catch (const std::exception& e) {
+            LOG_ERROR_INTERNAL(
+                "[Moonraker Client] connected observer '{}' immediate-fire threw: {}",
+                handler_name, e.what());
+        } catch (...) {
+            LOG_ERROR_INTERNAL(
+                "[Moonraker Client] connected observer '{}' immediate-fire threw unknown",
+                handler_name);
+        }
+    }
+}
+
+bool MoonrakerClient::remove_connected_observer(const std::string& handler_name) {
+    std::lock_guard<std::mutex> lock(connected_observers_mutex_);
+    return connected_observers_.erase(handler_name) > 0;
 }
 
 void MoonrakerClient::discover_printer(std::function<void()> on_complete,

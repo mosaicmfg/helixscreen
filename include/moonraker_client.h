@@ -462,6 +462,31 @@ class MoonrakerClient : public hv::WebSocketClient, public IMoonrakerClient {
         discovery_.set_bed_mesh_callback(std::move(callback));
     }
 
+    /**
+     * @brief Register an additional on-connected observer
+     *
+     * Observers fire alongside the primary `on_connected` callback set via
+     * `connect()` — on WebSocket open, on Klippy ready, and on Klippy shutdown
+     * (when discovery hasn't completed). Use this for components that initialise
+     * before the WebSocket is up and need to retry their RPCs once the
+     * connection is established (e.g. PerformanceState's MCU discovery).
+     *
+     * If the client is already in CONNECTED state when the observer is
+     * registered, the callback fires immediately on the calling thread — this
+     * closes the race where a component registers after the WS has already
+     * connected.
+     *
+     * @param handler_name Unique key for replace / remove
+     * @param cb           Callback fired on each connection event
+     */
+    void add_connected_observer(const std::string& handler_name, std::function<void()> cb);
+
+    /**
+     * @brief Remove a previously-registered on-connected observer
+     * @return true if a handler was removed
+     */
+    bool remove_connected_observer(const std::string& handler_name);
+
     // ========== Events ==========
 
     /**
@@ -614,7 +639,7 @@ class MoonrakerClient : public hv::WebSocketClient, public IMoonrakerClient {
      * @param cb The callback to invoke; no-op if empty.
      * @param cause Short human-readable label for log messages.
      */
-    static void invoke_connected_callback(const std::function<void()>& cb, const char* cause);
+    void invoke_connected_callback(const std::function<void()>& cb, const char* cause);
 
   protected:
     /**
@@ -683,6 +708,11 @@ class MoonrakerClient : public hv::WebSocketClient, public IMoonrakerClient {
     std::function<void()> last_on_disconnected_;    // Callback from last connect()
     std::function<void()> last_discovery_complete_; // Callback from last discover_printer()
     mutable std::mutex reconnect_mutex_;            // Protect stored connection info
+
+    // Additional on-connected observers (multi-listener, fired alongside
+    // last_on_connected_ inside invoke_connected_callback).
+    std::map<std::string, std::function<void()>> connected_observers_;
+    mutable std::mutex connected_observers_mutex_;
 
     // Event handler for transport events (decouples from UI layer)
     MoonrakerEventCallback event_handler_;

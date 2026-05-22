@@ -42,6 +42,10 @@ class MoonrakerPerformanceSource : public IPerformanceSource {
     /// Issue printer.objects.list and subscribe to all matching MCU objects.
     void rediscover_mcus();
 
+    /// Run the initial REST proc_stats fetch + MCU discovery. Fired on every
+    /// MoonrakerClient connected-observer signal (WS open / Klippy ready).
+    void run_initial_handshake();
+
     /// Called on main thread for each MCU status payload.
     void on_mcu_status_update(const std::string& object_name, const json& payload);
 
