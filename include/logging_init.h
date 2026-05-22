@@ -74,6 +74,17 @@ LogTarget parse_log_target(const std::string& str);
 const char* log_target_name(LogTarget target);
 
 /**
+ * @brief Human-readable description of the currently-active log destination
+ *
+ * Resolved during init() — reflects the effective target after Auto detection,
+ * and for the File target returns the resolved file path. Suitable for display
+ * in the About panel.
+ *
+ * Returns an empty string before init() has been called.
+ */
+std::string effective_destination();
+
+/**
  * @brief Parse log level from string
  *
  * @param str One of: "trace", "debug", "info", "warn", "warning", "error", "critical", "off"

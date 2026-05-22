@@ -36,6 +36,11 @@ namespace logging {
 
 namespace {
 
+// Snapshot of the resolved log destination after init(), used by
+// effective_destination() to surface the active sink in the About panel.
+LogTarget g_effective_target = LogTarget::Auto;
+std::string g_effective_file_path;
+
 /// Check if a path is writable (for file logging location selection)
 bool is_path_writable(const std::string& path) {
     // Check parent directory for new files, or file itself if exists
@@ -221,6 +226,12 @@ void init(const LogConfig& config) {
     LogTarget effective_target =
         (config.target == LogTarget::Auto) ? detect_best_target() : config.target;
 
+    // Snapshot for effective_destination() — recorded before sink construction
+    // so the About panel reflects the same target the sinks are built from.
+    g_effective_target = effective_target;
+    g_effective_file_path =
+        (effective_target == LogTarget::File) ? resolve_log_file_path(config.file_path) : "";
+
     // Console sink — added when enabled AND the target benefits from it.
     //
     // Behavior by target:
@@ -290,6 +301,24 @@ LogTarget parse_log_target(const std::string& str) {
     if (str == "android")
         return LogTarget::Android;
     return LogTarget::Auto; // Default for "auto" or unrecognized
+}
+
+std::string effective_destination() {
+    switch (g_effective_target) {
+    case LogTarget::Journal:
+        return "systemd journal";
+    case LogTarget::Syslog:
+        return "syslog";
+    case LogTarget::File:
+        return g_effective_file_path;
+    case LogTarget::Console:
+        return "console";
+    case LogTarget::Android:
+        return "Android logcat";
+    case LogTarget::Auto:
+        return "";
+    }
+    return "";
 }
 
 const char* log_target_name(LogTarget target) {

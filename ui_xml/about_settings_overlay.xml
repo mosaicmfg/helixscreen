@@ -121,6 +121,12 @@
           <text_muted name="value" bind_text="config_dir_value"/>
         </setting_info_row>
       </lv_obj>
+      <!-- Logs (active spdlog destination — journal/syslog/file path/console/logcat) -->
+      <setting_info_row name="row_log_dest"
+                        label="Logs" label_tag="Logs"
+                        icon="script_text">
+        <text_muted name="value" bind_text="log_dest_value"/>
+      </setting_info_row>
       <!-- Cache Dir (hidden on Android) -->
       <lv_obj name="container_cache_dir" width="100%" style_pad_all="0" scrollable="false">
         <bind_flag_if_eq subject="settings_is_android" flag="hidden" ref_value="1"/>

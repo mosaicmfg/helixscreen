@@ -124,6 +124,7 @@ class AboutSettingsOverlay : public OverlayBase {
     lv_subject_t install_root_value_subject_{};
     lv_subject_t config_dir_value_subject_{};
     lv_subject_t cache_dir_value_subject_{};
+    lv_subject_t log_dest_value_subject_{};
     lv_subject_t host_arch_value_subject_{};
     lv_subject_t update_current_version_subject_{};
     lv_subject_t about_copyright_subject_{};
@@ -136,6 +137,7 @@ class AboutSettingsOverlay : public OverlayBase {
     char install_root_value_buf_[256];
     char config_dir_value_buf_[256];
     char cache_dir_value_buf_[256];
+    char log_dest_value_buf_[256];
     char host_arch_value_buf_[64];
     char update_current_version_buf_[32];
     char about_copyright_buf_[48];
