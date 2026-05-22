@@ -66,18 +66,79 @@ void PerformanceState::set_source(std::unique_ptr<IPerformanceSource>) {
     // Wired in Task 9
 }
 
-std::vector<float> PerformanceState::read_history(const std::string&) const {
-    return {}; // Wired in Task 3
+std::vector<float> PerformanceState::read_history(const std::string& name) const {
+    std::lock_guard<std::mutex> lk(history_mu_);
+    auto it = history_.find(name);
+    if (it == history_.end()) return {};
+    const auto& ring = it->second;
+    std::vector<float> out;
+    out.reserve(ring.fill);
+    std::size_t start = (ring.fill == kHistorySamples) ? ring.head : 0;
+    for (std::size_t i = 0; i < ring.fill; ++i) {
+        out.push_back(ring.data[(start + i) % kHistorySamples]);
+    }
+    return out;
 }
 
 void PerformanceState::push_sample_for_testing(const PerfSample& s) {
-    apply_sample(s); // Wired in Task 3
+    apply_sample(s);
 }
 
-void PerformanceState::apply_sample(const PerfSample&) { /* Task 3 */ }
+void PerformanceState::apply_sample(const PerfSample& s) {
+    auto set_present = [](lv_subject_t& subj, bool present) {
+        lv_subject_set_int(&subj, present ? 1 : 0);
+    };
+
+    if (s.host_cpu_pct) {
+        lv_subject_set_int(&s_host_cpu_pct_, static_cast<int>(*s.host_cpu_pct + 0.5f));
+        push_history("host_cpu_pct", *s.host_cpu_pct);
+    }
+    set_present(s_host_cpu_pct_present_, s.host_cpu_pct.has_value());
+
+    if (s.host_cpu_temp_c) {
+        lv_subject_set_int(&s_host_cpu_temp_c10_,
+                           static_cast<int>(*s.host_cpu_temp_c * 10.0f + 0.5f));
+    }
+    set_present(s_host_cpu_temp_present_, s.host_cpu_temp_c.has_value());
+
+    if (s.host_mem_free_mb) {
+        lv_subject_set_int(&s_host_mem_free_mb_, static_cast<int>(*s.host_mem_free_mb));
+    }
+    if (s.host_mem_pct_used) {
+        lv_subject_set_int(&s_host_mem_pct_used_,
+                           static_cast<int>(*s.host_mem_pct_used + 0.5f));
+        push_history("host_mem_pct_used", *s.host_mem_pct_used);
+    }
+    set_present(s_host_mem_present_,
+                s.host_mem_free_mb.has_value() && s.host_mem_pct_used.has_value());
+
+    lv_subject_set_int(&s_host_throttle_state_, static_cast<int>(s.host_throttle_bits));
+    if (!s.host_throttle_text.empty()) {
+        snprintf(buf_throttle_text_, sizeof(buf_throttle_text_), "%s",
+                 s.host_throttle_text.c_str());
+        lv_subject_notify(&s_host_throttle_text_);
+    }
+
+    update_mcu_subjects(s.mcus);
+
+    lv_subject_set_int(&s_available_, 1);
+
+    int tick = lv_subject_get_int(&s_history_tick_) + 1;
+    lv_subject_set_int(&s_history_tick_, tick);
+
+    update_about_summary();
+}
+
 void PerformanceState::update_about_summary() { /* Task 4 */ }
 void PerformanceState::update_mcu_subjects(const std::vector<McuStat>&) { /* Task 5 */ }
-void PerformanceState::push_history(const std::string&, float) { /* Task 3 */ }
+
+void PerformanceState::push_history(const std::string& key, float value) {
+    std::lock_guard<std::mutex> lk(history_mu_);
+    auto& ring = history_[key];
+    ring.data[ring.head] = value;
+    ring.head = (ring.head + 1) % kHistorySamples;
+    if (ring.fill < kHistorySamples) ++ring.fill;
+}
 
 std::string PerformanceState::mcu_safe_name(const std::string& raw) {
     std::string out = raw;
