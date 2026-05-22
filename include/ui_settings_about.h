@@ -161,7 +161,6 @@ class AboutSettingsOverlay : public OverlayBase {
     static void on_about_check_updates_clicked(lv_event_t* e);
     static void on_about_install_update_clicked(lv_event_t* e);
     static void on_about_print_hours_clicked(lv_event_t* e);
-    static void on_about_performance_clicked(lv_event_t* e);
     static void on_about_update_download_start(lv_event_t* e);
     static void on_about_update_download_cancel(lv_event_t* e);
     static void on_about_update_download_dismiss(lv_event_t* e);

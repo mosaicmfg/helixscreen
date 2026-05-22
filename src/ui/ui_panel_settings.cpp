@@ -12,6 +12,7 @@
 #include "ui_info_qr_modal.h"
 #include "ui_modal.h"
 #include "ui_nav_manager.h"
+#include "ui_overlay_performance.h"
 #include "ui_overlay_network_settings.h"
 #include "ui_overlay_timelapse_settings.h"
 #include "ui_panel_history_dashboard.h"
@@ -447,6 +448,7 @@ void SettingsPanel::init_subjects() {
         {"on_factory_reset_clicked", on_factory_reset_clicked},
         {"on_hardware_health_clicked", on_hardware_health_clicked},
         {"on_plugins_clicked", on_plugins_clicked},
+        {"on_system_performance_clicked", on_system_performance_clicked},
 
         // Overlay callbacks
         {"on_restart_later_clicked", on_restart_later_clicked},
@@ -1473,6 +1475,15 @@ void SettingsPanel::on_hardware_health_clicked(lv_event_t* /*e*/) {
 void SettingsPanel::on_plugins_clicked(lv_event_t* /*e*/) {
     LVGL_SAFE_EVENT_CB_BEGIN("[SettingsPanel] on_plugins_clicked");
     get_global_settings_panel().handle_plugins_clicked();
+    LVGL_SAFE_EVENT_CB_END();
+}
+
+void SettingsPanel::on_system_performance_clicked(lv_event_t* /*e*/) {
+    LVGL_SAFE_EVENT_CB_BEGIN("[SettingsPanel] on_system_performance_clicked");
+    auto* overlay = helix::ui::UiOverlayPerformance::instance().create(lv_screen_active());
+    if (overlay) {
+        NavigationManager::instance().push_overlay(overlay);
+    }
     LVGL_SAFE_EVENT_CB_END();
 }
 

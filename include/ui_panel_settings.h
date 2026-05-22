@@ -260,6 +260,7 @@ class SettingsPanel : public PanelBase {
     static void on_factory_reset_clicked(lv_event_t* e);
     static void on_hardware_health_clicked(lv_event_t* e);
     static void on_plugins_clicked(lv_event_t* e);
+    static void on_system_performance_clicked(lv_event_t* e);
     static void on_telemetry_view_data(lv_event_t* e);
     static void on_restart_helix_settings_clicked(lv_event_t* e);
     static void on_about_clicked(lv_event_t* e);

@@ -140,13 +140,6 @@
       <setting_action_row name="row_print_hours"
                           label="Print Hours" label_tag="Print Hours" icon="clock" bind_description="print_hours_value"
                           callback="on_about_print_hours_clicked"/>
-      <!-- Performance (opens dedicated overlay) -->
-      <setting_action_row name="row_performance"
-                          label="Performance" label_tag="Performance" icon="speedometer"
-                          bind_description="perf_about_summary"
-                          callback="on_about_performance_clicked">
-        <bind_flag_if_eq subject="perf_available" flag="hidden" ref_value="0"/>
-      </setting_action_row>
       <!-- ================================================================== -->
       <!-- OPEN SOURCE LICENSES -->
       <!-- ================================================================== -->
