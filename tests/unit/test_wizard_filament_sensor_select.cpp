@@ -15,11 +15,13 @@
 #include "ui_wizard_filament_sensor_select.h"
 
 #include "../ui_test_utils.h"
+#include "../test_helpers/update_queue_test_access.h"
 #include "app_globals.h"
 #include "filament_sensor_manager.h"
 #include "filament_sensor_types.h"
 #include "printer_discovery.h"
 #include "printer_state.h"
+#include "ui_update_queue.h"
 
 #include <spdlog/spdlog.h>
 
@@ -93,14 +95,25 @@ class WizardFilamentSensorSelectTestFixture {
         // discovery-aware is_ams_sensor overload; PrinterState is a
         // singleton, so a prior test that installed an MMU discovery
         // could otherwise flip the filter and make our "standalone"
-        // expectations (e.g. "toolhead") fail.
+        // expectations (e.g. "toolhead") fail. Capture the prior state
+        // in saved_discovery_ so we can restore it in the dtor — leaving
+        // a permanently-empty discovery behind would leak into any later
+        // test that exercises PrinterState directly.
+        saved_discovery_ = get_printer_state().get_discovery();
         get_printer_state().set_hardware(helix::PrinterDiscovery{});
+        // set_hardware fans out through capabilities_state_.set_hardware,
+        // which sets lv_subjects; per L048, drain before assertions so
+        // queued observer notifications can't race the test body.
+        helix::ui::UpdateQueueTestAccess::drain_all(helix::ui::UpdateQueue::instance());
     }
 
     ~WizardFilamentSensorSelectTestFixture() {
-        // Reset after each test
+        // Reset after each test, then restore the prior PrinterState
+        // discovery so subsequent fixtures in this shard see whatever
+        // they expected (not a forcibly-empty discovery).
         FilamentSensorManagerTestAccess::reset(sensor_mgr());
-        get_printer_state().set_hardware(helix::PrinterDiscovery{});
+        get_printer_state().set_hardware(std::move(saved_discovery_));
+        helix::ui::UpdateQueueTestAccess::drain_all(helix::ui::UpdateQueue::instance());
     }
 
   protected:
@@ -137,6 +150,7 @@ class WizardFilamentSensorSelectTestFixture {
     }
 
   private:
+    helix::PrinterDiscovery saved_discovery_;
     static lv_display_t* display_;
     static bool display_created_;
 };
