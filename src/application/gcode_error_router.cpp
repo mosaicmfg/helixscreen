@@ -9,6 +9,7 @@
 #include "moonraker_types.h"
 #include "printer_recovery_service.h"
 #include "rpc_error_correlation.h"
+#include "ui_modal.h"
 #include "ui_notification.h"
 #include "ui_toast_manager.h"
 
@@ -30,6 +31,38 @@ namespace {
 
 constexpr const char* kNotifyHandlerName = "gcode_error_notifier";
 constexpr const char* kReplayObserverName = "gcode_store_replay";
+
+/// One-tap recovery action attached to specific CFS error codes.
+struct RecoveryAction {
+    const char* button_label;  ///< Label like "Reset CFS"
+    const char* gcode;         ///< GCode to send on tap
+    const char* log_tag;       ///< For spdlog::info on tap
+};
+
+/// Context passed to the modal's confirm/cancel callbacks. Heap-
+/// allocated by the call site, freed in whichever callback fires.
+struct RecoveryCtx {
+    MoonrakerAPI* api;
+    const RecoveryAction* action;  ///< Points at a static RecoveryAction
+};
+
+/// Lookup: which key codes get an actionable button.
+///
+/// Conservative list — only codes where a software action is genuinely
+/// curative. Most slot-level errors (key849 retract stuck, key835-839
+/// extrude jams) need a physical fix; a button there would mislead the
+/// user. Add codes here as we identify real one-tap recoveries.
+const RecoveryAction* find_recovery(const std::string& code) {
+    // key840: "box switch state error" — state machine in an inconsistent
+    // state. BOX_ERROR_CLEAR resets the box driver state and lets the
+    // user retry the operation. Same gcode AmsBackendCfs::reset_gcode()
+    // already exposes via the AMS panel.
+    static const RecoveryAction key840 = {
+        "Reset CFS", "BOX_ERROR_CLEAR", "GcodeErrorRouter::key840_reset"};
+    if (code == "key840") return &key840;
+
+    return nullptr;
+}
 
 /// Replay age gate: errors older than this in the gcode_store are
 /// considered stale (probably already acknowledged by the user) and
@@ -206,6 +239,40 @@ void GcodeErrorRouter::process_line(const std::string& line) {
         // respond_raw and the dispatch script still returns success).
         // ui_notification's modal dedup-by-title collapses bursts.
         if (code.size() >= 4 && code.compare(0, 4, "key8") == 0) {
+            // If the code has a registered recovery action, surface as a
+            // confirmation modal with a one-tap fix button; otherwise a
+            // plain alert.
+            if (auto* rec = find_recovery(code); rec && api_) {
+                auto* ctx = new RecoveryCtx{api_, rec};
+                helix::ui::modal_show_confirmation(
+                    lv_tr("Filament System Error"), clean.c_str(),
+                    ModalSeverity::Error, rec->button_label,
+                    [](lv_event_t* e) {
+                        auto* c = static_cast<RecoveryCtx*>(lv_event_get_user_data(e));
+                        if (!c || !c->api || !c->action) {
+                            delete c;
+                            return;
+                        }
+                        const char* tag = c->action->log_tag;
+                        spdlog::info("[GcodeError] User tapped recovery: {}", tag);
+                        c->api->execute_gcode(
+                            c->action->gcode,
+                            [tag]() { spdlog::info("[Recovery] {} completed", tag); },
+                            [tag](const MoonrakerError& err) {
+                                spdlog::error("[Recovery] {} failed: {}", tag, err.message);
+                                ToastManager::instance().show(
+                                    ToastSeverity::ERROR,
+                                    ("Recovery failed: " + err.user_message()).c_str(), 6000);
+                            },
+                            MoonrakerAPI::AMS_OPERATION_TIMEOUT_MS);
+                        delete c;
+                    },
+                    [](lv_event_t* e) {
+                        delete static_cast<RecoveryCtx*>(lv_event_get_user_data(e));
+                    },
+                    ctx);
+                return;
+            }
             ui_notification_error(lv_tr("Filament System Error"), clean.c_str(),
                                   /*modal=*/true);
             return;
