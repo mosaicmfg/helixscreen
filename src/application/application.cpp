@@ -33,6 +33,7 @@
 #include "layout_manager.h"
 #include "led/led_controller.h"
 #include "ams_backend_cfs.h"
+#include "gcode_error_router.h"
 #include "moonraker_manager.h"
 #include "printer_recovery_service.h"
 #include "panel_factory.h"
@@ -2960,257 +2961,12 @@ void Application::init_action_prompt() {
             }
         });
 
-    // Register global handler to surface Klipper gcode errors as toasts.
-    // Klipper errors come through notify_gcode_response with "!!" or "Error:" prefix.
-    // Multiple handlers per method are supported (unique handler names).
-    //
-    // [L072] We capture `api` by value into the lambda — the callback fires
-    // from the WebSocket thread for the lifetime of the client. `api` outlives
-    // every toast/recovery action this handler can spawn.
-    MoonrakerAPI* api_for_errors = api;
-    client->register_method_callback(
-        "notify_gcode_response", "gcode_error_notifier",
-        [api_for_errors](const nlohmann::json& msg) {
-            if (!msg.contains("params") || !msg["params"].is_array() || msg["params"].empty()) {
-                return;
-            }
+    // Klipper `!!` / `Error:` lines flow through GcodeErrorRouter, which
+    // also replays the most recent gcode_store error when the WS (re)connects
+    // (catches errors that fired while HelixScreen was offline). Lives as
+    // a member so its dtor unregisters callbacks before MoonrakerClient dies.
+    m_gcode_error_router = std::make_unique<helix::GcodeErrorRouter>(api, client);
 
-            // Some Klipper builds (e.g. K1C, K2 with CFS) send errors as JSON
-            // objects:
-            //   !! {"code":"key851","msg":"retrude error, ...","values":[...]}
-            // Prefer a friendly translation of the code over the raw msg —
-            // Creality's `msg` strings are debug log text, not user-facing.
-            // Falls back to msg when the code is unknown. Stashes the parsed
-            // code into `out_code` so callers can offer code-specific actions
-            // (e.g. one-tap deep recovery on key298 MCU-shutdown).
-            auto extract_json_msg = [](std::string& text, std::string& out_code) {
-                out_code.clear();
-                if (text.empty() || text[0] != '{') return;
-                try {
-                    auto j = nlohmann::json::parse(text);
-                    if (j.contains("code") && j["code"].is_string()) {
-                        out_code = j["code"].get<std::string>();
-                        // Pass `values` through so the decoder can splice
-                        // " in unit 1 slot B" into the friendly message.
-                        // Telemetry sample (2026-05-05): key849 with
-                        // `values: [1, "B"]` previously surfaced a generic
-                        // "Retract failed — filament stuck in connector"
-                        // with no slot locator; user had to investigate.
-                        nlohmann::json values = nlohmann::json::array();
-                        if (j.contains("values")) {
-                            values = j["values"];
-                        }
-#if HELIX_HAS_CFS
-                        if (auto friendly =
-                                helix::printer::CfsErrorDecoder::lookup_message_with_values(
-                                    out_code, values)) {
-                            text = friendly->first + ". " + friendly->second;
-                            return;
-                        }
-#else
-                        (void)values;
-#endif
-                    }
-                    if (j.contains("msg") && j["msg"].is_string()) {
-                        text = j["msg"].get<std::string>();
-                    }
-                } catch (...) {
-                    // Not valid JSON, use as-is
-                }
-            };
-
-            // Cleans + translates raw gcode error text. Does NOT truncate —
-            // the same translated text feeds both modals (full multi-line)
-            // and toasts (truncated at emission). A previous version
-            // truncated here, which hid the actionable hint in modals
-            // (e.g. key849 lost "Manually pull the filament back through
-            // the connector" to a "..." on K2 2026-05-23).
-            auto clean_gcode_error = [&extract_json_msg](std::string& text, std::string& out_code) {
-                extract_json_msg(text, out_code);
-
-                // Friendly messages for common error patterns
-                if (text.find("Must home axis") != std::string::npos ||
-                    text.find("must home") != std::string::npos) {
-                    text = lv_tr("Must home axes first");
-                    return;
-                }
-                if (text.find("spi_transfer_response") != std::string::npos) {
-                    text = lv_tr("Accelerometer communication failed. Try again.");
-                    return;
-                }
-            };
-
-            // Truncates only when the destination is a toast (short, transient).
-            // Modals get the full translated text. UTF-8 safe via byte truncation
-            // is not strictly correct, but matches the prior behavior — the next
-            // step is to teach ToastManager to wrap, at which point this goes away.
-            auto truncate_for_toast = [](std::string text) {
-                constexpr size_t MAX_LEN = 80;
-                if (text.size() > MAX_LEN) {
-                    text = text.substr(0, MAX_LEN - 3) + "...";
-                }
-                return text;
-            };
-
-            auto process_line = [&clean_gcode_error, &truncate_for_toast,
-                                 api_for_errors](const std::string& line) {
-                if (line.empty()) {
-                    return;
-                }
-
-                // Klipper emergency errors: "!! MCU shutdown", "!! Timer too close", etc.
-                if (line.size() >= 2 && line[0] == '!' && line[1] == '!') {
-                    // Strip "!! " prefix for cleaner display
-                    std::string clean =
-                        (line.size() > 3 && line[2] == ' ') ? line.substr(3) : line.substr(2);
-                    std::string code;
-                    clean_gcode_error(clean, code);
-                    spdlog::error("[GcodeError] Emergency: {} (code={})", clean,
-                                  code.empty() ? "-" : code);
-
-                    // Cross-source dedup: when a caller (e.g. the print-status
-                    // Resume/Pause handler) sent the gcode that triggered this
-                    // `!!`, the RPC error response invokes the caller's
-                    // error_cb which surfaces a contextual toast ("Failed to
-                    // resume print: ..."). The generic ui_notification_error
-                    // here would be redundant for the same root cause.
-                    //
-                    // The two channels (broadcast `!!` and RPC error response)
-                    // can arrive in EITHER order — the broadcast often beats
-                    // the JSON-RPC response on slow devices. So checking the
-                    // correlation buffer synchronously is unreliable when the
-                    // `!!` arrives first. We defer the toast emission by
-                    // ~150ms and re-check at fire time, which absorbs both
-                    // arrival orderings and the WebSocket dispatch jitter.
-                    // For spontaneous errors with no correlated RPC (e.g.
-                    // MCU shutdown), the toast still emits after the delay.
-                    //
-                    // Recovery actions (key298, key8xx below) bypass this
-                    // defer because they DO add value the caller's toast
-                    // can't (action button, modal).
-                    if (helix::rpc_error_correlation::was_recently_handled(clean)) {
-                        spdlog::info("[GcodeError] Suppressing duplicate `!!` toast "
-                                     "(caller-handled RPC error already recorded): {}",
-                                     clean);
-                        return;
-                    }
-
-                    // Specific codes that warrant a one-tap deep-recovery action.
-                    // key298: rpi MCU bridge daemon shut down — the canonical
-                    // K2 case where firmware_restart alone can't recover.
-                    if (code == "key298" && api_for_errors) {
-                        ToastManager::instance().show_with_action(
-                            ToastSeverity::ERROR, truncate_for_toast(clean).c_str(), lv_tr("Recover"),
-                            [](void* ud) {
-                                auto* api = static_cast<MoonrakerAPI*>(ud);
-                                if (!api) return;
-                                spdlog::info("[GcodeError] User tapped Recover for key298");
-                                helix::PrinterRecoveryService recovery(api);
-                                recovery.recover(
-                                    []() {
-                                        spdlog::info("[Recovery] Auto-recovery initiated");
-                                    },
-                                    [](const MoonrakerError& err) {
-                                        spdlog::error("[Recovery] Auto-recovery failed: {}",
-                                                      err.message);
-                                        ToastManager::instance().show(
-                                            ToastSeverity::ERROR,
-                                            ("Recovery failed: " + err.user_message()).c_str(),
-                                            6000);
-                                    });
-                            },
-                            api_for_errors, /*duration_ms=*/15000);
-                        return;
-                    }
-
-                    // CFS box-driver errors (key8xx range) describe real
-                    // hardware faults — stuck cutter, retract failure, RFID
-                    // jam. The box driver emits them via respond_raw, which
-                    // is a log message: the Klipper script still returns
-                    // success and the AMS step indicator hides. Without a
-                    // modal the user has no acknowledgment that the
-                    // operation physically failed. Modal also deduplicates
-                    // by title (ui_notification.cpp), so a burst collapses
-                    // to one dialog.
-                    if (code.size() >= 4 && code.compare(0, 4, "key8") == 0) {
-                        ui_notification_error(lv_tr("Filament System Error"),
-                                              clean.c_str(), /*modal=*/true);
-                        return;
-                    }
-
-                    // Defer the generic toast emission ~150ms to catch the
-                    // late-arrival ordering: the broadcast `!!` channel can
-                    // beat the RPC error response on slow devices, so the
-                    // synchronous correlation check above sees an empty
-                    // buffer. The timer cb re-checks after the RPC path has
-                    // had a chance to populate. If still no correlation
-                    // (spontaneous error with no associated RPC), the toast
-                    // emits — slightly delayed but not lost.
-                    struct DeferredKlipperErrorCtx {
-                        std::string clean;
-                        std::string short_form;  // pre-truncated for toast display
-                    };
-                    auto* dctx = new DeferredKlipperErrorCtx{clean, truncate_for_toast(clean)};
-                    auto* dt = lv_timer_create(
-                        [](lv_timer_t* timer) {
-                            auto* c = static_cast<DeferredKlipperErrorCtx*>(
-                                lv_timer_get_user_data(timer));
-                            if (c) {
-                                if (helix::rpc_error_correlation::was_recently_handled(c->clean)) {
-                                    spdlog::info(
-                                        "[GcodeError] Suppressing deferred `!!` toast "
-                                        "(caller-handled RPC error arrived after): {}",
-                                        c->clean);
-                                } else {
-                                    ui_notification_error("Klipper Error", c->short_form.c_str(),
-                                                          false);
-                                }
-                                delete c;
-                            }
-                            lv_timer_delete(timer);
-                        },
-                        150, dctx);
-                    lv_timer_set_repeat_count(dt, 1);
-                    return;
-                }
-
-                // Command errors: "Error: Must home before probe", etc.
-                if (line.size() >= 5) {
-                    std::string prefix = line.substr(0, 5);
-                    for (auto& c : prefix)
-                        c = static_cast<char>(std::tolower(c));
-                    if (prefix == "error") {
-                        // Strip "Error: " prefix if present
-                        std::string clean = line;
-                        if (line.size() > 7 && line[5] == ':' && line[6] == ' ') {
-                            clean = line.substr(7);
-                        } else if (line.size() > 6 && line[5] == ':') {
-                            clean = line.substr(6);
-                        }
-                        std::string code;
-                        clean_gcode_error(clean, code);
-                        spdlog::error("[GcodeError] {}", clean);
-                        ui_notification_error(nullptr, truncate_for_toast(clean).c_str(), false);
-                        return;
-                    }
-                }
-            };
-
-            const auto& params = msg["params"];
-            if (params[0].is_array()) {
-                for (const auto& line : params[0]) {
-                    if (line.is_string()) {
-                        process_line(line.get<std::string>());
-                    }
-                }
-            } else if (params[0].is_string()) {
-                for (const auto& line : params) {
-                    if (line.is_string()) {
-                        process_line(line.get<std::string>());
-                    }
-                }
-            }
-        });
 
     // Register layer tracking fallback via gcode responses.
     // Some slicers don't emit SET_PRINT_STATS_INFO, so Moonraker's print_stats.info
@@ -4073,6 +3829,11 @@ void Application::tear_down_printer_state() {
     //     This protects the reinit path where old guards get reassigned.
     ObserverGuard::invalidate_all();
 
+    // 17b. Tear down GcodeErrorRouter before MoonrakerClient — its dtor
+    //      unregisters the notify_gcode_response handler and the
+    //      gcode_store_replay connected observer; both touch the client.
+    m_gcode_error_router.reset();
+
     // 18. Release MoonrakerManager
     m_moonraker.reset();
 
@@ -4376,6 +4137,10 @@ void Application::shutdown() {
     // and #893 (Pi). teardown_printer_state() has carried this guard since #816/#673;
     // the global shutdown path was missing it.
     ObserverGuard::invalidate_all();
+
+    // Tear down GcodeErrorRouter before MoonrakerClient (its dtor unregisters
+    // the live + replay callbacks; both touch the client).
+    m_gcode_error_router.reset();
 
     // Destroy MoonrakerManager (its ObserverGuards now release without
     // touching freed observer memory thanks to invalidate_all() above).

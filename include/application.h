@@ -22,6 +22,7 @@ class PluginManager;
 }
 namespace helix {
 class ActionPromptManager;
+class GcodeErrorRouter;
 }
 namespace helix::ui {
 class ActionPromptModal;
@@ -136,6 +137,11 @@ class Application {
     // Action prompt system (Klipper action:prompt protocol)
     std::unique_ptr<helix::ActionPromptManager> m_action_prompt_manager;
     std::unique_ptr<helix::ui::ActionPromptModal> m_action_prompt_modal;
+
+    // Surfaces Klipper `!!` / `Error:` lines as modals/toasts and replays
+    // the most recent error from gcode_store on (re)connect. Owns the
+    // notify_gcode_response and connected-observer registrations.
+    std::unique_ptr<helix::GcodeErrorRouter> m_gcode_error_router;
 
     // Configuration
     helix::Config* m_config = nullptr; // Singleton, not owned
