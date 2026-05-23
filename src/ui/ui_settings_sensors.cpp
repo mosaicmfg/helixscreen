@@ -146,9 +146,10 @@ SensorSettingsOverlay::get_standalone_switch_sensors() const {
     auto& mgr = helix::FilamentSensorManager::instance();
     auto all_sensors = mgr.get_sensors();
 
+    const auto& discovery = get_printer_state().get_discovery();
     std::vector<helix::FilamentSensorConfig> standalone;
     for (const auto& sensor : all_sensors) {
-        if (!PrinterHardware::is_ams_sensor(sensor.sensor_name)) {
+        if (!PrinterHardware::is_ams_sensor(sensor.sensor_name, discovery)) {
             standalone.push_back(sensor);
         } else {
             spdlog::debug("[{}] Filtered out AMS sensor: {}", get_name(), sensor.sensor_name);

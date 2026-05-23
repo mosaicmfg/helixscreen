@@ -14,6 +14,7 @@
 #include "lvgl/lvgl.h"
 #include "moonraker_client.h"
 #include "printer_hardware.h"
+#include "printer_state.h"
 #include "static_panel_registry.h"
 
 #include <spdlog/spdlog.h>
@@ -59,8 +60,10 @@ WizardFilamentSensorSelectStep::~WizardFilamentSensorSelectStep() {
 // ============================================================================
 
 bool WizardFilamentSensorSelectStep::is_ams_sensor(const std::string& name) {
-    // Delegate to shared implementation in PrinterHardware
-    return PrinterHardware::is_ams_sensor(name);
+    // Delegate to shared implementation in PrinterHardware, passing the
+    // discovery so HH/AFC-managed sensors (extruder, toolhead,
+    // tool_start, <lane>_prep, ...) are excluded from the wizard list.
+    return PrinterHardware::is_ams_sensor(name, get_printer_state().get_discovery());
 }
 
 void WizardFilamentSensorSelectStep::filter_standalone_sensors() {
