@@ -3019,7 +3019,13 @@ void Application::init_action_prompt() {
                 }
             };
 
-            auto clean_for_toast = [&extract_json_msg](std::string& text, std::string& out_code) {
+            // Cleans + translates raw gcode error text. Does NOT truncate —
+            // the same translated text feeds both modals (full multi-line)
+            // and toasts (truncated at emission). A previous version
+            // truncated here, which hid the actionable hint in modals
+            // (e.g. key849 lost "Manually pull the filament back through
+            // the connector" to a "..." on K2 2026-05-23).
+            auto clean_gcode_error = [&extract_json_msg](std::string& text, std::string& out_code) {
                 extract_json_msg(text, out_code);
 
                 // Friendly messages for common error patterns
@@ -3032,15 +3038,22 @@ void Application::init_action_prompt() {
                     text = lv_tr("Accelerometer communication failed. Try again.");
                     return;
                 }
+            };
 
-                // Truncate long messages for toast display
+            // Truncates only when the destination is a toast (short, transient).
+            // Modals get the full translated text. UTF-8 safe via byte truncation
+            // is not strictly correct, but matches the prior behavior — the next
+            // step is to teach ToastManager to wrap, at which point this goes away.
+            auto truncate_for_toast = [](std::string text) {
                 constexpr size_t MAX_LEN = 80;
                 if (text.size() > MAX_LEN) {
                     text = text.substr(0, MAX_LEN - 3) + "...";
                 }
+                return text;
             };
 
-            auto process_line = [&clean_for_toast, api_for_errors](const std::string& line) {
+            auto process_line = [&clean_gcode_error, &truncate_for_toast,
+                                 api_for_errors](const std::string& line) {
                 if (line.empty()) {
                     return;
                 }
@@ -3051,7 +3064,7 @@ void Application::init_action_prompt() {
                     std::string clean =
                         (line.size() > 3 && line[2] == ' ') ? line.substr(3) : line.substr(2);
                     std::string code;
-                    clean_for_toast(clean, code);
+                    clean_gcode_error(clean, code);
                     spdlog::error("[GcodeError] Emergency: {} (code={})", clean,
                                   code.empty() ? "-" : code);
 
@@ -3087,7 +3100,7 @@ void Application::init_action_prompt() {
                     // K2 case where firmware_restart alone can't recover.
                     if (code == "key298" && api_for_errors) {
                         ToastManager::instance().show_with_action(
-                            ToastSeverity::ERROR, clean.c_str(), lv_tr("Recover"),
+                            ToastSeverity::ERROR, truncate_for_toast(clean).c_str(), lv_tr("Recover"),
                             [](void* ud) {
                                 auto* api = static_cast<MoonrakerAPI*>(ud);
                                 if (!api) return;
@@ -3135,8 +3148,9 @@ void Application::init_action_prompt() {
                     // emits — slightly delayed but not lost.
                     struct DeferredKlipperErrorCtx {
                         std::string clean;
+                        std::string short_form;  // pre-truncated for toast display
                     };
-                    auto* dctx = new DeferredKlipperErrorCtx{clean};
+                    auto* dctx = new DeferredKlipperErrorCtx{clean, truncate_for_toast(clean)};
                     auto* dt = lv_timer_create(
                         [](lv_timer_t* timer) {
                             auto* c = static_cast<DeferredKlipperErrorCtx*>(
@@ -3148,7 +3162,7 @@ void Application::init_action_prompt() {
                                         "(caller-handled RPC error arrived after): {}",
                                         c->clean);
                                 } else {
-                                    ui_notification_error("Klipper Error", c->clean.c_str(),
+                                    ui_notification_error("Klipper Error", c->short_form.c_str(),
                                                           false);
                                 }
                                 delete c;
@@ -3174,9 +3188,9 @@ void Application::init_action_prompt() {
                             clean = line.substr(6);
                         }
                         std::string code;
-                        clean_for_toast(clean, code);
+                        clean_gcode_error(clean, code);
                         spdlog::error("[GcodeError] {}", clean);
-                        ui_notification_error(nullptr, clean.c_str(), false);
+                        ui_notification_error(nullptr, truncate_for_toast(clean).c_str(), false);
                         return;
                     }
                 }
