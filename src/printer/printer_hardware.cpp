@@ -482,7 +482,7 @@ std::string PrinterHardware::guess_runout_sensor(const std::vector<std::string>&
 // AMS Sensor Detection
 // ============================================================================
 
-bool PrinterHardware::is_ams_sensor(const std::string& sensor_name) {
+bool PrinterHardware::is_ams_sensor_substring(const std::string& sensor_name) {
     // Convert to lowercase for case-insensitive matching
     std::string lower_name = sensor_name;
     std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
@@ -553,7 +553,7 @@ bool PrinterHardware::is_ams_sensor(const std::string& sensor_name) {
 
 bool PrinterHardware::is_ams_sensor(const std::string& sensor_name,
                                     const helix::PrinterDiscovery& discovery) {
-    if (is_ams_sensor(sensor_name)) {
+    if (is_ams_sensor_substring(sensor_name)) {
         return true;
     }
 
@@ -616,6 +616,30 @@ bool PrinterHardware::is_ams_sensor(const std::string& sensor_name,
         // anything; once AFC is the detected backend, the _home_pin suffix
         // is the unambiguous signal.
         if (ends_with(bare, "_home_pin")) {
+            return true;
+        }
+        break;
+
+    case AmsType::AD5X_IFS:
+        // lessWaste plugin: per-port HUB sensors as
+        // filament_switch_sensor _ifs_port_sensor_{1..4}.
+        // Native ZMOD: filament_motion_sensor ifs_motion_sensor (single
+        // post-hub boolean), older ZMOD: _ifs_motion_sensor_N.
+        // Toolhead: filament_switch_sensor head_switch_sensor.
+        if (bare == "ifs_motion_sensor" || bare == "head_switch_sensor") {
+            return true;
+        }
+        if (bare.rfind("_ifs_port_sensor_", 0) == 0 ||
+            bare.rfind("_ifs_motion_sensor_", 0) == 0) {
+            return true;
+        }
+        break;
+
+    case AmsType::CFS:
+        // K2 CFS exposes one filament_switch_sensor at the toolhead with
+        // the bare name "filament_sensor". Conventional elsewhere, so
+        // we only suppress it when CFS is the detected backend.
+        if (bare == "filament_sensor") {
             return true;
         }
         break;

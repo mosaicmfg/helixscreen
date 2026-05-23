@@ -15,8 +15,11 @@
 #include "ui_wizard_filament_sensor_select.h"
 
 #include "../ui_test_utils.h"
+#include "app_globals.h"
 #include "filament_sensor_manager.h"
 #include "filament_sensor_types.h"
+#include "printer_discovery.h"
+#include "printer_state.h"
 
 #include <spdlog/spdlog.h>
 
@@ -84,11 +87,20 @@ class WizardFilamentSensorSelectTestFixture {
 
         // Reset state for test isolation
         FilamentSensorManagerTestAccess::reset(sensor_mgr());
+
+        // Anchor the wizard's AMS filter to a no-MMU baseline. The wizard
+        // consults get_printer_state().get_discovery() via the
+        // discovery-aware is_ams_sensor overload; PrinterState is a
+        // singleton, so a prior test that installed an MMU discovery
+        // could otherwise flip the filter and make our "standalone"
+        // expectations (e.g. "toolhead") fail.
+        get_printer_state().set_hardware(helix::PrinterDiscovery{});
     }
 
     ~WizardFilamentSensorSelectTestFixture() {
         // Reset after each test
         FilamentSensorManagerTestAccess::reset(sensor_mgr());
+        get_printer_state().set_hardware(helix::PrinterDiscovery{});
     }
 
   protected:

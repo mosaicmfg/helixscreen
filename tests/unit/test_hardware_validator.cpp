@@ -1355,3 +1355,116 @@ TEST_CASE_METHOD(ExpectedHardwareSuppressFixture,
 
     REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor htlf1_home_pin"));
 }
+
+TEST_CASE_METHOD(ExpectedHardwareSuppressFixture,
+                 "HardwareValidator - AD5X IFS lessWaste port sensors auto-suppressed",
+                 "[hardware][validator][ams][ad5x_ifs]") {
+    // lessWaste plugin exports per-port HUB sensors as
+    // filament_switch_sensor _ifs_port_sensor_{1..4}. The IFS detection
+    // pattern in PrinterDiscovery already tags these as IFS-side, but
+    // they still land in filament_sensor_names_ and need explicit
+    // suppression on the toast path.
+    client.set_heaters({"extruder", "heater_bed"});
+    client.set_mmu_enabled(false);
+    client.set_filament_sensors({"filament_switch_sensor _ifs_port_sensor_1",
+                                 "filament_switch_sensor _ifs_port_sensor_2",
+                                 "filament_switch_sensor _ifs_port_sensor_3",
+                                 "filament_switch_sensor _ifs_port_sensor_4",
+                                 "filament_switch_sensor head_switch_sensor"});
+    setup_config({{"printer",
+                   {{"moonraker_host", "127.0.0.1"},
+                    {"moonraker_port", 7125},
+                    {"hardware",
+                     {{"optional", json::array()},
+                      {"expected", json::array()},
+                      {"last_snapshot", json::object()}}}}}});
+
+    REQUIRE(client.hardware().mmu_type() == AmsType::AD5X_IFS);
+
+    HardwareValidator validator;
+    auto result = validator.validate(&config, client.hardware());
+
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor _ifs_port_sensor_1"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor _ifs_port_sensor_2"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor _ifs_port_sensor_3"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor _ifs_port_sensor_4"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor head_switch_sensor"));
+}
+
+TEST_CASE_METHOD(ExpectedHardwareSuppressFixture,
+                 "HardwareValidator - AD5X IFS native ZMOD motion sensor auto-suppressed",
+                 "[hardware][validator][ams][ad5x_ifs]") {
+    // Native ZMOD exposes ifs_motion_sensor (post-hub boolean) plus the
+    // toolhead head_switch_sensor.
+    client.set_heaters({"extruder", "heater_bed"});
+    client.set_mmu_enabled(false);
+    client.set_filament_sensors({"filament_motion_sensor ifs_motion_sensor",
+                                 "filament_switch_sensor head_switch_sensor"});
+    setup_config({{"printer",
+                   {{"moonraker_host", "127.0.0.1"},
+                    {"moonraker_port", 7125},
+                    {"hardware",
+                     {{"optional", json::array()},
+                      {"expected", json::array()},
+                      {"last_snapshot", json::object()}}}}}});
+
+    REQUIRE(client.hardware().mmu_type() == AmsType::AD5X_IFS);
+
+    HardwareValidator validator;
+    auto result = validator.validate(&config, client.hardware());
+
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_motion_sensor ifs_motion_sensor"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor head_switch_sensor"));
+}
+
+TEST_CASE_METHOD(ExpectedHardwareSuppressFixture,
+                 "HardwareValidator - CFS toolhead filament_sensor auto-suppressed",
+                 "[hardware][validator][ams][cfs]") {
+    // K2 CFS exposes a single filament_switch_sensor at the toolhead
+    // named just 'filament_sensor'. Generic name, conventional on many
+    // printers — only safe to suppress when CFS is the detected backend.
+    client.set_heaters({"extruder", "heater_bed"});
+    client.set_mmu_enabled(false);
+    client.set_additional_objects({"box"}); // CFS detection signal
+    client.set_filament_sensors({"filament_switch_sensor filament_sensor"});
+    setup_config({{"printer",
+                   {{"moonraker_host", "127.0.0.1"},
+                    {"moonraker_port", 7125},
+                    {"hardware",
+                     {{"optional", json::array()},
+                      {"expected", json::array()},
+                      {"last_snapshot", json::object()}}}}}});
+
+    REQUIRE(client.hardware().mmu_type() == AmsType::CFS);
+
+    HardwareValidator validator;
+    auto result = validator.validate(&config, client.hardware());
+
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor filament_sensor"));
+}
+
+TEST_CASE_METHOD(ExpectedHardwareSuppressFixture,
+                 "HardwareValidator - filament_sensor still flagged when no CFS",
+                 "[hardware][validator][ams][cfs]") {
+    // Sanity: 'filament_sensor' is a conventional name. On a non-CFS
+    // printer, a user-installed runout switch with that name must still
+    // appear in newly_discovered — otherwise CFS suppression hides
+    // legitimate sensors elsewhere.
+    client.set_heaters({"extruder", "heater_bed"});
+    client.set_mmu_enabled(false);
+    client.set_filament_sensors({"filament_switch_sensor filament_sensor"});
+    setup_config({{"printer",
+                   {{"moonraker_host", "127.0.0.1"},
+                    {"moonraker_port", 7125},
+                    {"hardware",
+                     {{"optional", json::array()},
+                      {"expected", json::array()},
+                      {"last_snapshot", json::object()}}}}}});
+
+    REQUIRE_FALSE(client.hardware().has_mmu());
+
+    HardwareValidator validator;
+    auto result = validator.validate(&config, client.hardware());
+
+    REQUIRE(has_newly_discovered(result, "filament_switch_sensor filament_sensor"));
+}

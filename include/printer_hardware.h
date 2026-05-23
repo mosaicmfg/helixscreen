@@ -230,35 +230,37 @@ class PrinterHardware {
     static std::string guess_runout_sensor(const std::vector<std::string>& filament_sensors);
 
     /**
-     * @brief Check if a filament sensor is managed by an AMS system
+     * @brief Check if a filament sensor is managed by an AMS system.
      *
-     * Detects sensors that belong to multi-material systems like AFC, ERCF,
-     * Happy Hare, MMU, TradRack, BoxTurtle, etc. These sensors should be
-     * filtered from standalone sensor selection and hardware discovery.
+     * Consults the detected AMS backend in @p discovery and falls back to
+     * substring matching against well-known AMS keywords (mmu, afc, ercf,
+     * gate, lane, hub, buffer, turtle, ...) when no specific backend is
+     * detected or the backend's named sensors don't match.
      *
-     * @param sensor_name The sensor name to check
-     * @return true if sensor appears to be AMS-managed
-     */
-    static bool is_ams_sensor(const std::string& sensor_name);
-
-    /**
-     * @brief Discovery-aware variant: also consults the detected AMS backend.
+     * Backends with explicit named-sensor rules:
+     *   - Happy Hare: extruder, toolhead, filament_tension, filament_compression
+     *   - AFC: tool_start, tool_end; <lane>_prep/_load/_selector;
+     *          <buffer>_expanded/_compressed; HTLF <unit>_home_pin
+     *   - AD5X IFS: _ifs_port_sensor_N, ifs_motion_sensor, head_switch_sensor
+     *   - CFS: filament_sensor (bare name, K2 toolhead)
      *
-     * The substring overload above catches names containing well-known AMS
-     * keywords (mmu, afc, ercf, gate, ...). Happy Hare and AFC also register
-     * filament sensors whose names DON'T carry those keywords:
-     *   - HH: extruder, toolhead, filament_tension, filament_compression
-     *   - AFC: tool_start, tool_end; per-lane <lane>_prep/_load/_selector;
-     *          per-buffer <buffer>_expanded/_compressed; HTLF <unit>_home_pin
-     * Suppressing those globally would hide legitimate user sensors on
-     * non-AMS printers, so we only match them when discovery indicates the
-     * corresponding backend is present, using the discovered lane/buffer
-     * names as prefix anchors.
+     * Backend-specific suppression is conditional on @p discovery.has_mmu()
+     * so legitimate user sensors with conventional names (e.g. an "extruder"
+     * runout switch on a non-AMS printer) stay visible.
      */
     static bool is_ams_sensor(const std::string& sensor_name,
                               const helix::PrinterDiscovery& discovery);
 
   private:
+    /**
+     * Substring-only fallback used internally by the public overload above.
+     * Catches AMS-naming keywords even when no backend is detected via the
+     * Klipper object list (defense in depth for ERCF, BoxTurtle without AFC,
+     * etc.). Callers should always go through the public overload.
+     */
+    static bool is_ams_sensor_substring(const std::string& sensor_name);
+
+
     std::vector<std::string> heaters_;
     std::vector<std::string> sensors_;
     std::vector<std::string> fans_;
