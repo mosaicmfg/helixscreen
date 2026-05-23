@@ -5434,6 +5434,39 @@ install_platform_hooks() {
     fi
 }
 
+# Print the post-detection platform banner.
+#
+# For Pi-class SBCs (platform=pi/pi32 — which covers a long tail of ARM Linux
+# boxes including QIDI Q2/Plus, BTT CB1, MKS-Pi, generic Armbian) we lead with
+# the friendly hardware label and reframe "pi" as the install package. Plain
+# "Detected platform: pi" reads as wrong to anyone whose printer says QIDI on
+# the lid — they see "pi" first and assume we mis-identified their device.
+# Actual Raspberry Pi owners keep the original ordering.
+#
+# All other platforms (k1, k2, ad5m, snapmaker-u1, x86, …) get the single
+# "Detected platform: X" line — there's no device-name ambiguity to clear up.
+print_platform_banner() {
+    local platform="$1"
+    local _hw_label
+
+    if [ "$platform" != "pi" ] && [ "$platform" != "pi32" ]; then
+        log_info "Detected platform: ${BOLD}${platform}${NC}"
+        return 0
+    fi
+
+    _hw_label=$(describe_hardware)
+    case "$_hw_label" in
+        "Raspberry Pi"*)
+            log_info "Detected platform: ${BOLD}${platform}${NC}"
+            log_info "Hardware: ${_hw_label}"
+            ;;
+        *)
+            log_info "Detected hardware: ${BOLD}${_hw_label}${NC}"
+            log_info "Install package: ${BOLD}${platform}${NC} (generic ARM Linux build, compatible with your SBC)"
+            ;;
+    esac
+}
+
 # Main installation flow
 main() {
     update_mode=false
@@ -5498,14 +5531,7 @@ main() {
 
     # Detect platform
     platform=$(detect_platform)
-    log_info "Detected platform: ${BOLD}${platform}${NC}"
-    # For Pi-class SBCs, also print a friendly hardware label so QIDI/BTT/MKS
-    # users don't see a bare "pi" and assume we mis-identified their printer.
-    if [ "$platform" = "pi" ] || [ "$platform" = "pi32" ]; then
-        local _hw_label
-        _hw_label=$(describe_hardware)
-        log_info "Hardware: ${_hw_label}"
-    fi
+    print_platform_banner "$platform"
 
     # AD5X: refuse to run outside the ZMOD chroot — applies to fresh install,
     # --update, --uninstall, and --local. Inside the chroot the check is a no-op.
