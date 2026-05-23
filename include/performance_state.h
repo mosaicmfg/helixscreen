@@ -40,11 +40,9 @@ class PerformanceState {
     /// named buffer doesn't exist.
     std::vector<float> read_history(const std::string& name) const;
 
-    // === Test access ===
-    /// Push a sample synchronously (no defer, no thread hop). Test-only.
-    void push_sample_for_testing(const PerfSample& sample);
-
   private:
+    friend class PerformanceStateTestAccess;
+
     PerformanceState() = default;
     PerformanceState(const PerformanceState&) = delete;
     PerformanceState& operator=(const PerformanceState&) = delete;

@@ -97,10 +97,6 @@ std::vector<float> PerformanceState::read_history(const std::string& name) const
     return out;
 }
 
-void PerformanceState::push_sample_for_testing(const PerfSample& s) {
-    apply_sample(s);
-}
-
 void PerformanceState::apply_sample(const PerfSample& s) {
     auto set_present = [](lv_subject_t& subj, bool present) {
         lv_subject_set_int(&subj, present ? 1 : 0);

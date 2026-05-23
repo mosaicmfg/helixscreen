@@ -7,7 +7,7 @@
  *        perf_mcu_names changes.
  *
  * Creates the real performance_overlay XML component, drives perf_mcu_names
- * through PerformanceState::push_sample_for_testing, drains the UpdateQueue,
+ * through PerformanceStateTestAccess::apply_sample, drains the UpdateQueue,
  * and asserts the mcu_card child count matches the MCU count in the sample.
  */
 
@@ -18,14 +18,18 @@
 
 #include "../catch_amalgamated.hpp"
 #include "../test_fixtures.h"
+#include "../test_helpers/performance_state_test_access.h"
+#include "../test_helpers/ui_overlay_performance_test_access.h"
 #include "../test_helpers/update_queue_test_access.h"
 
 using helix::perf::McuStat;
 using helix::perf::PerfSample;
 using helix::perf::PerformanceState;
+using helix::perf::PerformanceStateTestAccess;
 using helix::ui::UpdateQueue;
 using helix::ui::UpdateQueueTestAccess;
 using helix::ui::UiOverlayPerformance;
+using helix::ui::UiOverlayPerformanceTestAccess;
 
 // ============================================================================
 // Fixture
@@ -62,7 +66,7 @@ class PerfOverlayFixture : public XMLTestFixture {
         PerformanceState::instance().init_subjects();
 
         // Guarantee a clean singleton regardless of prior test order.
-        UiOverlayPerformance::instance().reset_for_testing();
+        UiOverlayPerformanceTestAccess::reset(UiOverlayPerformance::instance());
     }
 
     ~PerfOverlayFixture() override {
@@ -78,7 +82,7 @@ class PerfOverlayFixture : public XMLTestFixture {
         if (root && lv_obj_is_valid(root)) {
             lv_obj_delete(root);
         }
-        UiOverlayPerformance::instance().reset_for_testing();
+        UiOverlayPerformanceTestAccess::reset(UiOverlayPerformance::instance());
 
         PerformanceState::instance().deinit_subjects();
     }
@@ -112,10 +116,10 @@ TEST_CASE_METHOD(PerfOverlayFixture,
         a.name = "mcu";
         a.load = 0.10f;
         s.mcus = {a};
-        PerformanceState::instance().push_sample_for_testing(s);
+        PerformanceStateTestAccess::apply_sample(PerformanceState::instance(), s);
     }
-    // push_sample_for_testing calls apply_sample directly; the observe_string
-    // callback for perf_mcu_names defers rebuild_mcu_rows via queue_update.
+    // apply_sample runs synchronously; the observe_string callback for
+    // perf_mcu_names defers rebuild_mcu_rows via queue_update.
     UpdateQueueTestAccess::drain(UpdateQueue::instance());
 
     // create() registers the observer on perf_mcu_names and will immediately
@@ -147,7 +151,7 @@ TEST_CASE_METHOD(PerfOverlayFixture,
         c.name = "mcu helper";
         c.load = 0.30f;
         s.mcus = {a, b, c};
-        PerformanceState::instance().push_sample_for_testing(s);
+        PerformanceStateTestAccess::apply_sample(PerformanceState::instance(), s);
     }
     UpdateQueueTestAccess::drain(UpdateQueue::instance());
 

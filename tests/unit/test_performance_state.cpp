@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../catch_amalgamated.hpp"
 #include "../helix_test_fixture.h"
+#include "../test_helpers/performance_state_test_access.h"
 #include "../test_helpers/update_queue_test_access.h"
 #include "performance_state.h"
 #include "ui_update_queue.h"
@@ -9,6 +10,7 @@
 #include <lvgl.h>
 
 using helix::perf::PerformanceState;
+using helix::perf::PerformanceStateTestAccess;
 using helix::ui::UpdateQueue;
 using helix::ui::UpdateQueueTestAccess;
 
@@ -60,7 +62,7 @@ TEST_CASE_METHOD(PerfStateFixture,
     s.host_mem_pct_used = 41.0f;
     s.host_throttle_bits = 0;
 
-    PerformanceState::instance().push_sample_for_testing(s);
+    PerformanceStateTestAccess::apply_sample(PerformanceState::instance(), s);
     UpdateQueueTestAccess::drain(UpdateQueue::instance());
 
     REQUIRE(lv_subject_get_int(lv_xml_get_subject(nullptr, "perf_host_cpu_pct")) == 37);
@@ -82,7 +84,7 @@ TEST_CASE_METHOD(PerfStateFixture,
     for (int i = 0; i < 75; ++i) {
         PerfSample s;
         s.host_cpu_pct = static_cast<float>(i);
-        ps.push_sample_for_testing(s);
+        PerformanceStateTestAccess::apply_sample(ps, s);
     }
     UpdateQueueTestAccess::drain(UpdateQueue::instance());
 
@@ -105,7 +107,7 @@ TEST_CASE_METHOD(PerfStateFixture,
         s.host_cpu_temp_c = 30.0f;
         s.host_mem_free_mb = 500;
         s.host_mem_pct_used = 50.0f;
-        ps.push_sample_for_testing(s);
+        PerformanceStateTestAccess::apply_sample(ps, s);
     }
     UpdateQueueTestAccess::drain(UpdateQueue::instance());
     REQUIRE(lv_subject_get_int(lv_xml_get_subject(nullptr, "perf_host_cpu_pct_present")) == 1);
@@ -114,7 +116,7 @@ TEST_CASE_METHOD(PerfStateFixture,
 
     // Then push an all-absent sample — flags must clear back to 0
     PerfSample empty;
-    ps.push_sample_for_testing(empty);
+    PerformanceStateTestAccess::apply_sample(ps, empty);
     UpdateQueueTestAccess::drain(UpdateQueue::instance());
 
     REQUIRE(lv_subject_get_int(lv_xml_get_subject(nullptr, "perf_host_cpu_pct_present")) == 0);
@@ -133,7 +135,7 @@ TEST_CASE_METHOD(PerfStateFixture,
     McuStat m; m.name = "mcu"; m.load = 0.14f;
     s.mcus.push_back(m);
 
-    PerformanceState::instance().push_sample_for_testing(s);
+    PerformanceStateTestAccess::apply_sample(PerformanceState::instance(), s);
     UpdateQueueTestAccess::drain(UpdateQueue::instance());
 
     const char* summary =
@@ -148,7 +150,7 @@ TEST_CASE_METHOD(PerfStateFixture,
     PerfSample s;
     s.host_cpu_pct = 37.0f;
 
-    PerformanceState::instance().push_sample_for_testing(s);
+    PerformanceStateTestAccess::apply_sample(PerformanceState::instance(), s);
     UpdateQueueTestAccess::drain(UpdateQueue::instance());
 
     const char* summary =
@@ -168,7 +170,7 @@ TEST_CASE_METHOD(PerfStateFixture,
     McuStat b; b.name = "mcu sb"; b.load = 0.22f; b.retransmits = 14;
     s.mcus = {a, b};
 
-    PerformanceState::instance().push_sample_for_testing(s);
+    PerformanceStateTestAccess::apply_sample(PerformanceState::instance(), s);
     helix::ui::UpdateQueueTestAccess::drain(helix::ui::UpdateQueue::instance());
 
     REQUIRE(lv_xml_get_subject(nullptr, "perf_mcu_mcu_load_pct") != nullptr);
@@ -191,14 +193,14 @@ TEST_CASE_METHOD(PerfStateFixture,
 
     {
         PerfSample s; McuStat a; a.name = "mcu"; a.load = 0.10f; s.mcus = {a};
-        ps.push_sample_for_testing(s);
+        PerformanceStateTestAccess::apply_sample(ps, s);
     }
     helix::ui::UpdateQueueTestAccess::drain(helix::ui::UpdateQueue::instance());
     auto* first = lv_xml_get_subject(nullptr, "perf_mcu_mcu_load_pct");
     REQUIRE(first != nullptr);
     {
         PerfSample s; McuStat a; a.name = "mcu"; a.load = 0.30f; s.mcus = {a};
-        ps.push_sample_for_testing(s);
+        PerformanceStateTestAccess::apply_sample(ps, s);
     }
     helix::ui::UpdateQueueTestAccess::drain(helix::ui::UpdateQueue::instance());
     REQUIRE(lv_xml_get_subject(nullptr, "perf_mcu_mcu_load_pct") == first);
@@ -214,7 +216,7 @@ TEST_CASE_METHOD(PerfStateFixture,
     s.host_cpu_temp_c = 61.4f;
     s.host_mem_free_mb = 812;
     s.host_mem_pct_used = 41.0f;
-    PerformanceState::instance().push_sample_for_testing(s);
+    PerformanceStateTestAccess::apply_sample(PerformanceState::instance(), s);
     UpdateQueueTestAccess::drain(UpdateQueue::instance());
 
     const char* cpu_text = lv_subject_get_string(
@@ -233,7 +235,7 @@ TEST_CASE_METHOD(PerfStateFixture,
     PerfSample s;
     McuStat a; a.name = "mcu sb"; a.load = 0.22f; a.retransmits = 14;
     s.mcus = {a};
-    PerformanceState::instance().push_sample_for_testing(s);
+    PerformanceStateTestAccess::apply_sample(PerformanceState::instance(), s);
     helix::ui::UpdateQueueTestAccess::drain(helix::ui::UpdateQueue::instance());
 
     const char* text = lv_subject_get_string(
@@ -249,7 +251,7 @@ TEST_CASE_METHOD(PerfStateFixture,
     PerfSample s;
     McuStat a; a.name = "mcu"; a.load = 0.14f; a.retransmits = 0;
     s.mcus = {a};
-    PerformanceState::instance().push_sample_for_testing(s);
+    PerformanceStateTestAccess::apply_sample(PerformanceState::instance(), s);
     helix::ui::UpdateQueueTestAccess::drain(helix::ui::UpdateQueue::instance());
 
     const char* text = lv_subject_get_string(
