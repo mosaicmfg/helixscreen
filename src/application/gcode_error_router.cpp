@@ -243,16 +243,37 @@ void GcodeErrorRouter::process_line(const std::string& line) {
             // confirmation modal with a one-tap fix button; otherwise a
             // plain alert.
             if (auto* rec = find_recovery(code); rec && api_) {
-                auto* ctx = new RecoveryCtx{api_, rec};
-                helix::ui::modal_show_confirmation(
-                    lv_tr("Filament System Error"), clean.c_str(),
-                    ModalSeverity::Error, rec->button_label,
-                    [](lv_event_t* e) {
-                        auto* c = static_cast<RecoveryCtx*>(lv_event_get_user_data(e));
-                        if (!c || !c->api || !c->action) {
-                            delete c;
+                const char* title = lv_tr("Filament System Error");
+
+                // Dedup against an already-showing modal with the same title.
+                // modal_show_confirmation does NOT dedup internally (only
+                // ui_notification_error does); without this, two rapid key840
+                // events would stack two modals and leak two RecoveryCtxs.
+                if (lv_obj_t* top = helix::ui::modal_get_top()) {
+                    if (lv_obj_t* title_label =
+                            lv_obj_find_by_name(top, "dialog_title")) {
+                        const char* existing = lv_label_get_text(title_label);
+                        if (existing && strcmp(existing, title) == 0) {
+                            spdlog::debug("[GcodeError] Skipping duplicate "
+                                          "recovery modal for {}", code);
                             return;
                         }
+                    }
+                }
+
+                // Heap-allocate ctx for the recovery callback. Lifetime is
+                // tied to the dialog widget via LV_EVENT_DELETE — fires
+                // unconditionally when the dialog is destroyed (button tap,
+                // backdrop dismiss, ESC, ModalStack::clear() on shutdown),
+                // so the ctx is freed exactly once regardless of dismissal
+                // path. confirm/cancel cbs only invoke the action; the
+                // DELETE cb is the sole owner of the free.
+                auto* ctx = new RecoveryCtx{api_, rec};
+                lv_obj_t* dialog = helix::ui::modal_show_confirmation(
+                    title, clean.c_str(), ModalSeverity::Error, rec->button_label,
+                    [](lv_event_t* e) {
+                        auto* c = static_cast<RecoveryCtx*>(lv_event_get_user_data(e));
+                        if (!c || !c->api || !c->action) return;
                         const char* tag = c->action->log_tag;
                         spdlog::info("[GcodeError] User tapped recovery: {}", tag);
                         c->api->execute_gcode(
@@ -265,12 +286,25 @@ void GcodeErrorRouter::process_line(const std::string& line) {
                                     ("Recovery failed: " + err.user_message()).c_str(), 6000);
                             },
                             MoonrakerAPI::AMS_OPERATION_TIMEOUT_MS);
-                        delete c;
                     },
+                    /*on_cancel=*/nullptr,  // DELETE cb handles all cleanup
+                    ctx);
+
+                if (!dialog) {
+                    // modal_show_confirmation logs internally on failure.
+                    // ctx never reaches a callback; free directly.
+                    spdlog::warn("[GcodeError] modal_show_confirmation returned null; "
+                                 "discarding recovery ctx for {}", code);
+                    delete ctx;
+                    return;
+                }
+
+                lv_obj_add_event_cb(
+                    dialog,
                     [](lv_event_t* e) {
                         delete static_cast<RecoveryCtx*>(lv_event_get_user_data(e));
                     },
-                    ctx);
+                    LV_EVENT_DELETE, ctx);
                 return;
             }
             ui_notification_error(lv_tr("Filament System Error"), clean.c_str(),
