@@ -708,8 +708,11 @@ void HardwareValidator::validate_new_hardware(Config* config,
 
     // Find sensors in discovery but not in config
     for (const auto& sensor : discovered_sensors) {
-        // Skip AMS/AFC sensors - they're managed by multi-material systems
-        if (PrinterHardware::is_ams_sensor(sensor)) {
+        // Skip AMS/AFC sensors - they're managed by multi-material systems.
+        // Discovery-aware: when HH or AFC is detected, also suppress the
+        // backend's conventionally-named sensors (extruder/toolhead/
+        // tool_start/<lane>_prep/...) so a fresh install doesn't toast.
+        if (PrinterHardware::is_ams_sensor(sensor, hardware)) {
             spdlog::debug("[HardwareValidator] Skipping AMS sensor: {}", sensor);
             continue;
         }

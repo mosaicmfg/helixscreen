@@ -1190,3 +1190,168 @@ TEST_CASE_METHOD(ExpectedHardwareSuppressFixture,
     // LED should still be reported as new (not in expected, not in wizard config)
     REQUIRE(has_newly_discovered(result, "neopixel case_lights"));
 }
+
+// ============================================================================
+// AMS-managed sensor toast suppression
+//
+// A fresh Happy Hare or AFC install should not pelt the user with
+// "Filament sensor available. Add to config for runout detection?" toasts
+// for sensors the AMS backend already owns. The substring filter in
+// is_ams_sensor() catches names containing mmu/afc/lane/gate/etc., but
+// HH uses conventional names (extruder, toolhead, filament_tension,
+// filament_compression) and AFC uses tool_start/tool_end plus
+// user-named per-lane/buffer sensors. The validator must consult the
+// detected AMS backend in PrinterDiscovery to suppress those too.
+// ============================================================================
+
+TEST_CASE_METHOD(ExpectedHardwareSuppressFixture,
+                 "HardwareValidator - Happy Hare extruder/toolhead sensors auto-suppressed",
+                 "[hardware][validator][ams][happy_hare]") {
+    // Happy Hare detected — its extruder + toolhead switches and analog
+    // tension/compression inputs are managed by the HH backend, not
+    // standalone runout detection.
+    client.set_heaters({"extruder", "heater_bed"});
+    client.set_additional_objects({"mmu"});
+    client.set_filament_sensors({"filament_switch_sensor extruder",
+                                 "filament_switch_sensor toolhead",
+                                 "filament_switch_sensor filament_tension",
+                                 "filament_switch_sensor filament_compression"});
+    setup_config({{"printer",
+                   {{"moonraker_host", "127.0.0.1"},
+                    {"moonraker_port", 7125},
+                    {"hardware",
+                     {{"optional", json::array()},
+                      {"expected", json::array()},
+                      {"last_snapshot", json::object()}}}}}});
+
+    REQUIRE(client.hardware().has_mmu());
+    REQUIRE(client.hardware().mmu_type() == AmsType::HAPPY_HARE);
+
+    HardwareValidator validator;
+    auto result = validator.validate(&config, client.hardware());
+
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor extruder"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor toolhead"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor filament_tension"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor filament_compression"));
+}
+
+TEST_CASE_METHOD(ExpectedHardwareSuppressFixture,
+                 "HardwareValidator - extruder sensor still flagged when no MMU detected",
+                 "[hardware][validator][ams][happy_hare]") {
+    // Sanity check: the HH suppression must be conditional. A plain
+    // single-extruder printer with a runout switch named "extruder"
+    // should still get the new-hardware toast — otherwise we'd hide
+    // a legitimate user sensor.
+    client.set_heaters({"extruder", "heater_bed"});
+    client.set_mmu_enabled(false); // no MMU
+    client.set_filament_sensors({"filament_switch_sensor extruder"});
+    setup_config({{"printer",
+                   {{"moonraker_host", "127.0.0.1"},
+                    {"moonraker_port", 7125},
+                    {"hardware",
+                     {{"optional", json::array()},
+                      {"expected", json::array()},
+                      {"last_snapshot", json::object()}}}}}});
+
+    REQUIRE_FALSE(client.hardware().has_mmu());
+
+    HardwareValidator validator;
+    auto result = validator.validate(&config, client.hardware());
+
+    REQUIRE(has_newly_discovered(result, "filament_switch_sensor extruder"));
+}
+
+TEST_CASE_METHOD(ExpectedHardwareSuppressFixture,
+                 "HardwareValidator - AFC tool_start/tool_end auto-suppressed",
+                 "[hardware][validator][ams][afc]") {
+    // AFC registers tool_start and tool_end at the extruder; without
+    // backend-aware suppression they appear as "available" filament
+    // sensors on every connect.
+    client.set_heaters({"extruder", "heater_bed"});
+    client.set_mmu_enabled(false);
+    client.set_additional_objects({"AFC"});
+    client.set_filament_sensors({"filament_switch_sensor tool_start",
+                                 "filament_switch_sensor tool_end"});
+    setup_config({{"printer",
+                   {{"moonraker_host", "127.0.0.1"},
+                    {"moonraker_port", 7125},
+                    {"hardware",
+                     {{"optional", json::array()},
+                      {"expected", json::array()},
+                      {"last_snapshot", json::object()}}}}}});
+
+    REQUIRE(client.hardware().has_mmu());
+    REQUIRE(client.hardware().mmu_type() == AmsType::AFC);
+
+    HardwareValidator validator;
+    auto result = validator.validate(&config, client.hardware());
+
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor tool_start"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor tool_end"));
+}
+
+TEST_CASE_METHOD(ExpectedHardwareSuppressFixture,
+                 "HardwareValidator - AFC per-lane sensors auto-suppressed by lane name",
+                 "[hardware][validator][ams][afc]") {
+    // AFC names per-lane sensors as "<lane>_prep", "<lane>_load",
+    // "<lane>_selector". When a user names a lane "T0" the sensors
+    // become "T0_prep" etc. — no substring in is_ams_sensor's static
+    // list would match. The discovery-aware suppression consults
+    // afc_lane_names() and matches by lane prefix.
+    client.set_heaters({"extruder", "heater_bed"});
+    client.set_mmu_enabled(false);
+    client.set_additional_objects(
+        {"AFC", "AFC_lane T0", "AFC_lane T1", "AFC_buffer Turtle1"});
+    client.set_filament_sensors({"filament_switch_sensor T0_prep",
+                                 "filament_switch_sensor T0_load",
+                                 "filament_switch_sensor T0_selector",
+                                 "filament_switch_sensor T1_prep",
+                                 "filament_switch_sensor Turtle1_expanded",
+                                 "filament_switch_sensor Turtle1_compressed"});
+    setup_config({{"printer",
+                   {{"moonraker_host", "127.0.0.1"},
+                    {"moonraker_port", 7125},
+                    {"hardware",
+                     {{"optional", json::array()},
+                      {"expected", json::array()},
+                      {"last_snapshot", json::object()}}}}}});
+
+    REQUIRE(client.hardware().mmu_type() == AmsType::AFC);
+
+    HardwareValidator validator;
+    auto result = validator.validate(&config, client.hardware());
+
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor T0_prep"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor T0_load"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor T0_selector"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor T1_prep"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor Turtle1_expanded"));
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor Turtle1_compressed"));
+}
+
+TEST_CASE_METHOD(ExpectedHardwareSuppressFixture,
+                 "HardwareValidator - AFC HTLF home_pin sensor auto-suppressed",
+                 "[hardware][validator][ams][afc]") {
+    // AFC HTLF units register a "<unit>_home_pin" switch that doesn't
+    // carry any AFC-specific substring. When AFC is detected, the
+    // _home_pin suffix is the unambiguous signal.
+    client.set_heaters({"extruder", "heater_bed"});
+    client.set_mmu_enabled(false);
+    client.set_additional_objects({"AFC", "AFC_HTLF htlf1"});
+    client.set_filament_sensors({"filament_switch_sensor htlf1_home_pin"});
+    setup_config({{"printer",
+                   {{"moonraker_host", "127.0.0.1"},
+                    {"moonraker_port", 7125},
+                    {"hardware",
+                     {{"optional", json::array()},
+                      {"expected", json::array()},
+                      {"last_snapshot", json::object()}}}}}});
+
+    REQUIRE(client.hardware().mmu_type() == AmsType::AFC);
+
+    HardwareValidator validator;
+    auto result = validator.validate(&config, client.hardware());
+
+    REQUIRE_FALSE(has_newly_discovered(result, "filament_switch_sensor htlf1_home_pin"));
+}

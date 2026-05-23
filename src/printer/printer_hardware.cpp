@@ -3,6 +3,8 @@
 
 #include "printer_hardware.h"
 
+#include "printer_discovery.h"
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -544,6 +546,82 @@ bool PrinterHardware::is_ams_sensor(const std::string& sensor_name) {
         pattern = std::string("fil_") + c;
         if (lower_name.find(pattern) != std::string::npos)
             return true;
+    }
+
+    return false;
+}
+
+bool PrinterHardware::is_ams_sensor(const std::string& sensor_name,
+                                    const helix::PrinterDiscovery& discovery) {
+    if (is_ams_sensor(sensor_name)) {
+        return true;
+    }
+
+    if (!discovery.has_mmu()) {
+        return false;
+    }
+
+    // Strip the Klipper object-type prefix so we can match on the bare sensor
+    // name. printer.objects.list returns names like "filament_switch_sensor X"
+    // or "filament_motion_sensor X"; the AMS-side documentation uses the bare
+    // form.
+    auto strip = [](const std::string& full) -> std::string {
+        static const std::string s_prefix = "filament_switch_sensor ";
+        static const std::string m_prefix = "filament_motion_sensor ";
+        if (full.rfind(s_prefix, 0) == 0) {
+            return full.substr(s_prefix.size());
+        }
+        if (full.rfind(m_prefix, 0) == 0) {
+            return full.substr(m_prefix.size());
+        }
+        return full;
+    };
+    const std::string bare = strip(sensor_name);
+
+    auto ends_with = [](const std::string& s, const std::string& suffix) {
+        return s.size() >= suffix.size() &&
+               s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+
+    switch (discovery.mmu_type()) {
+    case AmsType::HAPPY_HARE:
+        // Documented HH sensor names that don't carry the "mmu" substring.
+        // mmu_gate / mmu_pre_gate_N / mmu_gear_N are already caught by the
+        // substring overload via "mmu"/"gate".
+        if (bare == "extruder" || bare == "toolhead" || bare == "filament_tension" ||
+            bare == "filament_compression") {
+            return true;
+        }
+        break;
+
+    case AmsType::AFC:
+        // Fixed names at the extruder.
+        if (bare == "tool_start" || bare == "tool_end") {
+            return true;
+        }
+        // Per-lane sensors are <lane>_prep, <lane>_load, <lane>_selector.
+        for (const auto& lane : discovery.afc_lane_names()) {
+            if (bare == lane + "_prep" || bare == lane + "_load" ||
+                bare == lane + "_selector") {
+                return true;
+            }
+        }
+        // Per-buffer sensors are <buffer>_expanded, <buffer>_compressed.
+        for (const auto& buffer : discovery.afc_buffer_names()) {
+            if (bare == buffer + "_expanded" || bare == buffer + "_compressed") {
+                return true;
+            }
+        }
+        // AFC HTLF units register <unit>_home_pin. The unit name may be
+        // anything; once AFC is the detected backend, the _home_pin suffix
+        // is the unambiguous signal.
+        if (ends_with(bare, "_home_pin")) {
+            return true;
+        }
+        break;
+
+    default:
+        break;
     }
 
     return false;

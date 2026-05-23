@@ -6,6 +6,10 @@
 #include <string>
 #include <vector>
 
+namespace helix {
+class PrinterDiscovery;
+}
+
 /**
  * @file printer_hardware.h
  * @brief Hardware discovery heuristics for Klipper printers
@@ -236,6 +240,23 @@ class PrinterHardware {
      * @return true if sensor appears to be AMS-managed
      */
     static bool is_ams_sensor(const std::string& sensor_name);
+
+    /**
+     * @brief Discovery-aware variant: also consults the detected AMS backend.
+     *
+     * The substring overload above catches names containing well-known AMS
+     * keywords (mmu, afc, ercf, gate, ...). Happy Hare and AFC also register
+     * filament sensors whose names DON'T carry those keywords:
+     *   - HH: extruder, toolhead, filament_tension, filament_compression
+     *   - AFC: tool_start, tool_end; per-lane <lane>_prep/_load/_selector;
+     *          per-buffer <buffer>_expanded/_compressed; HTLF <unit>_home_pin
+     * Suppressing those globally would hide legitimate user sensors on
+     * non-AMS printers, so we only match them when discovery indicates the
+     * corresponding backend is present, using the discovered lane/buffer
+     * names as prefix anchors.
+     */
+    static bool is_ams_sensor(const std::string& sensor_name,
+                              const helix::PrinterDiscovery& discovery);
 
   private:
     std::vector<std::string> heaters_;
