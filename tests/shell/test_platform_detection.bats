@@ -549,3 +549,101 @@ _mock_u1_detect_platform() {
 @test "install.sh (bundled) has snapmaker-u1 detection" {
     grep -q 'snapmaker-u1' "$WORKTREE_ROOT/scripts/install.sh"
 }
+
+# ============================================================================
+# get_download_platform() — maps platforms without dedicated release artifacts
+# to a donor platform whose binary is ABI-compatible. Regression coverage for
+# prestonbrown/helixscreen#970 + #971 (Artillery M1 had no helixscreen-m1.zip,
+# so installer/updater hit 404s on every URL candidate).
+# ============================================================================
+
+@test "get_download_platform: pi → pi (identity)" {
+    run get_download_platform "pi"
+    [ "$status" -eq 0 ]
+    [ "$output" = "pi" ]
+}
+
+@test "get_download_platform: pi32 → pi32 (identity)" {
+    run get_download_platform "pi32"
+    [ "$status" -eq 0 ]
+    [ "$output" = "pi32" ]
+}
+
+@test "get_download_platform: ad5m → ad5m (identity)" {
+    run get_download_platform "ad5m"
+    [ "$status" -eq 0 ]
+    [ "$output" = "ad5m" ]
+}
+
+@test "get_download_platform: k1 → k1 (identity)" {
+    run get_download_platform "k1"
+    [ "$status" -eq 0 ]
+    [ "$output" = "k1" ]
+}
+
+@test "get_download_platform: k2 → k2 (identity)" {
+    run get_download_platform "k2"
+    [ "$status" -eq 0 ]
+    [ "$output" = "k2" ]
+}
+
+@test "get_download_platform: snapmaker-u1 → snapmaker-u1 (identity)" {
+    run get_download_platform "snapmaker-u1"
+    [ "$status" -eq 0 ]
+    [ "$output" = "snapmaker-u1" ]
+}
+
+@test "get_download_platform: m1 with 64-bit userspace → pi" {
+    mock_command "getconf" "64"
+    run get_download_platform "m1"
+    [ "$status" -eq 0 ]
+    [ "$output" = "pi" ]
+}
+
+@test "get_download_platform: m1 with 32-bit userspace → pi32" {
+    mock_command "getconf" "32"
+    run get_download_platform "m1"
+    [ "$status" -eq 0 ]
+    [ "$output" = "pi32" ]
+}
+
+@test "get_download_platform: m1 with missing getconf defaults to pi (64-bit)" {
+    # getconf absent → empty userspace_bits → falls into the 'else' branch
+    # (treat as 64-bit). Artillery M1 Pro ships aarch64 userspace in practice.
+    mock_command_fail "getconf"
+    run get_download_platform "m1"
+    [ "$status" -eq 0 ]
+    [ "$output" = "pi" ]
+}
+
+@test "platform.sh exports get_download_platform" {
+    grep -q '^get_download_platform()' "$WORKTREE_ROOT/scripts/lib/installer/platform.sh"
+}
+
+@test "install.sh (bundled) has get_download_platform" {
+    grep -q 'get_download_platform' "$WORKTREE_ROOT/scripts/install.sh"
+}
+
+@test "main.sh passes download_platform (not platform) to download_release" {
+    grep -q 'download_release "$version" "$download_platform"' \
+        "$WORKTREE_ROOT/scripts/lib/installer/main.sh"
+}
+
+@test "main.sh passes download_platform (not platform) to get_latest_version" {
+    grep -q 'get_latest_version "$download_platform"' \
+        "$WORKTREE_ROOT/scripts/lib/installer/main.sh"
+}
+
+@test "install.sh (bundled) passes download_platform to download_release" {
+    grep -q 'download_release "$version" "$download_platform"' \
+        "$WORKTREE_ROOT/scripts/install.sh"
+}
+
+@test "moonraker.sh release_info.json picks pi/pi32 for m1 (not helixscreen-m1.zip)" {
+    # Regression guard: if anyone adds a literal helixscreen-m1.zip case, the
+    # asset_name written into release_info.json will 404 on Moonraker update.
+    ! grep -q 'helixscreen-m1\.zip' "$WORKTREE_ROOT/scripts/lib/installer/moonraker.sh"
+    # And the m1 branch must exist explicitly (not just fall through to default)
+    # so future readers don't strip the pi/pi32 dispatch as dead code.
+    grep -q '^[[:space:]]*m1)' "$WORKTREE_ROOT/scripts/lib/installer/moonraker.sh"
+}

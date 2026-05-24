@@ -182,6 +182,10 @@ main() {
 
     # Detect platform
     platform=$(detect_platform)
+    # For platforms that share a binary with pi/pi32 (e.g. m1), the download
+    # URL uses the donor platform key while $platform stays put so hooks,
+    # banner, and competing-UI shutdown still target the real device.
+    download_platform=$(get_download_platform "$platform")
     print_platform_banner "$platform"
 
     # AD5X: refuse to run outside the ZMOD chroot — applies to fresh install,
@@ -280,7 +284,7 @@ main() {
         log_info "Installing from local file: ${BOLD}${local_tarball}${NC}"
     else
         if [ -z "$version" ]; then
-            version=$(get_latest_version "$platform")
+            version=$(get_latest_version "$download_platform")
         fi
     fi
     log_info "Target version: ${BOLD}${version}${NC}"
@@ -304,7 +308,7 @@ main() {
     if [ -n "$local_tarball" ]; then
         use_local_tarball "$local_tarball"
     else
-        download_release "$version" "$platform"
+        download_release "$version" "$download_platform"
     fi
 
     if [ "$update_mode" = true ]; then

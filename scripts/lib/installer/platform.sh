@@ -296,6 +296,37 @@ detect_platform() {
     echo "unsupported"
 }
 
+# Map a detected platform to the platform key used for release downloads.
+#
+# Most platforms are 1:1 (pi → pi, ad5m → ad5m, …). The exception is platforms
+# like `m1` (Artillery M1 Pro) that have no dedicated release artifact: the
+# generic pi/pi32 binary is ABI-compatible, so we reuse it instead of doubling
+# CI for an identical build. The `m1` *platform* key is preserved everywhere
+# else (hooks, banner, competing-UI shutdown) so M1-specific behavior still
+# fires; only the download URL changes.
+#
+# Args: detected_platform
+# Echoes: platform key to use when constructing release archive URLs
+get_download_platform() {
+    local detected=$1
+    case "$detected" in
+        m1)
+            # Artillery M1 Pro is a Debian SBC. The pi/pi32 binary runs as-is.
+            # Pick the variant matching the device's userspace bitness.
+            local userspace_bits
+            userspace_bits=$(getconf LONG_BIT 2>/dev/null || echo "")
+            if [ "$userspace_bits" = "32" ]; then
+                echo "pi32"
+            else
+                echo "pi"
+            fi
+            ;;
+        *)
+            echo "$detected"
+            ;;
+    esac
+}
+
 # AD5X (FlashForge / ZMOD) preflight: refuse to run outside the chroot.
 #
 # ZMOD installs HelixScreen into an overlay rooted at /usr/data/.mod/.zmod/.
