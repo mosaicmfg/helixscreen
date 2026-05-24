@@ -29,7 +29,7 @@ namespace helix {
  * 3. SENT_CANCEL - Queue responsive, send printer.print.cancel RPC (configurable timeout)
  * 4. SENT_ESTOP - Queue blocked or cancel failed, send M112
  * 5. SENT_RESTART - Send FIRMWARE_RESTART after M112
- * 6. WAITING_RECONNECT - Wait for klippy_state == READY (15s timeout)
+ * 6. WAITING_RECONNECT - Wait for klippy_state == READY (30s timeout)
  *
  * State Machine:
  * ```
@@ -222,7 +222,13 @@ class AbortManager {
     static constexpr uint32_t PROBE_TIMEOUT_MS = 2000;                                ///< 2 seconds
     static constexpr uint32_t CANCEL_TIMEOUT_MS = MoonrakerJobAPI::CANCEL_TIMEOUT_MS; ///< 5 minutes
     static constexpr uint32_t CANCEL_NUDGE_MS = 15000;                                ///< 15 seconds
-    static constexpr uint32_t RECONNECT_TIMEOUT_MS = 15000;                           ///< 15 seconds
+    /// Wait window for klippy_state to reach READY after the recovery service
+    /// returns. The recovery service can take 30s+ on K2 (klipper_mcu bounce),
+    /// but that's handled async — this timer only covers the gap between
+    /// "script returned" and "klippy reports READY". 30s gives platforms with
+    /// slow MCU re-enumeration (CFS rediscovery, RS-485 bus settle) enough
+    /// headroom without leaving the user staring at "Restarting..." forever.
+    static constexpr uint32_t RECONNECT_TIMEOUT_MS = 30000; ///< 30 seconds
 
   private:
     friend class AbortManagerTestAccess;

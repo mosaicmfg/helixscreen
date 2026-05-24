@@ -588,12 +588,82 @@ TEST_CASE_METHOD(AbortManagerTestFixture,
 
     REQUIRE(AbortManager::instance().get_state() == AbortManager::State::WAITING_RECONNECT);
 
-    // Simulate 15s timeout without READY
+    // Simulate reconnect timeout without READY
     AbortManagerTestAccess::on_reconnect_timeout(AbortManager::instance());
 
     // Should still complete (but with error message about timeout)
     REQUIRE(AbortManager::instance().get_state() == AbortManager::State::COMPLETE);
     REQUIRE(AbortManager::instance().last_result_message().find("timeout") != std::string::npos);
+}
+
+// ============================================================================
+// Suppression-Flag Clearing Tests (K2 trsync stuck-recovery path)
+// ============================================================================
+//
+// shutdown_recovery_in_progress_ suppresses the global recovery dialog
+// (EmergencyStopOverlay::is_recovery_suppressed) while AbortManager is
+// driving the M112+restart cycle. Before the fix, the flag was *only*
+// cleared on the SHUTDOWN→READY observer transition. On K2 with CFS the
+// rpi-MCU bridge stays stuck after a trsync fault, klippy never reaches
+// READY, the reconnect timer fires, and complete_abort() leaves the flag
+// latched — so every future recovery dialog is silently suppressed and
+// the user has no UI path to recover. Contract: complete_abort() ALWAYS
+// clears the flag, regardless of how the abort ended.
+
+TEST_CASE_METHOD(AbortManagerTestFixture,
+                 "AbortManager: Reconnect timeout clears shutdown-recovery suppression flag",
+                 "[abort][shutdown_recovery][timeout]") {
+    AbortManager::instance().start_abort();
+    simulate_kalico_not_present();
+    simulate_queue_blocked();
+    AbortManagerTestAccess::on_estop_sent(AbortManager::instance());
+    AbortManagerTestAccess::on_restart_sent(AbortManager::instance());
+
+    // While in the M112+restart cycle, the flag is set (suppresses dialog)
+    REQUIRE(AbortManager::instance().is_handling_shutdown() == true);
+
+    AbortManagerTestAccess::on_reconnect_timeout(AbortManager::instance());
+
+    // After timeout completion, the flag MUST be cleared — otherwise the
+    // EmergencyStopOverlay recovery dialog stays suppressed forever and the
+    // user has no UI path to firmware-restart out of the stuck state.
+    REQUIRE(AbortManager::instance().get_state() == AbortManager::State::COMPLETE);
+    REQUIRE(AbortManager::instance().is_handling_shutdown() == false);
+}
+
+TEST_CASE_METHOD(AbortManagerTestFixture,
+                 "AbortManager: Happy-path completion also clears shutdown-recovery flag",
+                 "[abort][shutdown_recovery]") {
+    AbortManager::instance().start_abort();
+    simulate_kalico_not_present();
+    simulate_queue_blocked();
+    AbortManagerTestAccess::on_estop_sent(AbortManager::instance());
+    AbortManagerTestAccess::on_restart_sent(AbortManager::instance());
+
+    REQUIRE(AbortManager::instance().is_handling_shutdown() == true);
+
+    // Klippy goes SHUTDOWN → READY (the happy path that *did* clear the flag
+    // pre-fix). Keep this asserted post-fix too — it's the canonical success.
+    AbortManagerTestAccess::on_klippy_state_change(AbortManager::instance(), KlippyState::SHUTDOWN);
+    AbortManagerTestAccess::on_klippy_state_change(AbortManager::instance(), KlippyState::READY);
+
+    REQUIRE(AbortManager::instance().get_state() == AbortManager::State::COMPLETE);
+    REQUIRE(AbortManager::instance().is_handling_shutdown() == false);
+}
+
+TEST_CASE_METHOD(AbortManagerTestFixture,
+                 "AbortManager: Cancel-success path leaves shutdown-recovery flag false",
+                 "[abort][shutdown_recovery]") {
+    // No escalation — soft cancel succeeds. Flag should never have been set,
+    // and is_handling_shutdown() must stay false throughout.
+    AbortManager::instance().start_abort();
+    simulate_kalico_not_present();
+    simulate_queue_responsive();
+    REQUIRE(AbortManager::instance().is_handling_shutdown() == false);
+
+    simulate_cancel_success();
+    REQUIRE(AbortManager::instance().get_state() == AbortManager::State::COMPLETE);
+    REQUIRE(AbortManager::instance().is_handling_shutdown() == false);
 }
 
 // ============================================================================
@@ -666,7 +736,7 @@ TEST_CASE_METHOD(AbortManagerTestFixture, "AbortManager: Timeout constants are c
     REQUIRE(AbortManager::CANCEL_TIMEOUT_MS == 300000);
     REQUIRE(AbortManager::CANCEL_NUDGE_MS == 15000);
     REQUIRE(AbortManager::CANCEL_NUDGE_MS < AbortManager::CANCEL_TIMEOUT_MS);
-    REQUIRE(AbortManager::RECONNECT_TIMEOUT_MS == 15000);
+    REQUIRE(AbortManager::RECONNECT_TIMEOUT_MS == 30000);
 }
 
 // ============================================================================

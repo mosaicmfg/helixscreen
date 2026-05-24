@@ -9,9 +9,11 @@
 
 #include "moonraker_api.h"
 #include "observer_factory.h"
+#include "printer_recovery_service.h"
 #include "printer_state.h"
 #include "safety_settings_manager.h"
 #include "static_panel_registry.h"
+#include "ui_emergency_stop.h"
 
 #include <spdlog/spdlog.h>
 
@@ -417,7 +419,7 @@ void AbortManager::escalate_to_estop() {
 }
 
 void AbortManager::send_firmware_restart() {
-    spdlog::info("[AbortManager] Sending FIRMWARE_RESTART");
+    spdlog::info("[AbortManager] Initiating recovery (firmware_restart + platform fallback)");
     set_state(State::SENT_RESTART);
     set_progress_message("Restarting...");
 
@@ -430,8 +432,14 @@ void AbortManager::send_firmware_restart() {
 
     commands_sent_++;
 
-    // Send FIRMWARE_RESTART
-    api_->restart_firmware(
+    // Route through PrinterRecoveryService so platforms that need more than
+    // printer.firmware_restart get the right sequence. On K2 a CFS trsync
+    // fault leaves the rpi-MCU bridge (klipper_mcu daemon) shut down, which
+    // *traps* a plain printer.firmware_restart — only bouncing klipper_mcu
+    // first via helix-recover.sh clears it. Stock Klipper / Pi hosts fall
+    // through to printer.firmware_restart and behave exactly as before.
+    PrinterRecoveryService recovery(api_);
+    recovery.recover(
         [this]() {
             helix::ui::async_call(
                 [](void* user_data) {
@@ -441,7 +449,10 @@ void AbortManager::send_firmware_restart() {
                 this);
         },
         [this](const MoonrakerError& /* err */) {
-            // Even on error, proceed to wait for reconnect
+            // Even on error, proceed to wait for reconnect — Klipper may
+            // still come back via natural recovery, and if it doesn't the
+            // reconnect timer surfaces the recovery dialog so the user has
+            // a path forward.
             helix::ui::async_call(
                 [](void* user_data) {
                     auto* self = static_cast<AbortManager*>(user_data);
@@ -483,6 +494,13 @@ void AbortManager::complete_abort(const char* message) {
     // Clear klippy observer since we're no longer waiting for reconnect
     klippy_observer_.reset();
 
+    // Always clear the suppression flag at end-of-abort. Previously this was
+    // only cleared by on_klippy_state_changed when Klipper transitioned
+    // SHUTDOWN→READY, so a reconnect timeout (K2 with CFS trsync wedged
+    // klipper_mcu — see helix-recover.sh) latched the flag forever and
+    // silently suppressed every future recovery dialog.
+    bool was_handling_shutdown = shutdown_recovery_in_progress_.exchange(false);
+
     // Set print outcome to CANCELLED for UI badge display
     // Moonraker reports "standby" after M112+restart, not "cancelled"
     if (printer_state_) {
@@ -500,6 +518,26 @@ void AbortManager::complete_abort(const char* message) {
     }
     set_state(State::COMPLETE);
     set_progress_message(message);
+
+    // If we drove an M112+restart cycle but Klipper is still SHUTDOWN/ERROR
+    // (recovery service couldn't bring it back, e.g. K2 rpi-MCU still stuck
+    // after CFS fault), actively surface the unified recovery dialog. The
+    // klippy_state observer in EmergencyStopOverlay only fires on
+    // *transitions*, so if Klipper has been sitting in SHUTDOWN the whole
+    // time the user would otherwise get no recovery UI at all.
+    if (was_handling_shutdown && printer_state_) {
+        auto ks = static_cast<KlippyState>(
+            lv_subject_get_int(printer_state_->get_klippy_state_subject()));
+        if (ks == KlippyState::SHUTDOWN || ks == KlippyState::ERROR) {
+            spdlog::warn("[AbortManager] Klippy still {} after abort — surfacing recovery dialog",
+                         ks == KlippyState::SHUTDOWN ? "SHUTDOWN" : "ERROR");
+            // show_recovery_for() internally defers to the main thread via
+            // async_call, so calling it directly from complete_abort (which
+            // already runs on the main thread) is safe and self-deferring.
+            EmergencyStopOverlay::instance().show_recovery_for(
+                ks == KlippyState::SHUTDOWN ? RecoveryReason::SHUTDOWN : RecoveryReason::ERROR);
+        }
+    }
 }
 
 // ============================================================================
