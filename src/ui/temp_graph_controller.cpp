@@ -387,18 +387,35 @@ void TempGraphController::backfill_history() {
         if (samples.empty())
             continue;
 
+        // Build parallel temp / target arrays for one-call replay.
+        std::vector<float> temps;
+        std::vector<float> targets;
+        temps.reserve(samples.size());
+        targets.reserve(samples.size());
         for (const auto& sample : samples) {
-            float temp_deg = centi_to_degrees_f(sample.temp_centi);
-            ui_temp_graph_update_series_with_time(graph_, s.series_id, temp_deg,
-                                                  sample.timestamp_ms);
+            temps.push_back(centi_to_degrees_f(sample.temp_centi));
+            targets.push_back(s.show_target ? centi_to_degrees_f(sample.target_centi) : 0.0f);
         }
 
-        // Set initial target from most recent sample
+        // Replay both buffers via the dedicated parallel-array API. This also
+        // refreshes the chart and updates max_visible_temp.
+        ui_temp_graph_set_series_data_with_targets(graph_, s.series_id, temps.data(),
+                                                   targets.data(),
+                                                   static_cast<int>(samples.size()));
+
+        // Drive update_series_with_time once for the most recent sample so the
+        // X-axis timestamp tracking (first_point_time_ms / latest_point_time_ms)
+        // is populated — set_series_data does not update those fields.
+        const auto& last = samples.back();
+        ui_temp_graph_update_series_with_time(graph_, s.series_id,
+                                              centi_to_degrees_f(last.temp_centi),
+                                              last.timestamp_ms);
+
+        // Stage the latest target for the accent tick + next-sample push.
         if (s.show_target) {
-            float target_deg = centi_to_degrees_f(samples.back().target_centi);
-            if (target_deg > 0.0f) {
-                ui_temp_graph_set_series_target(graph_, s.series_id, target_deg, true);
-            }
+            float target_deg = centi_to_degrees_f(last.target_centi);
+            ui_temp_graph_set_current_target(graph_, s.series_id, target_deg,
+                                             target_deg > 0.0f);
         }
     }
 }
