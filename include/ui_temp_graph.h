@@ -54,19 +54,21 @@
  * Used by ui_temp_graph_set_features() / ui_temp_graph_get_features().
  */
 enum ui_temp_graph_feature {
-    TEMP_GRAPH_FEATURE_LINES = (1 << 0),        // Temperature data lines (always forced on)
-    TEMP_GRAPH_FEATURE_TARGET_LINES = (1 << 1), // Target temperature dashed lines
-    TEMP_GRAPH_FEATURE_LEGEND = (1 << 2),       // Legend chips (color swatch + series name)
-    TEMP_GRAPH_FEATURE_Y_AXIS = (1 << 3),       // Y-axis temperature labels
-    TEMP_GRAPH_FEATURE_X_AXIS = (1 << 4),       // X-axis time labels
-    TEMP_GRAPH_FEATURE_GRADIENTS = (1 << 5),    // Gradient fills under lines
-    TEMP_GRAPH_FEATURE_READOUTS = (1 << 6),     // Reserved — managed by widget, not by this module
+    TEMP_GRAPH_FEATURE_LINES = (1 << 0),         // Temperature data lines (always forced on)
+    TEMP_GRAPH_FEATURE_TARGET_LINES = (1 << 1),  // Target temperature dashed lines (master switch)
+    TEMP_GRAPH_FEATURE_LEGEND = (1 << 2),        // Legend chips (color swatch + series name)
+    TEMP_GRAPH_FEATURE_Y_AXIS = (1 << 3),        // Y-axis temperature labels
+    TEMP_GRAPH_FEATURE_X_AXIS = (1 << 4),        // X-axis time labels
+    TEMP_GRAPH_FEATURE_GRADIENTS = (1 << 5),     // Gradient fills under lines
+    TEMP_GRAPH_FEATURE_READOUTS = (1 << 6),      // Reserved — managed by widget, not by this module
+    TEMP_GRAPH_FEATURE_TARGET_HISTORY = (1 << 7), // Sub-flag: time-varying dashed trace vs.
+                                                  // legacy horizontal line. Requires TARGET_LINES.
 };
 
 #define TEMP_GRAPH_ALL_FEATURES                                                                    \
     (TEMP_GRAPH_FEATURE_LINES | TEMP_GRAPH_FEATURE_TARGET_LINES | TEMP_GRAPH_FEATURE_LEGEND |      \
      TEMP_GRAPH_FEATURE_Y_AXIS | TEMP_GRAPH_FEATURE_X_AXIS | TEMP_GRAPH_FEATURE_GRADIENTS |        \
-     TEMP_GRAPH_FEATURE_READOUTS)
+     TEMP_GRAPH_FEATURE_READOUTS | TEMP_GRAPH_FEATURE_TARGET_HISTORY)
 
 /**
  * Temperature series metadata
@@ -79,10 +81,22 @@ struct ui_temp_series_meta_t {
     char name[32];                   // Series name (e.g., "Nozzle", "Bed")
     bool visible;                    // Show/hide series
     bool show_target;                // Show/hide target temperature line
-    float target_temp;               // Target temperature for dashed line
+    float target_temp;               // Latest target temperature (current setpoint).
+                                     //   In TARGET_HISTORY mode: drawn as accent tick at right
+                                     //   edge; also the value pushed into target_centi_buf on
+                                     //   each actuals sample.
+                                     //   In legacy mode: drawn as a single horizontal line.
     lv_opa_t gradient_bottom_opa;    // Bottom gradient opacity
     lv_opa_t gradient_top_opa;       // Top gradient opacity
     bool first_value_received;       // True after first real data point (for backfill)
+
+    // Target history (parallel to chart series buffer):
+    //   target_centi_buf[i] holds the target × 10 at the time chart sample i was pushed.
+    //   0 sentinel = "no target / heater off" (segment break in draw).
+    //   Sized to graph->point_count; reallocated by set_point_count.
+    int16_t* target_centi_buf;
+    int      target_head;            // Count of valid samples in [0, target_head).
+                                     //   Caps at point_count; shift-left on overflow.
 };
 
 /**
@@ -266,6 +280,38 @@ void ui_temp_graph_set_series_target(ui_temp_graph_t* graph, int series_id, floa
  * @param show true to show, false to hide
  */
 void ui_temp_graph_show_target(ui_temp_graph_t* graph, int series_id, bool show);
+
+/**
+ * Update the "current target" for a series WITHOUT pushing into the history buffer.
+ *
+ * The buffer push happens implicitly on the next actuals sample (via
+ * ui_temp_graph_update_series). This setter is what live target observers should
+ * call: it stages the new setpoint so the next pushed sample records it.
+ *
+ * @param graph     Graph instance
+ * @param series_id Series ID
+ * @param target    Target temperature in degrees
+ * @param show      true to show target trace, false to hide
+ */
+void ui_temp_graph_set_current_target(ui_temp_graph_t* graph, int series_id, float target,
+                                      bool show);
+
+/**
+ * Replace all data points AND target history for a series in one call (array mode).
+ *
+ * Mirror of ui_temp_graph_set_series_data but populates both buffers. The two
+ * arrays MUST have the same length. Used by backfill paths that have parallel
+ * temp+target history (e.g., TempSample replay from TemperatureHistoryManager).
+ *
+ * @param graph     Graph instance
+ * @param series_id Series ID
+ * @param temps     Array of temperature values (degrees)
+ * @param targets   Array of target values (degrees, 0 = heater off)
+ * @param count     Number of entries in BOTH arrays
+ */
+void ui_temp_graph_set_series_data_with_targets(ui_temp_graph_t* graph, int series_id,
+                                                const float* temps, const float* targets,
+                                                int count);
 
 /**
  * Configuration API
