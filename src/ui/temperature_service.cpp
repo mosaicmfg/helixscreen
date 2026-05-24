@@ -243,12 +243,14 @@ void TemperatureService::on_target_changed(HeaterType type, int target_centi) {
     }
 
     float target_deg = centi_to_degrees_f(target_centi);
-    bool show_target = (target_centi > 0);
 
     if (ui_temp_graph_is_valid(h.graph) && h.series_id >= 0) {
-        ui_temp_graph_set_series_target(h.graph, h.series_id, target_deg, show_target);
-        spdlog::trace("[TempPanel] {} target line: {:.1f}°C (visible={})", heater_label(type),
-                      target_deg, show_target);
+        // Always pass show=true: the series HAS a target capability (it's a heater).
+        // The buffer's 0-sentinel handles "off period" gaps via the segmenter, so
+        // we never want to flip show_target off here — that would erase the whole
+        // historical trace.
+        ui_temp_graph_set_series_target(h.graph, h.series_id, target_deg, true);
+        spdlog::trace("[TempPanel] {} target line: {:.1f}°C", heater_label(type), target_deg);
     }
 }
 
@@ -503,9 +505,10 @@ ui_temp_graph_t* TemperatureService::create_temp_graph(lv_obj_t* chart_area,
     }
 
     if (series_id >= 0) {
-        bool show_target = (target_temp > 0);
-        ui_temp_graph_set_series_target(graph, series_id, static_cast<float>(target_temp),
-                                        show_target);
+        // Always pass show=true at create time: the series HAS a target capability.
+        // History rendering will start empty (no positive samples yet) and become
+        // populated as the user sets targets and samples accumulate.
+        ui_temp_graph_set_series_target(graph, series_id, static_cast<float>(target_temp), true);
         spdlog::debug("[TempPanel] {} graph created (awaiting live data)", config->name);
     }
 

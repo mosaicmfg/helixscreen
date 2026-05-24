@@ -496,9 +496,11 @@ void TempGraphOverlay::toggle_series_visibility(size_t series_idx) {
         auto* graph = controller_->graph();
         ui_temp_graph_show_series(graph, s.series_id, s.visible);
         if (s.has_target) {
-            // Only show target line if series is visible AND target is non-zero
-            bool show = s.visible && graph->series_meta[s.series_id].target_temp > 0.0f;
-            ui_temp_graph_show_target(graph, s.series_id, show);
+            // Mirror chip state: target trace visibility tracks the actuals
+            // visibility. The buffer's 0-sentinel handles off-period gaps via
+            // the segmenter, so we don't gate on current target value — historical
+            // positive-target samples remain visible when the heater is currently off.
+            ui_temp_graph_show_target(graph, s.series_id, s.visible);
         }
     }
     update_chip_style(series_idx);
