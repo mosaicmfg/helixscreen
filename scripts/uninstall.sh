@@ -614,6 +614,37 @@ detect_platform() {
     echo "unsupported"
 }
 
+# Map a detected platform to the platform key used for release downloads.
+#
+# Most platforms are 1:1 (pi → pi, ad5m → ad5m, …). The exception is platforms
+# like `m1` (Artillery M1 Pro) that have no dedicated release artifact: the
+# generic pi/pi32 binary is ABI-compatible, so we reuse it instead of doubling
+# CI for an identical build. The `m1` *platform* key is preserved everywhere
+# else (hooks, banner, competing-UI shutdown) so M1-specific behavior still
+# fires; only the download URL changes.
+#
+# Args: detected_platform
+# Echoes: platform key to use when constructing release archive URLs
+get_download_platform() {
+    local detected=$1
+    case "$detected" in
+        m1)
+            # Artillery M1 Pro is a Debian SBC. The pi/pi32 binary runs as-is.
+            # Pick the variant matching the device's userspace bitness.
+            local userspace_bits
+            userspace_bits=$(getconf LONG_BIT 2>/dev/null || echo "")
+            if [ "$userspace_bits" = "32" ]; then
+                echo "pi32"
+            else
+                echo "pi"
+            fi
+            ;;
+        *)
+            echo "$detected"
+            ;;
+    esac
+}
+
 # AD5X (FlashForge / ZMOD) preflight: refuse to run outside the chroot.
 #
 # ZMOD installs HelixScreen into an overlay rooted at /usr/data/.mod/.zmod/.
@@ -2305,6 +2336,7 @@ install_service() {
 # rc.d symlink (older installs pointed it at the SysV script directly,
 # which procd silently skips).
 install_procd_shim_k2() {
+    local shim_src="${INSTALL_DIR}/config/helixscreen-k2-procd-shim.sh"
     local shim_dest="/etc/init.d/helixscreen"
 
     if [ ! -x /etc/rc.common ]; then
@@ -2312,27 +2344,24 @@ install_procd_shim_k2() {
         return 0
     fi
 
-    log_info "Installing K2 procd boot shim..."
-    $SUDO tee "$shim_dest" >/dev/null <<'SHIM_EOF'
-# K2 procd shim — delegates to the SysV-style /etc/init.d/S99helixscreen.
-# Required because K2's procd boot iterator only invokes scripts with the
-# rc.common shebang AND a DEPEND directive; plain SysV scripts are silently
-# skipped at boot.
-START=99
-STOP=01
-DEPEND=done
+    if [ ! -f "$shim_src" ]; then
+        log_error "K2 procd shim source missing: $shim_src"
+        log_error "The release package may be incomplete."
+        log_error "Recovery: re-run the installer to download a fresh copy:"
+        log_error "  curl -fsSL https://releases.helixscreen.org/install.sh | bash"
+        return 1
+    fi
 
-boot()    { /etc/init.d/S99helixscreen start; }
-start()   { /etc/init.d/S99helixscreen start; }
-stop()    { /etc/init.d/S99helixscreen stop; }
-restart() { /etc/init.d/S99helixscreen restart; }
-status()  { /etc/init.d/S99helixscreen status; }
-SHIM_EOF
+    log_info "Installing K2 procd boot shim..."
+    $SUDO cp "$shim_src" "$shim_dest"
     $SUDO chmod +x "$shim_dest"
 
-    # Older installs symlinked /etc/rc.d/S99helixscreen directly to the SysV
-    # script, which procd skips. Drop those, then let rc.common's enable
-    # create fresh S99/K01 symlinks pointing at the shim.
+    # Older installs (and `make deploy-k2` before mk/cross.mk was fixed)
+    # symlinked /etc/rc.d/S99helixscreen directly to the SysV script,
+    # which procd skips at boot. Drop those, then let rc.common's `enable`
+    # create fresh S99/K01 symlinks pointing at the shim. Verify the rc.d
+    # entry before returning — `enable` exits 0 even on weird edge cases,
+    # and a silently-wrong symlink is the original bug we're fixing here.
     $SUDO rm -f /etc/rc.d/S99helixscreen /etc/rc.d/K01helixscreen
     if ! $SUDO "$shim_dest" enable; then
         log_warn "K2 procd shim: enable failed — UI will not autostart at boot"
@@ -2340,7 +2369,15 @@ SHIM_EOF
         return 1
     fi
 
-    log_success "Installed K2 procd shim at $shim_dest"
+    local rcd_target
+    rcd_target=$(readlink /etc/rc.d/S99helixscreen 2>/dev/null || true)
+    if [ "$rcd_target" != "../init.d/helixscreen" ]; then
+        log_error "K2 procd shim: /etc/rc.d/S99helixscreen -> '$rcd_target' (expected '../init.d/helixscreen')"
+        log_error "UI will not autostart at boot (see [L086])."
+        return 1
+    fi
+
+    log_success "Installed K2 procd shim at $shim_dest (boot symlink verified)"
 }
 
 install_service_snapmaker_u1() {
@@ -3015,7 +3052,10 @@ write_release_info() {
         return 0
     fi
 
-    # Determine platform-specific asset name
+    # Determine platform-specific asset name. Platforms without a dedicated
+    # release artifact (m1) borrow pi/pi32; pick the variant matching the
+    # device's userspace bitness so Moonraker self-update fetches a runnable
+    # binary instead of a 404.
     local asset_name="helixscreen-pi.zip"
     case "${PLATFORM:-}" in
         pi32)       asset_name="helixscreen-pi32.zip" ;;
@@ -3024,6 +3064,13 @@ write_release_info() {
         k1)         asset_name="helixscreen-k1.zip" ;;
         k1-dynamic) asset_name="helixscreen-k1-dynamic.zip" ;;
         k2)         asset_name="helixscreen-k2.zip" ;;
+        m1)
+            if [ "$(getconf LONG_BIT 2>/dev/null || echo)" = "32" ]; then
+                asset_name="helixscreen-pi32.zip"
+            else
+                asset_name="helixscreen-pi.zip"
+            fi
+            ;;
     esac
 
     log_info "Writing release_info.json (${version})..."

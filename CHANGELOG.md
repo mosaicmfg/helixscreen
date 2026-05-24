@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.99.70] - 2026-05-24
+
+Headline is **CFS support for Creality K1 / K1C / K1 Max** via the official Creality CFS firmware upgrade (>= v2.3.5.33) (prestonbrown/helixscreen#968) — the K1 firmware exposes a different `BOX_*` macro dialect than K2's `CR_BOX_*` primitives, so the AMS backend now picks the dialect at construction. Plus the rest of the CFS work: **full stock-parity envelope for load/unload/swap** with wipe-before-park, friendly translations for K2 motor init + cutter errors, and the missing K2 procd autostart shim. Also: an **installer hardening pass** (full release-tree validation before in-place update `rm`, Artillery M1 routed to the right pi/pi32 binary), a **`GcodeErrorRouter` extraction** with another L072 sweep and embedded-JSON extraction for `!!` notification lines, **abort/restart routed through `PrinterRecoveryService`** (surfaces recovery UX on stuck klippy), and a **live target trace on temperature graphs** with backfill across panel switches.
+
+### Added
+
+- **CFS support for K1 / K1C / K1 Max** (prestonbrown/helixscreen#968) — requires the official Creality CFS firmware upgrade (>= v2.3.5.33; not bundled with Guilouz / Simple AF / Guppy Mod). The upgrade exposes a plain `BOX_*` macro dialect (`BOX_EXTRUDE_MATERIAL`, `BOX_MATERIAL_FLUSH`, `BOX_CUT_MATERIAL`, etc.) — distinct from the K2's `CR_BOX_*` primitives. `AmsBackendCfs` picks the dialect at construction via `PrinterDetector::is_creality_k1()`; `load/unload/swap_gcode` helpers take a `CfsMacroVariant` arg so existing K2 call sites and tests stay unchanged. K1 envelope is shorter (no `BOX_SAVE_FAN`/`RESTORE_FAN`/`BOX_MODE_WAIT`). New `creality_k1_cfs` / `creality_k1c_cfs` / `creality_k1_max_cfs` database entries mirror the base K1 entries plus a high-confidence `^box$` heuristic — the picker shows "Creality K1C (with CFS)" when the upgrade is detected. K1 base entries unchanged.
+- **CFS full stock-parity envelope for load/unload/swap** — including nozzle wipe before park on load and swap, and a Reset CFS recovery action wired up for key840. `BOX_SET_TEMP` dropped in favor of best-effort unwind on error. Friendly translations added for K2 motor init + cutter errors.
+- **`GcodeErrorRouter` extracted from `application.cpp`** — Gcode error and `!!` notification routing now lives in its own component, with embedded JSON extracted from `!!` lines for richer error payloads.
+- **Live target trace on temperature graphs** — the dashed target line now tracks setpoint changes throughout a print, with segment-start risers, right-alignment, and a per-series target history buffer that backfills replay data so the overlay matches the mini-graph after a panel switch. Buffers allocate/free with their series, reallocate on `set_point_count`, zero on `clear`, and rollback cleanly on OOM (cascade-delete leak plugged). Backed by a new unit-tested target history segmenter.
+
+### Fixed
+
+- **Abort/restart routes via `PrinterRecoveryService`** — replaces bare `firmware_restart` / `services.restart` RPCs and surfaces the recovery flow when klippy is stuck.
+- **Installer validates full release tree before in-place update `rm`** (prestonbrown/helixscreen#970) — an incomplete tarball used to leave the device in a half-removed state; the validation gate prevents the destructive `rm` from firing if the new tree isn't fully intact.
+- **Artillery M1 downloads the correct pi/pi32 binary** (prestonbrown/helixscreen#970, prestonbrown/helixscreen#971) — installer was routing M1 hosts to the wrong asset.
+- **K2 busybox `wget` fallback documented** (prestonbrown/helixscreen#969) — installer instructions cover the K2's limited `wget` so users hit fewer download surprises.
+- **`reset_print_card_to_idle` callers route through `lv_async_call`** — closes remaining sync-deletion paths in the print-status reset flow.
+- **Embedded JSON extracted from `!!` notification lines** — error toasts/modals now pick up structured payloads instead of treating the whole line as plain text.
+- **Updater waits for Moonraker extraction to settle** before refreshing service units — eliminates a race where the post-install systemctl pass would run against partially-extracted files.
+- **`GcodeErrorRouter` callbacks routed through `AsyncLifetimeGuard`** ([L072]) — another bg-thread-to-UI safety pass on the notification path. Companion `RecoveryCtx` lifetime + modal dedup fixes also landed.
+- **LED panel auto-selects `output_pin` strips and gates UI on real controllability** — single-pin LEDs no longer leave the strip picker stranded and the UI hides controls that wouldn't do anything on the underlying hardware.
+- **Modal notification text no longer truncated** — only the toast variant truncates; modals show the full message.
+- **K2 boot autostart uses procd shim** ([L086]) — plain SysV `init.d` scripts were silently skipped by procd; the shim restores boot-time launch on dev deploys.
+- **Target history preserved when heater turns off** — temperature graph keeps the target trace visible after an Off command instead of flushing the prior history.
+- **CI submodule init retries to absorb GitHub Actions auth transients** — submodule clone flakiness no longer red-flags an otherwise-clean build.
+
+### Changed
+
+- **Nightly CI builds only on macOS and skips test execution** — cuts nightly wall-clock time; full test matrix still runs on PRs and release builds.
+
 ## [0.99.69] - 2026-05-23
 
 Headline is a **subscription regression fix from v0.99.68** — the Performance overlay's MCU `printer.objects.subscribe` was replacing the discovery subscription, so heater targets, print start, and progress updates stopped arriving on real hardware (Voron Trident + AFC bundle `9852XDXS`). Also: a **standalone fullscreen camera viewer** under Settings → Hardware, **AMS sensor toast suppression** extended to HH/AFC/AD5X IFS/CFS, **user-edited AD5X IFS slot color/material preserved** against firmware re-emission (prestonbrown/helixscreen#965), and a **friendlier installer banner** for non-Pi SBCs using the `pi` package.
@@ -3847,6 +3878,7 @@ Initial tagged release. Foundation for all subsequent development.
 - Automated GitHub Actions release pipeline
 - One-liner installation script with platform auto-detection
 
+[0.99.70]: https://github.com/prestonbrown/helixscreen/compare/v0.99.69...v0.99.70
 [0.99.69]: https://github.com/prestonbrown/helixscreen/compare/v0.99.68...v0.99.69
 [0.99.68]: https://github.com/prestonbrown/helixscreen/compare/v0.99.67...v0.99.68
 [0.99.67]: https://github.com/prestonbrown/helixscreen/compare/v0.99.66...v0.99.67
