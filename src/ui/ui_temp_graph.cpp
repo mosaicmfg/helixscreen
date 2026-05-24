@@ -599,14 +599,19 @@ static void draw_target_lines_cb(lv_event_t* e) {
         if (!meta->target_centi_buf || meta->target_head <= 0)
             continue;
 
-        // Project sample index → pixel X using the same spacing the chart uses
-        // for its actuals polyline. For point_count P, sample i maps to:
-        //   x = cx1 + i * (chart_width - 1) / (P - 1)        (P > 1)
-        //   x = cx1 + chart_width / 2                         (P == 1, centered)
+        // Project buffer index → pixel X. The chart in shift-mode renders the
+        // most recent sample at the right edge; until the buffer is full, the
+        // valid samples occupy visual positions [point_count - target_head,
+        // point_count - 1]. Our buffer stores left-aligned (index 0 = oldest),
+        // so map buffer index j to visual position (point_count - target_head + j)
+        // and project that to a pixel X.
+        const int head = meta->target_head;
+        const int visual_offset = graph->point_count - head;
         auto x_for_index = [&](int idx) -> int32_t {
             if (graph->point_count <= 1)
                 return cx1 + chart_width / 2;
-            return cx1 + (idx * (chart_width - 1)) / (graph->point_count - 1);
+            int visual_idx = visual_offset + idx;
+            return cx1 + (visual_idx * (chart_width - 1)) / (graph->point_count - 1);
         };
 
         auto y_for_centi = [&](int16_t centi) -> int32_t {
@@ -631,6 +636,24 @@ static void draw_target_lines_cb(lv_event_t* e) {
             meta->target_centi_buf, meta->target_head);
 
         for (const auto& seg : segments) {
+            // Vertical riser at segment start (target transitioned from 0 → value).
+            // Skip when the segment starts at buffer index 0 — that's the oldest
+            // visible sample, and we don't know whether target was 0 or 'value' before
+            // the visible window started. Drawing a riser there would be a lie.
+            if (seg.first > 0) {
+                int32_t riser_x = x_for_index(seg.first);
+                int32_t riser_y_top = y_for_centi(meta->target_centi_buf[seg.first]);
+                int32_t riser_y_bottom = y_for_centi(0); // baseline at 0°C
+                if (riser_y_bottom > cy2) riser_y_bottom = cy2;
+                if (riser_y_top < cy1) riser_y_top = cy1;
+                seg_dsc.p1.x = riser_x;
+                seg_dsc.p1.y = riser_y_bottom;
+                seg_dsc.p2.x = riser_x;
+                seg_dsc.p2.y = riser_y_top;
+                lv_draw_line(layer, &seg_dsc);
+            }
+
+            // Horizontal step segments between consecutive positive samples.
             for (int j = seg.first; j + 1 < seg.second; j++) {
                 seg_dsc.p1.x = x_for_index(j);
                 seg_dsc.p1.y = y_for_centi(meta->target_centi_buf[j]);
