@@ -48,6 +48,12 @@ class GcodeErrorRouter {
     GcodeErrorRouter(const GcodeErrorRouter&) = delete;
     GcodeErrorRouter& operator=(const GcodeErrorRouter&) = delete;
 
+    /// Splits a raw response line into translated `text` plus extracted
+    /// `out_code`. Static + side-effect free so the replay path can
+    /// reuse it without holding any router state. Public because tests
+    /// cover both the pure-JSON and embedded-JSON shapes K2 emits.
+    static void clean_error_text(std::string& text, std::string& out_code);
+
   private:
     /// Live `notify_gcode_response` handler — runs on the WS thread.
     void on_notify_gcode_response(const nlohmann::json& msg);
@@ -61,11 +67,6 @@ class GcodeErrorRouter {
     /// both the live path and the replay path (replay only feeds `!!`
     /// lines; this still handles `Error:` for the live caller).
     void process_line(const std::string& line);
-
-    /// Splits a raw response line into translated `text` plus extracted
-    /// `out_code`. Static + side-effect free so the replay path can
-    /// reuse it without holding any router state.
-    static void clean_error_text(std::string& text, std::string& out_code);
 
     /// Bytes-only truncation for transient toasts. Modals always get the
     /// full text — they wrap to multiple lines.

@@ -127,33 +127,75 @@ GcodeErrorRouter::~GcodeErrorRouter() {
 void GcodeErrorRouter::clean_error_text(std::string& text, std::string& out_code) {
     out_code.clear();
 
-    // JSON-shape errors carry a key code we can translate via the CFS
-    // decoder. Falls back to the raw `msg` when the code isn't in the
-    // table; falls through entirely on parse failure.
-    if (!text.empty() && text[0] == '{') {
-        try {
-            auto j = nlohmann::json::parse(text);
-            if (j.contains("code") && j["code"].is_string()) {
-                out_code = j["code"].get<std::string>();
-                nlohmann::json values = nlohmann::json::array();
-                if (j.contains("values")) {
-                    values = j["values"];
+    // K2's Klipper builds emit errors in two shapes:
+    //   1. Pure JSON:     `{"code":"key849","msg":"...","values":[...]}`
+    //   2. Embedded JSON: `Internal error during connect: !{"code":"key298",...}`
+    //      (observed K2 Plus 2026-05-24 when klipper_mcu shutdown)
+    // Scan for the first `{"code":` anywhere in the line. If found, parse
+    // from there; otherwise fall through to the heuristic rewrites.
+    auto json_start = text.find("{\"code\"");
+    if (json_start != std::string::npos) {
+        // Brace-balance forward from json_start to find the matching close
+        // brace, ignoring `{`/`}` inside string literals. nlohmann::parse
+        // requires whole-input — it won't ignore trailing garbage — so we
+        // extract just [json_start, obj_end) before parsing.
+        size_t i = json_start;
+        int depth = 0;
+        bool in_string = false;
+        bool escape = false;
+        size_t obj_end = std::string::npos;
+        for (; i < text.size(); ++i) {
+            char c = text[i];
+            if (in_string) {
+                if (escape) {
+                    escape = false;
+                } else if (c == '\\') {
+                    escape = true;
+                } else if (c == '"') {
+                    in_string = false;
                 }
+                continue;
+            }
+            if (c == '"') {
+                in_string = true;
+            } else if (c == '{') {
+                ++depth;
+            } else if (c == '}') {
+                if (--depth == 0) {
+                    obj_end = i + 1;
+                    break;
+                }
+            }
+        }
+
+        if (obj_end != std::string::npos) {
+            std::string json_str = text.substr(json_start, obj_end - json_start);
+            try {
+                auto j = nlohmann::json::parse(json_str);
+                if (j.contains("code") && j["code"].is_string()) {
+                    out_code = j["code"].get<std::string>();
+                    nlohmann::json values = nlohmann::json::array();
+                    if (j.contains("values")) {
+                        values = j["values"];
+                    }
 #if HELIX_HAS_CFS
-                if (auto friendly = printer::CfsErrorDecoder::lookup_message_with_values(
-                        out_code, values)) {
-                    text = friendly->first + ". " + friendly->second;
-                    return;
-                }
+                    if (auto friendly =
+                            printer::CfsErrorDecoder::lookup_message_with_values(
+                                out_code, values)) {
+                        text = friendly->first + ". " + friendly->second;
+                        return;
+                    }
 #else
-                (void)values;
+                    (void)values;
 #endif
+                }
+                if (j.contains("msg") && j["msg"].is_string()) {
+                    text = j["msg"].get<std::string>();
+                }
+            } catch (...) {
+                // Malformed JSON despite the {"code" prefix — leave text
+                // untouched and fall through to heuristic patterns.
             }
-            if (j.contains("msg") && j["msg"].is_string()) {
-                text = j["msg"].get<std::string>();
-            }
-        } catch (...) {
-            // Not valid JSON — use as-is
         }
     }
 
