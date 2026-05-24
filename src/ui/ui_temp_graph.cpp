@@ -1396,6 +1396,24 @@ void ui_temp_graph_show_target(ui_temp_graph_t* graph, int series_id, bool show)
     ui_temp_graph_set_series_target(graph, series_id, meta->target_temp, show);
 }
 
+// Stage a new current target without pushing into the history buffer.
+// The buffer push happens on the next actuals sample (push_target_sample).
+void ui_temp_graph_set_current_target(ui_temp_graph_t* graph, int series_id, float target,
+                                      bool show) {
+    ui_temp_series_meta_t* meta = find_series(graph, series_id);
+    if (!meta) {
+        spdlog::error("[TempGraph] Series {} not found", series_id);
+        return;
+    }
+
+    meta->target_temp = target;
+    meta->show_target = show;
+    lv_obj_invalidate(graph->chart);
+
+    spdlog::trace("[TempGraph] Series {} current target staged: {:.1f}°C ({})", series_id, target,
+                  show ? "shown" : "hidden");
+}
+
 // Set Y-axis temperature range
 void ui_temp_graph_set_temp_range(ui_temp_graph_t* graph, float min, float max) {
     if (!graph || !graph->chart || min >= max) {

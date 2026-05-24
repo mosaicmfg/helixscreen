@@ -1043,3 +1043,40 @@ TEST_CASE_METHOD(TempGraphTestFixture,
 
     ui_temp_graph_destroy(g);
 }
+
+TEST_CASE_METHOD(TempGraphTestFixture,
+                 "ui_temp_graph: set_current_target stages without pushing to buffer",
+                 "[temp_graph][target_history]") {
+    ui_temp_graph_t* g = ui_temp_graph_create(screen);
+    REQUIRE(g != nullptr);
+
+    int id = ui_temp_graph_add_series(g, "N", lv_color_hex(0xFF0000));
+    REQUIRE(id >= 0);
+
+    auto get_meta = [&]() -> ui_temp_series_meta_t* {
+        for (int i = 0; i < UI_TEMP_GRAPH_MAX_SERIES; i++) {
+            if (g->series_meta[i].chart_series && g->series_meta[i].id == id)
+                return &g->series_meta[i];
+        }
+        return nullptr;
+    };
+    auto* m = get_meta();
+    REQUIRE(m != nullptr);
+
+    // Set current target three times back-to-back (simulating multiple observer fires
+    // between actuals samples). The buffer must remain untouched.
+    ui_temp_graph_set_current_target(g, id, 100.0f, true);
+    ui_temp_graph_set_current_target(g, id, 150.0f, true);
+    ui_temp_graph_set_current_target(g, id, 220.0f, true);
+
+    REQUIRE(m->target_temp == Catch::Approx(220.0f));
+    REQUIRE(m->show_target == true);
+    REQUIRE(m->target_head == 0); // No buffer pushes.
+
+    // Now one actuals push should capture the latest (220), not any intermediate.
+    ui_temp_graph_update_series(g, id, 50.0f);
+    REQUIRE(m->target_head == 1);
+    REQUIRE(m->target_centi_buf[0] == 2200);
+
+    ui_temp_graph_destroy(g);
+}
