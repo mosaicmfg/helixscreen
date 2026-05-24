@@ -1032,13 +1032,11 @@ void ui_temp_graph_destroy(ui_temp_graph_t* graph) {
         lv_obj_t* chart = graph_ptr->chart;
         crash_handler::breadcrumb::note("tg", "destroy_async", reinterpret_cast<long>(chart));
 
-        // Remove all series and free per-series target buffers.
+        // Remove all series (chart-side cleanup).
         for (int i = 0; i < UI_TEMP_GRAPH_MAX_SERIES; i++) {
             if (graph_ptr->series_meta[i].chart_series) {
                 lv_chart_remove_series(chart, graph_ptr->series_meta[i].chart_series);
             }
-            delete[] graph_ptr->series_meta[i].target_centi_buf;
-            graph_ptr->series_meta[i].target_centi_buf = nullptr;
         }
 
         // Sever every callback that captured `graph` as user_data so the deferred
@@ -1078,6 +1076,15 @@ void ui_temp_graph_destroy(ui_temp_graph_t* graph) {
         // Sync lv_obj_del here corrupts LVGL's global event list when other queued
         // entries follow — see L081 / prestonbrown/helixscreen#867 cluster.
         lv_obj_delete_async(chart);
+    }
+
+    // Free per-series target buffers unconditionally — runs even when the chart
+    // was deleted by LVGL parent cascade before destroy() (chart_delete_cb null'd
+    // graph->chart, so the if-block above is skipped). Without this the buffers
+    // leak in the rebuild() path used by TempGraphController on reconnect.
+    for (int i = 0; i < UI_TEMP_GRAPH_MAX_SERIES; i++) {
+        delete[] graph_ptr->series_meta[i].target_centi_buf;
+        graph_ptr->series_meta[i].target_centi_buf = nullptr;
     }
 
     // graph_ptr automatically freed via ~unique_ptr()
@@ -1146,6 +1153,8 @@ int ui_temp_graph_add_series(ui_temp_graph_t* graph, const char* name, lv_color_
     if (!meta->target_centi_buf) {
         spdlog::error("[TempGraph] Failed to allocate target buffer for series '{}'", name);
         lv_chart_remove_series(graph->chart, ser);
+        memset(meta, 0, sizeof(ui_temp_series_meta_t));
+        meta->chart_series = nullptr;
         return -1;
     }
 

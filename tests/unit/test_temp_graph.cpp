@@ -849,3 +849,49 @@ TEST_CASE_METHOD(TempGraphTestFixture, "Over-range points stored at full precisi
 
     ui_temp_graph_destroy(graph);
 }
+
+// ============================================================================
+// Target History Buffer Lifecycle Tests
+// ============================================================================
+
+TEST_CASE_METHOD(TempGraphTestFixture, "ui_temp_graph: target buffer allocated on add_series",
+                 "[temp_graph][target_history]") {
+    ui_temp_graph_t* g = ui_temp_graph_create(screen);
+    REQUIRE(g != nullptr);
+
+    int id = ui_temp_graph_add_series(g, "Nozzle", lv_color_hex(0xFF4444));
+    REQUIRE(id >= 0);
+
+    bool found = false;
+    for (int i = 0; i < UI_TEMP_GRAPH_MAX_SERIES; i++) {
+        if (g->series_meta[i].chart_series && g->series_meta[i].id == id) {
+            REQUIRE(g->series_meta[i].target_centi_buf != nullptr);
+            REQUIRE(g->series_meta[i].target_head == 0);
+            for (int j = 0; j < g->point_count; j++) {
+                REQUIRE(g->series_meta[i].target_centi_buf[j] == 0);
+            }
+            found = true;
+            break;
+        }
+    }
+    REQUIRE(found);
+
+    ui_temp_graph_destroy(g);
+}
+
+TEST_CASE_METHOD(TempGraphTestFixture, "ui_temp_graph: target buffer freed on remove_series",
+                 "[temp_graph][target_history]") {
+    ui_temp_graph_t* g = ui_temp_graph_create(screen);
+    REQUIRE(g != nullptr);
+
+    int id = ui_temp_graph_add_series(g, "Bed", lv_color_hex(0x44FF44));
+    REQUIRE(id >= 0);
+
+    ui_temp_graph_remove_series(g, id);
+
+    for (int i = 0; i < UI_TEMP_GRAPH_MAX_SERIES; i++) {
+        REQUIRE(g->series_meta[i].target_centi_buf == nullptr);
+    }
+
+    ui_temp_graph_destroy(g);
+}
