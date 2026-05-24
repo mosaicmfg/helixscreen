@@ -1366,7 +1366,6 @@ void ui_temp_graph_set_series_data_with_targets(ui_temp_graph_t* graph, int seri
 }
 
 // Clear all data
-// Clear all data
 void ui_temp_graph_clear(ui_temp_graph_t* graph) {
     if (!graph || !graph->chart)
         return;
