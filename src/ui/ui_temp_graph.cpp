@@ -1208,6 +1208,23 @@ void ui_temp_graph_show_series(ui_temp_graph_t* graph, int series_id, bool visib
                   visible ? "shown" : "hidden");
 }
 
+// Helper: push current target into the parallel buffer, mirroring chart's shift semantics.
+// Writes the latest meta->target_temp (converted to centi) at position [target_head].
+// When buffer is full (target_head == point_count), shifts entries left by 1 and writes
+// at [point_count - 1]. Called from update_series* immediately after lv_chart_set_next_value.
+static void push_target_sample(ui_temp_graph_t* graph, ui_temp_series_meta_t* meta) {
+    if (!meta->target_centi_buf || graph->point_count <= 0)
+        return;
+    int16_t v = static_cast<int16_t>(meta->target_temp * TEMP_SCALE);
+    if (meta->target_head < graph->point_count) {
+        meta->target_centi_buf[meta->target_head++] = v;
+    } else {
+        memmove(meta->target_centi_buf, meta->target_centi_buf + 1,
+                static_cast<size_t>(graph->point_count - 1) * sizeof(int16_t));
+        meta->target_centi_buf[graph->point_count - 1] = v;
+    }
+}
+
 // Add a single temperature point (push mode)
 void ui_temp_graph_update_series(ui_temp_graph_t* graph, int series_id, float temp) {
     ui_temp_series_meta_t* meta = find_series(graph, series_id);
@@ -1219,6 +1236,9 @@ void ui_temp_graph_update_series(ui_temp_graph_t* graph, int series_id, float te
     // Add point to series (shifts old data left, stored as deci-degrees)
     lv_chart_set_next_value(graph->chart, meta->chart_series,
                             static_cast<int32_t>(temp * TEMP_SCALE));
+
+    // Mirror the push into the parallel target buffer.
+    push_target_sample(graph, meta);
 
     // Update max visible temperature for gradient rendering
     update_max_visible_temp(graph);
@@ -1262,6 +1282,9 @@ void ui_temp_graph_update_series_with_time(ui_temp_graph_t* graph, int series_id
     // Add point to series (shifts old data left, stored as deci-degrees)
     lv_chart_set_next_value(graph->chart, meta->chart_series,
                             static_cast<int32_t>(temp * TEMP_SCALE));
+
+    // Mirror the push into the parallel target buffer.
+    push_target_sample(graph, meta);
 
     // Update max visible temperature for gradient rendering
     update_max_visible_temp(graph);

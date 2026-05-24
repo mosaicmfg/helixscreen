@@ -948,3 +948,98 @@ TEST_CASE_METHOD(TempGraphTestFixture,
 
     ui_temp_graph_destroy(g);
 }
+
+TEST_CASE_METHOD(TempGraphTestFixture,
+                 "ui_temp_graph: update_series pushes current target into buffer",
+                 "[temp_graph][target_history]") {
+    ui_temp_graph_t* g = ui_temp_graph_create(screen);
+    REQUIRE(g != nullptr);
+
+    int id = ui_temp_graph_add_series(g, "Nozzle", lv_color_hex(0xFF4444));
+    REQUIRE(id >= 0);
+
+    auto get_meta = [&]() -> ui_temp_series_meta_t* {
+        for (int i = 0; i < UI_TEMP_GRAPH_MAX_SERIES; i++) {
+            if (g->series_meta[i].chart_series && g->series_meta[i].id == id)
+                return &g->series_meta[i];
+        }
+        return nullptr;
+    };
+
+    // Heater off → push three samples → all target slots should be 0.
+    ui_temp_graph_update_series(g, id, 25.0f);
+    ui_temp_graph_update_series(g, id, 26.0f);
+    ui_temp_graph_update_series(g, id, 27.0f);
+
+    auto* m = get_meta();
+    REQUIRE(m != nullptr);
+    REQUIRE(m->target_head == 3);
+    REQUIRE(m->target_centi_buf[0] == 0);
+    REQUIRE(m->target_centi_buf[1] == 0);
+    REQUIRE(m->target_centi_buf[2] == 0);
+
+    // Set target then push two more — those slots should record 220.0 (centi = 2200)
+    m->target_temp = 220.0f;
+    m->show_target = true;
+    ui_temp_graph_update_series(g, id, 100.0f);
+    ui_temp_graph_update_series(g, id, 150.0f);
+
+    REQUIRE(m->target_head == 5);
+    REQUIRE(m->target_centi_buf[3] == 2200);
+    REQUIRE(m->target_centi_buf[4] == 2200);
+
+    // Turn heater off → next push records 0 (segment break sentinel)
+    m->target_temp = 0.0f;
+    ui_temp_graph_update_series(g, id, 145.0f);
+
+    REQUIRE(m->target_head == 6);
+    REQUIRE(m->target_centi_buf[5] == 0);
+
+    ui_temp_graph_destroy(g);
+}
+
+TEST_CASE_METHOD(TempGraphTestFixture,
+                 "ui_temp_graph: target buffer shifts left when full",
+                 "[temp_graph][target_history]") {
+    ui_temp_graph_t* g = ui_temp_graph_create(screen);
+    REQUIRE(g != nullptr);
+
+    // Shrink to a tractable size for the test.
+    ui_temp_graph_set_point_count(g, 4);
+
+    int id = ui_temp_graph_add_series(g, "X", lv_color_hex(0x123456));
+    REQUIRE(id >= 0);
+
+    auto get_meta = [&]() -> ui_temp_series_meta_t* {
+        for (int i = 0; i < UI_TEMP_GRAPH_MAX_SERIES; i++) {
+            if (g->series_meta[i].chart_series && g->series_meta[i].id == id)
+                return &g->series_meta[i];
+        }
+        return nullptr;
+    };
+
+    auto* m = get_meta();
+    REQUIRE(m != nullptr);
+    m->show_target = true;
+
+    // Push 4 samples with increasing target values.
+    m->target_temp = 10.0f; ui_temp_graph_update_series(g, id, 1.0f);
+    m->target_temp = 20.0f; ui_temp_graph_update_series(g, id, 2.0f);
+    m->target_temp = 30.0f; ui_temp_graph_update_series(g, id, 3.0f);
+    m->target_temp = 40.0f; ui_temp_graph_update_series(g, id, 4.0f);
+
+    REQUIRE(m->target_head == 4);
+    REQUIRE(m->target_centi_buf[0] == 100);
+    REQUIRE(m->target_centi_buf[3] == 400);
+
+    // Push 5th → oldest shifts off
+    m->target_temp = 50.0f; ui_temp_graph_update_series(g, id, 5.0f);
+
+    REQUIRE(m->target_head == 4); // capped
+    REQUIRE(m->target_centi_buf[0] == 200); // was 100, shifted off
+    REQUIRE(m->target_centi_buf[1] == 300);
+    REQUIRE(m->target_centi_buf[2] == 400);
+    REQUIRE(m->target_centi_buf[3] == 500);
+
+    ui_temp_graph_destroy(g);
+}
