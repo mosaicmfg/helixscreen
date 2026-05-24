@@ -178,8 +178,8 @@ uint32_t TempGraphWidget::features_for_size(int colspan, int rowspan) {
     uint32_t features = TEMP_GRAPH_FEATURE_LINES | TEMP_GRAPH_FEATURE_GRADIENTS;
 
     if (colspan >= 2 || rowspan >= 2) {
-        // Medium: add target lines
-        features |= TEMP_GRAPH_FEATURE_TARGET_LINES;
+        // Medium: add target lines (with history trace — time-varying dashed line)
+        features |= TEMP_GRAPH_FEATURE_TARGET_LINES | TEMP_GRAPH_FEATURE_TARGET_HISTORY;
     }
 
     if (rowspan >= 2) {

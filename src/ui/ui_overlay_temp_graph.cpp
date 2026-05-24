@@ -176,7 +176,8 @@ void TempGraphOverlay::on_activate() {
         cfg.axis_size = "sm";
         cfg.initial_features = TEMP_GRAPH_FEATURE_LINES | TEMP_GRAPH_FEATURE_TARGET_LINES |
                                TEMP_GRAPH_FEATURE_Y_AXIS | TEMP_GRAPH_FEATURE_X_AXIS |
-                               TEMP_GRAPH_FEATURE_GRADIENTS;
+                               TEMP_GRAPH_FEATURE_GRADIENTS |
+                               TEMP_GRAPH_FEATURE_TARGET_HISTORY;
         cfg.series = std::move(specs);
         controller_ = std::make_unique<helix::TempGraphController>(graph_container_, cfg);
 

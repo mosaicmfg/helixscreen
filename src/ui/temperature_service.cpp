@@ -1301,7 +1301,7 @@ void TemperatureService::setup_mini_combined_graph(lv_obj_t* container) {
     config.axis_size = "xs";
     uint32_t features = TEMP_GRAPH_FEATURE_LINES | TEMP_GRAPH_FEATURE_TARGET_LINES |
                         TEMP_GRAPH_FEATURE_Y_AXIS | TEMP_GRAPH_FEATURE_X_AXIS |
-                        TEMP_GRAPH_FEATURE_GRADIENTS;
+                        TEMP_GRAPH_FEATURE_GRADIENTS | TEMP_GRAPH_FEATURE_TARGET_HISTORY;
     // At MICRO/TINY the graph is pinned to ~100px — the X-axis time labels eat
     // roughly a fifth of that for minimal value, so drop them to give the data
     // lines more room to breathe.
