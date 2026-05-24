@@ -520,9 +520,11 @@ static void draw_legend_cb(lv_event_t* e) {
     }
 }
 
-// Draw custom target temperature lines constrained to the content area.
-// LVGL's built-in cursor drawing extends across the full widget bounds (including Y-axis labels),
-// so we hide those (LV_OPA_TRANSP) and draw our own dashed lines here.
+// Draw target lines: time-varying step trace (TARGET_HISTORY on, default) or
+// a single horizontal dashed line at the current setpoint (TARGET_HISTORY off).
+// Constrained to the content area — LVGL's built-in cursor drawing extends
+// across the full widget bounds (including Y-axis labels), so we hide those
+// and draw our own.
 static void draw_target_lines_cb(lv_event_t* e) {
     lv_obj_t* chart = lv_event_get_target_obj(e);
     ui_temp_graph_t* graph = static_cast<ui_temp_graph_t*>(lv_event_get_user_data(e));
@@ -549,40 +551,116 @@ static void draw_target_lines_cb(lv_event_t* e) {
     int32_t cx2 = obj_coords.x2 - pad_right;
     int32_t cy1 = obj_coords.y1 + pad_top;
     int32_t cy2 = obj_coords.y2 - pad_bottom;
+    int32_t chart_width = cx2 - cx1;
     int32_t chart_height = cy2 - cy1;
-    if (chart_height <= 0)
+    if (chart_height <= 0 || chart_width <= 0)
         return;
+
+    bool history_mode = (graph->features & TEMP_GRAPH_FEATURE_TARGET_HISTORY) != 0;
 
     for (int i = 0; i < UI_TEMP_GRAPH_MAX_SERIES; i++) {
         ui_temp_series_meta_t* meta = &graph->series_meta[i];
         if (!meta->chart_series || !meta->visible || !meta->show_target)
             continue;
 
-        // Compute pixel Y from target temperature
-        int32_t content_y =
-            chart_height - lv_map(static_cast<int32_t>(meta->target_temp * TEMP_SCALE),
-                                  static_cast<int32_t>(graph->min_temp * TEMP_SCALE),
-                                  static_cast<int32_t>(graph->max_temp * TEMP_SCALE), 0,
-                                  chart_height);
-        int32_t abs_y = cy1 + content_y;
+        lv_color_t muted = mute_color(meta->color, LV_OPA_50, graph->cached_graph_bg);
 
-        // Skip if outside content area
-        if (abs_y < cy1 || abs_y > cy2)
+        // -----------------------------------------------------------------
+        // Legacy horizontal-line mode (fallback when TARGET_HISTORY is off)
+        // -----------------------------------------------------------------
+        if (!history_mode) {
+            int32_t content_y =
+                chart_height - lv_map(static_cast<int32_t>(meta->target_temp * TEMP_SCALE),
+                                      static_cast<int32_t>(graph->min_temp * TEMP_SCALE),
+                                      static_cast<int32_t>(graph->max_temp * TEMP_SCALE), 0,
+                                      chart_height);
+            int32_t abs_y = cy1 + content_y;
+            if (abs_y < cy1 || abs_y > cy2)
+                continue;
+
+            lv_draw_line_dsc_t line_dsc;
+            lv_draw_line_dsc_init(&line_dsc);
+            line_dsc.base.layer = layer;
+            line_dsc.color = muted;
+            line_dsc.width = 1;
+            line_dsc.dash_width = 6;
+            line_dsc.dash_gap = 4;
+            line_dsc.p1.x = cx1;
+            line_dsc.p1.y = abs_y;
+            line_dsc.p2.x = cx2;
+            line_dsc.p2.y = abs_y;
+            lv_draw_line(layer, &line_dsc);
+            continue;
+        }
+
+        // -----------------------------------------------------------------
+        // History mode — polyline of target_centi_buf samples with breaks
+        // -----------------------------------------------------------------
+        if (!meta->target_centi_buf || meta->target_head <= 0)
             continue;
 
-        lv_draw_line_dsc_t line_dsc;
-        lv_draw_line_dsc_init(&line_dsc);
-        line_dsc.base.layer = layer;
-        line_dsc.color = mute_color(meta->color, LV_OPA_50, graph->cached_graph_bg);
-        line_dsc.width = 1;
-        line_dsc.dash_width = 6;
-        line_dsc.dash_gap = 4;
-        line_dsc.p1.x = cx1;
-        line_dsc.p1.y = abs_y;
-        line_dsc.p2.x = cx2;
-        line_dsc.p2.y = abs_y;
+        // Project sample index → pixel X using the same spacing the chart uses
+        // for its actuals polyline. For point_count P, sample i maps to:
+        //   x = cx1 + i * (chart_width - 1) / (P - 1)        (P > 1)
+        //   x = cx1 + chart_width / 2                         (P == 1, centered)
+        auto x_for_index = [&](int idx) -> int32_t {
+            if (graph->point_count <= 1)
+                return cx1 + chart_width / 2;
+            return cx1 + (idx * (chart_width - 1)) / (graph->point_count - 1);
+        };
 
-        lv_draw_line(layer, &line_dsc);
+        auto y_for_centi = [&](int16_t centi) -> int32_t {
+            int32_t content_y =
+                chart_height - lv_map(static_cast<int32_t>(centi),
+                                      static_cast<int32_t>(graph->min_temp * TEMP_SCALE),
+                                      static_cast<int32_t>(graph->max_temp * TEMP_SCALE), 0,
+                                      chart_height);
+            return cy1 + content_y;
+        };
+
+        // Walk segments and draw dashed line between consecutive points within a segment.
+        lv_draw_line_dsc_t seg_dsc;
+        lv_draw_line_dsc_init(&seg_dsc);
+        seg_dsc.base.layer = layer;
+        seg_dsc.color = muted;
+        seg_dsc.width = 1;
+        seg_dsc.dash_width = 6;
+        seg_dsc.dash_gap = 4;
+
+        auto segments = helix::temp_graph_internal::segment_target_buf(
+            meta->target_centi_buf, meta->target_head);
+
+        for (const auto& seg : segments) {
+            for (int j = seg.first; j + 1 < seg.second; j++) {
+                seg_dsc.p1.x = x_for_index(j);
+                seg_dsc.p1.y = y_for_centi(meta->target_centi_buf[j]);
+                seg_dsc.p2.x = x_for_index(j + 1);
+                seg_dsc.p2.y = y_for_centi(meta->target_centi_buf[j + 1]);
+                lv_draw_line(layer, &seg_dsc);
+            }
+        }
+
+        // Accent tick: short solid horizontal hash in the series' full color
+        // at the rightmost sample with target > 0. Communicates "this is the
+        // current setpoint" without re-introducing a full-width horizontal line.
+        if (!segments.empty()) {
+            int last_idx = segments.back().second - 1;
+            int16_t last_centi = meta->target_centi_buf[last_idx];
+            int32_t tick_y = y_for_centi(last_centi);
+            int32_t tick_x = x_for_index(last_idx);
+            if (tick_y >= cy1 && tick_y <= cy2) {
+                lv_draw_line_dsc_t tick_dsc;
+                lv_draw_line_dsc_init(&tick_dsc);
+                tick_dsc.base.layer = layer;
+                tick_dsc.color = meta->color; // full color, not muted
+                tick_dsc.width = 2;
+                tick_dsc.p1.x = tick_x - 2;
+                tick_dsc.p1.y = tick_y;
+                tick_dsc.p2.x = tick_x + 2;
+                tick_dsc.p2.y = tick_y;
+                lv_draw_line(layer, &tick_dsc);
+            }
+        }
     }
 }
 
