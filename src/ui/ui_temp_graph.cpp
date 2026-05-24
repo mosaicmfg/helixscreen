@@ -1486,6 +1486,10 @@ void ui_temp_graph_set_series_data(ui_temp_graph_t* graph, int series_id, const 
 
     // values automatically freed via ~unique_ptr()
 
+    // Mark as initialized: any subsequent update_series_with_time must NOT wipe the
+    // chart via the "backfill from first sample" path — we just populated it.
+    meta->first_value_received = true;
+
     lv_chart_refresh(graph->chart);
 
     // Update max visible temperature for gradient rendering
@@ -1524,10 +1528,39 @@ void ui_temp_graph_set_series_data_with_targets(ui_temp_graph_t* graph, int seri
                    static_cast<size_t>(graph->point_count - points_to_copy) * sizeof(int16_t));
         }
         meta->target_head = points_to_copy;
+
+        // Pre-stage current target so the next push_target_sample (from a live
+        // observer's update_series call) writes the correct value, not stale 0.
+        // Without this, the next sample punches a 0 gap between the last replayed
+        // target and the next live target, fragmenting the trace into two segments.
+        if (points_to_copy > 0) {
+            meta->target_temp = targets[points_to_copy - 1];
+        }
     }
 
     spdlog::trace("[TempGraph] Series {} '{}' data+targets set ({} points)", series_id,
                   meta->name, points_to_copy);
+}
+
+// Set X-axis timestamp tracking fields directly (no chart-buffer side effects).
+// Mirror of the X-axis update logic in ui_temp_graph_update_series_with_time,
+// but bulk-form for replay paths that just called set_series_data*.
+void ui_temp_graph_set_axis_timestamps(ui_temp_graph_t* graph, int64_t first_ts_ms,
+                                       int64_t last_ts_ms, int count) {
+    if (!graph || count <= 0)
+        return;
+
+    graph->latest_point_time_ms = last_ts_ms;
+    graph->visible_point_count = count;
+
+    if (count >= graph->point_count) {
+        // Buffer is full; left edge is one full period before the right edge.
+        // Matches update_series_with_time's full-buffer fallback (1 sample/sec).
+        graph->first_point_time_ms =
+            last_ts_ms - static_cast<int64_t>(graph->point_count - 1) * 1000;
+    } else {
+        graph->first_point_time_ms = first_ts_ms;
+    }
 }
 
 // Clear all data

@@ -403,18 +403,22 @@ void TempGraphController::backfill_history() {
         }
 
         // Replay both buffers via the dedicated parallel-array API. This also
-        // refreshes the chart and updates max_visible_temp.
+        // refreshes the chart and updates max_visible_temp. set_series_data marks
+        // first_value_received=true so the next live update_series_with_time does
+        // not wipe the just-populated buffer via lv_chart_set_all_values.
         ui_temp_graph_set_series_data_with_targets(graph_, s.series_id, temps.data(),
                                                    targets.data(),
                                                    static_cast<int>(samples.size()));
 
-        // Drive update_series_with_time once for the most recent sample so the
-        // X-axis timestamp tracking (first_point_time_ms / latest_point_time_ms)
-        // is populated — set_series_data does not update those fields.
+        // Populate X-axis timestamp tracking directly. We deliberately do NOT call
+        // update_series_with_time here: that would push another sample onto the
+        // chart (duplicating the last historical sample) and call push_target_sample
+        // which would corrupt the just-replayed target buffer with the staged
+        // meta->target_temp at position N. set_axis_timestamps is side-effect-free.
         const auto& last = samples.back();
-        ui_temp_graph_update_series_with_time(graph_, s.series_id,
-                                              centi_to_degrees_f(last.temp_centi),
-                                              last.timestamp_ms);
+        const auto& first = samples.front();
+        ui_temp_graph_set_axis_timestamps(graph_, first.timestamp_ms, last.timestamp_ms,
+                                          static_cast<int>(samples.size()));
 
         // Stage the latest target for the accent tick + next-sample push.
         if (s.show_target) {

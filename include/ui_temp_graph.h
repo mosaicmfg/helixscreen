@@ -315,6 +315,24 @@ void ui_temp_graph_set_series_data_with_targets(ui_temp_graph_t* graph, int seri
                                                 int count);
 
 /**
+ * Set X-axis timestamp tracking fields directly (graph-level, no chart-buffer side
+ * effects).
+ *
+ * Use after a bulk replay via set_series_data / set_series_data_with_targets to
+ * populate first_point_time_ms / latest_point_time_ms / visible_point_count without
+ * the unwanted side effects of update_series_with_time (which would push another
+ * sample and — when first_value_received was false — wipe the chart via
+ * lv_chart_set_all_values).
+ *
+ * @param graph        Graph instance
+ * @param first_ts_ms  Timestamp of oldest replayed sample (left edge)
+ * @param last_ts_ms   Timestamp of newest replayed sample (right edge)
+ * @param count        Number of samples replayed
+ */
+void ui_temp_graph_set_axis_timestamps(ui_temp_graph_t* graph, int64_t first_ts_ms,
+                                       int64_t last_ts_ms, int count);
+
+/**
  * Configuration API
  */
 
