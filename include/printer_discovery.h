@@ -242,10 +242,23 @@ class PrinterDiscovery {
                 has_mmu_ = true;
                 mmu_type_ = AmsType::AFC;
             }
-            // CFS detection (Creality Filament System — K2 series)
+            // CFS detection (Creality Filament System — K2 series only).
+            // The K1/K1C "official CFS upgrade" also publishes a `box` Klipper
+            // object, but its firmware uses a different macro set than the K2 —
+            // emitting K2's CR_BOX_PRE_OPT/CR_BOX_EXTRUDE/CR_BOX_WASTE/etc. at it
+            // produces a stream of `key61 Unknown command` errors (#968). We
+            // don't yet have the K1 CFS macro names mapped, so refuse to enable
+            // the CFS backend on K1 platforms rather than ship bad gcode.
             else if (name == "box") {
-                has_mmu_ = true;
-                mmu_type_ = AmsType::CFS;
+                if (PrinterDetector::is_creality_k1()) {
+                    spdlog::warn(
+                        "[PrinterDiscovery] 'box' Klipper object detected on a K1-series "
+                        "printer — the K1 CFS upgrade uses a different macro set than the "
+                        "K2 (#968) and is not yet supported. CFS backend disabled.");
+                } else {
+                    has_mmu_ = true;
+                    mmu_type_ = AmsType::CFS;
+                }
             }
             // ACE detection (Anycubic ACE Pro — ValgACE/BunnyACE/DuckACE Klipper drivers)
             else if (name == "ace" && !has_mmu_) {

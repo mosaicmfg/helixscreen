@@ -195,6 +195,11 @@ Installs to `/usr/data/helixscreen/`, boot service at `/etc/init.d/S99helixscree
 wget -O - http://dl.helixscreen.org/install.sh | sh
 ```
 
+> **If you see `-ash: wget: not found` or `-ash: curl: not found`:** some K2 firmware variants (notably newer Tina / OpenWrt 21.02 builds on the K2 Plus) ship without `wget` and `curl` in `PATH`, even though the BusyBox `wget` applet is still inside the BusyBox binary. Invoke it directly:
+> ```bash
+> busybox wget -O - http://dl.helixscreen.org/install.sh | sh
+> ```
+
 **What's different from K1:**
 - ARM processor (Allwinner, not MIPS) — standard cross-compilation
 - Stock Moonraker — no community firmware required
