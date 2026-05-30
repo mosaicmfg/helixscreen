@@ -170,6 +170,12 @@ PrintSelectPanel::PrintSelectPanel(PrinterState& printer_state, MoonrakerAPI* ap
 }
 
 PrintSelectPanel::~PrintSelectPanel() {
+    // Expire all outstanding lifetime tokens up front so any thumbnail/metadata
+    // apply callbacks still queued on the UpdateQueue no-op on their next tick
+    // instead of dereferencing this freed panel (the guard's own dtor also does
+    // this, but doing it first makes cancellation deterministic at teardown start).
+    lifetime_.invalidate();
+
     // Deinitialize subjects first to disconnect observers [L041]
     deinit_subjects();
 
@@ -1008,47 +1014,44 @@ void PrintSelectPanel::fetch_metadata_range(size_t start, size_t end) {
                 bool metadata_empty = metadata.thumbnails.empty() && metadata.estimated_time == 0;
 
                 if (metadata_empty) {
-                    token.defer(
-                        "PrintSelectPanel::metadata_empty_metascan",
-                        [self, i, filename, file_path, captured_gen, token]() {
-                            if (self->nav_generation_.load() != captured_gen) {
-                                return;
-                            }
-                            if (!self->api_) {
-                                return;
-                            }
-                            spdlog::debug("[{}] Empty metadata for {}, triggering metascan",
-                                          self->get_name(), filename);
-                            self->api_->files().metascan_file(
-                                file_path,
-                                [self, i, filename, captured_gen,
-                                 token](const FileMetadata& scanned) {
-                                    token.defer(
-                                        "PrintSelectPanel::metascan_success_process",
-                                        [self, i, filename, captured_gen, scanned]() {
-                                            if (self->nav_generation_.load() != captured_gen) {
-                                                return;
-                                            }
-                                            self->process_metadata_result(i, filename, scanned);
-                                        });
-                                },
-                                [self, i, filename, captured_gen,
-                                 token](const MoonrakerError& error) {
-                                    token.defer(
-                                        "PrintSelectPanel::metascan_error_process",
-                                        [self, i, filename, captured_gen, error]() {
-                                            if (self->nav_generation_.load() != captured_gen) {
-                                                return;
-                                            }
-                                            spdlog::debug("[{}] Metascan failed for {}: {}, "
-                                                          "trying gcode extraction",
-                                                          self->get_name(), filename,
-                                                          error.message);
-                                            FileMetadata empty_meta;
-                                            self->process_metadata_result(i, filename, empty_meta);
-                                        });
-                                });
-                        });
+                    token.defer("PrintSelectPanel::metadata_empty_metascan", [self, i, filename,
+                                                                              file_path,
+                                                                              captured_gen,
+                                                                              token]() {
+                        if (self->nav_generation_.load() != captured_gen) {
+                            return;
+                        }
+                        if (!self->api_) {
+                            return;
+                        }
+                        spdlog::debug("[{}] Empty metadata for {}, triggering metascan",
+                                      self->get_name(), filename);
+                        self->api_->files().metascan_file(
+                            file_path,
+                            [self, i, filename, captured_gen, token](const FileMetadata& scanned) {
+                                token.defer("PrintSelectPanel::metascan_success_process",
+                                            [self, i, filename, captured_gen, scanned]() {
+                                                if (self->nav_generation_.load() != captured_gen) {
+                                                    return;
+                                                }
+                                                self->process_metadata_result(i, filename, scanned);
+                                            });
+                            },
+                            [self, i, filename, captured_gen, token](const MoonrakerError& error) {
+                                token.defer(
+                                    "PrintSelectPanel::metascan_error_process",
+                                    [self, i, filename, captured_gen, error]() {
+                                        if (self->nav_generation_.load() != captured_gen) {
+                                            return;
+                                        }
+                                        spdlog::debug("[{}] Metascan failed for {}: {}, "
+                                                      "trying gcode extraction",
+                                                      self->get_name(), filename, error.message);
+                                        FileMetadata empty_meta;
+                                        self->process_metadata_result(i, filename, empty_meta);
+                                    });
+                            });
+                    });
                     return;
                 }
 
@@ -1063,51 +1066,46 @@ void PrintSelectPanel::fetch_metadata_range(size_t start, size_t end) {
             // Metadata error callback. Same pattern: nav-gen check moves into the defer body.
             [self, i, filename, file_path, captured_gen,
              token = self->lifetime_.token()](const MoonrakerError& error) {
-                token.defer(
-                    "PrintSelectPanel::metadata_error_metascan",
-                    [self, i, filename, file_path, captured_gen, token, error]() {
-                        if (self->nav_generation_.load() != captured_gen) {
-                            return;
-                        }
-                        spdlog::debug("[{}] Failed to get metadata for {}: {} ({})",
-                                      self->get_name(), filename, error.message,
-                                      error.get_type_string());
+                token.defer("PrintSelectPanel::metadata_error_metascan", [self, i, filename,
+                                                                          file_path, captured_gen,
+                                                                          token, error]() {
+                    if (self->nav_generation_.load() != captured_gen) {
+                        return;
+                    }
+                    spdlog::debug("[{}] Failed to get metadata for {}: {} ({})", self->get_name(),
+                                  filename, error.message, error.get_type_string());
 
-                        if (!self->api_) {
-                            return;
-                        }
-                        spdlog::debug("[{}] Triggering metascan for {} after metadata failure",
-                                      self->get_name(), filename);
-                        self->api_->files().metascan_file(
-                            file_path,
-                            [self, i, filename, captured_gen,
-                             token](const FileMetadata& scanned) {
-                                token.defer(
-                                    "PrintSelectPanel::metadata_err_metascan_success",
-                                    [self, i, filename, captured_gen, scanned]() {
-                                        if (self->nav_generation_.load() != captured_gen) {
-                                            return;
-                                        }
-                                        self->process_metadata_result(i, filename, scanned);
-                                    });
-                            },
-                            [self, i, filename, captured_gen,
-                             token](const MoonrakerError& scan_error) {
-                                token.defer(
-                                    "PrintSelectPanel::metadata_err_metascan_err",
-                                    [self, i, filename, captured_gen, scan_error]() {
-                                        if (self->nav_generation_.load() != captured_gen) {
-                                            return;
-                                        }
-                                        spdlog::debug("[{}] Metascan also failed for {}: {}, "
-                                                      "trying gcode extraction",
-                                                      self->get_name(), filename,
-                                                      scan_error.message);
-                                        FileMetadata empty_meta;
-                                        self->process_metadata_result(i, filename, empty_meta);
-                                    });
-                            });
-                    });
+                    if (!self->api_) {
+                        return;
+                    }
+                    spdlog::debug("[{}] Triggering metascan for {} after metadata failure",
+                                  self->get_name(), filename);
+                    self->api_->files().metascan_file(
+                        file_path,
+                        [self, i, filename, captured_gen, token](const FileMetadata& scanned) {
+                            token.defer("PrintSelectPanel::metadata_err_metascan_success",
+                                        [self, i, filename, captured_gen, scanned]() {
+                                            if (self->nav_generation_.load() != captured_gen) {
+                                                return;
+                                            }
+                                            self->process_metadata_result(i, filename, scanned);
+                                        });
+                        },
+                        [self, i, filename, captured_gen, token](const MoonrakerError& scan_error) {
+                            token.defer("PrintSelectPanel::metadata_err_metascan_err",
+                                        [self, i, filename, captured_gen, scan_error]() {
+                                            if (self->nav_generation_.load() != captured_gen) {
+                                                return;
+                                            }
+                                            spdlog::debug("[{}] Metascan also failed for {}: {}, "
+                                                          "trying gcode extraction",
+                                                          self->get_name(), filename,
+                                                          scan_error.message);
+                                            FileMetadata empty_meta;
+                                            self->process_metadata_result(i, filename, empty_meta);
+                                        });
+                        });
+                });
             },
             true // silent - don't trigger RPC_ERROR event/toast
         );
@@ -1239,27 +1237,27 @@ void PrintSelectPanel::process_metadata_result(size_t i, const std::string& file
     // download_file_partial) stays unchanged.
     {
         auto d_owned = std::make_unique<MetadataUpdate>(MetadataUpdate{this,
-                                                        i,
-                                                        filename,
-                                                        print_time_minutes,
-                                                        filament_grams,
-                                                        filament_type,
-                                                        filament_name,
-                                                        print_time_str,
-                                                        filament_str,
-                                                        layer_count,
-                                                        layer_count_str,
-                                                        object_height,
-                                                        print_height_str,
-                                                        layer_height,
-                                                        layer_height_str,
-                                                        uuid,
-                                                        thumb_path,
-                                                        thumb_is_local,
-                                                        target,
-                                                        std::move(filament_types),
-                                                        std::move(filament_names),
-                                                        std::move(filament_colors)});
+                                                                       i,
+                                                                       filename,
+                                                                       print_time_minutes,
+                                                                       filament_grams,
+                                                                       filament_type,
+                                                                       filament_name,
+                                                                       print_time_str,
+                                                                       filament_str,
+                                                                       layer_count,
+                                                                       layer_count_str,
+                                                                       object_height,
+                                                                       print_height_str,
+                                                                       layer_height,
+                                                                       layer_height_str,
+                                                                       uuid,
+                                                                       thumb_path,
+                                                                       thumb_is_local,
+                                                                       target,
+                                                                       std::move(filament_types),
+                                                                       std::move(filament_names),
+                                                                       std::move(filament_colors)});
         auto apply = [](MetadataUpdate* d) {
             auto* self = d->panel;
 
@@ -1270,6 +1268,13 @@ void PrintSelectPanel::process_metadata_result(size_t i, const std::string& file
                              self->get_name(), d->filename);
                 return;
             }
+
+            // Snapshot a lifetime token while the panel is known valid on the main
+            // thread. Thumbnail/gcode fetch results below are applied on a LATER
+            // UpdateQueue tick; if the panel is torn down before then (e.g. user
+            // navigates away mid-scroll), the deferred apply must no-op instead of
+            // dereferencing the freed panel (use-after-free → glibc heap abort).
+            auto panel_tok = self->lifetime_.token();
 
             // Update metadata fields (now on main thread - safe!)
             self->file_list_[d->index].print_time_minutes = d->print_time_minutes;
@@ -1323,17 +1328,23 @@ void PrintSelectPanel::process_metadata_result(size_t i, const std::string& file
                     get_thumbnail_cache().fetch_for_card_view(
                         self->api_, d->thumb_path, ctx,
                         // Success callback - receives pre-scaled .bin path
-                        [self, file_idx, filename_copy](const std::string& lvgl_path) {
+                        [self, panel_tok, file_idx, filename_copy](const std::string& lvgl_path) {
                             struct ThumbUpdate {
                                 PrintSelectPanel* panel;
+                                helix::LifetimeToken token;
                                 size_t index;
                                 std::string filename;
                                 std::string lvgl_path;
                             };
                             helix::ui::queue_update<ThumbUpdate>(
-                                std::make_unique<ThumbUpdate>(
-                                    ThumbUpdate{self, file_idx, filename_copy, lvgl_path}),
+                                std::make_unique<ThumbUpdate>(ThumbUpdate{
+                                    self, panel_tok, file_idx, filename_copy, lvgl_path}),
                                 [](ThumbUpdate* t) {
+                                    // Panel may have been destroyed between this fetch
+                                    // completing and the queued apply running.
+                                    if (t->token.expired()) {
+                                        return;
+                                    }
                                     if (t->index < t->panel->file_list_.size() &&
                                         t->panel->file_list_[t->index].filename == t->filename) {
                                         t->panel->file_list_[t->index].thumbnail_path =
@@ -1412,9 +1423,10 @@ void PrintSelectPanel::process_metadata_result(size_t i, const std::string& file
                     self->api_->transfers().download_file_partial(
                         "gcodes", gcode_path, THUMBNAIL_HEADER_SIZE,
                         // Success callback - extract thumbnails from gcode content
-                        [self, file_idx, filename_copy, gcode_path,
+                        [self, panel_tok, file_idx, filename_copy, gcode_path,
                          ctx](const std::string& content) {
-                            if (!ctx.is_valid()) return;
+                            if (!ctx.is_valid())
+                                return;
                             auto thumbnails =
                                 helix::gcode::extract_thumbnails_from_content(content);
 
@@ -1445,19 +1457,26 @@ void PrintSelectPanel::process_metadata_result(size_t i, const std::string& file
                             // (avoids runtime 300x300→160x160 scaling on every frame)
                             get_thumbnail_cache().fetch_for_card_view(
                                 self->api_, cache_key, ctx,
-                                [self, file_idx, filename_copy,
+                                [self, panel_tok, file_idx, filename_copy,
                                  ctx](const std::string& optimized) {
-                                    if (!ctx.is_valid()) return;
+                                    if (!ctx.is_valid())
+                                        return;
                                     struct ExtractedThumbUpdate {
                                         PrintSelectPanel* panel;
+                                        helix::LifetimeToken token;
                                         size_t index;
                                         std::string filename;
                                         std::string lvgl_path;
                                     };
                                     helix::ui::queue_update<ExtractedThumbUpdate>(
                                         std::make_unique<ExtractedThumbUpdate>(ExtractedThumbUpdate{
-                                            self, file_idx, filename_copy, optimized}),
+                                            self, panel_tok, file_idx, filename_copy, optimized}),
                                         [](ExtractedThumbUpdate* t) {
+                                            // Panel may have been destroyed between the
+                                            // fetch completing and this queued apply.
+                                            if (t->token.expired()) {
+                                                return;
+                                            }
                                             if (t->index < t->panel->file_list_.size() &&
                                                 t->panel->file_list_[t->index].filename ==
                                                     t->filename) {
@@ -1472,7 +1491,8 @@ void PrintSelectPanel::process_metadata_result(size_t i, const std::string& file
                                         });
                                 },
                                 [self, filename_copy, ctx](const std::string& error) {
-                                    if (!ctx.is_valid()) return;
+                                    if (!ctx.is_valid())
+                                        return;
                                     spdlog::warn(
                                         "[{}] Failed to prescale extracted thumbnail for {}: {}",
                                         self->get_name(), filename_copy, error);
@@ -1480,7 +1500,8 @@ void PrintSelectPanel::process_metadata_result(size_t i, const std::string& file
                         },
                         // Error callback - silent fail (file might be too small or inaccessible)
                         [self, gcode_path, ctx](const MoonrakerError& error) {
-                            if (!ctx.is_valid()) return;
+                            if (!ctx.is_valid())
+                                return;
                             spdlog::debug("[{}] Failed to download gcode header for {}: {}",
                                           self->get_name(), gcode_path, error.message);
                         });
@@ -1837,14 +1858,12 @@ void PrintSelectPanel::set_selected_file(const char* filename, const char* thumb
 
     // Toggle thumbnail image, no-thumbnail placeholder icon, and gradient background in detail view
     if (detail_view_ && detail_view_->get_widget()) {
-        lv_obj_t* thumb_img =
-            lv_obj_find_by_name(detail_view_->get_widget(), "detail_thumbnail");
+        lv_obj_t* thumb_img = lv_obj_find_by_name(detail_view_->get_widget(), "detail_thumbnail");
         lv_obj_t* no_thumb =
             lv_obj_find_by_name(detail_view_->get_widget(), "detail_no_thumbnail_icon");
         lv_obj_t* gradient = lv_obj_find_by_name(detail_view_->get_widget(), "gradient_bg");
-        bool has_real =
-            thumbnail_src && thumbnail_src[0] != '\0' &&
-            !helix::ui::PrintSelectCardView::is_placeholder_thumbnail(thumbnail_src);
+        bool has_real = thumbnail_src && thumbnail_src[0] != '\0' &&
+                        !helix::ui::PrintSelectCardView::is_placeholder_thumbnail(thumbnail_src);
         if (has_real) {
             if (thumb_img)
                 lv_obj_remove_flag(thumb_img, LV_OBJ_FLAG_HIDDEN);
@@ -2346,9 +2365,7 @@ void PrintSelectPanel::create_detail_view() {
     // text refresh is needed here anymore.
     if (auto* prep_mgr = detail_view_->get_prep_manager()) {
         prep_mgr->set_macro_analysis_callback(
-            [this](const helix::PrintStartAnalysis& /*analysis*/) {
-                update_print_button_state();
-            });
+            [this](const helix::PrintStartAnalysis& /*analysis*/) { update_print_button_state(); });
     }
 
     // Create and wire up print start controller
@@ -2492,8 +2509,7 @@ void PrintSelectPanel::start_print(bool force) {
             lv_tr("Empty filament slot"),
             lv_tr("One or more tools required by this file have no filament loaded. "
                   "The print will likely fail. Print anyway?"),
-            ModalSeverity::Warning,
-            lv_tr("Print Anyway"),
+            ModalSeverity::Warning, lv_tr("Print Anyway"),
             [](lv_event_t*) {
                 LVGL_SAFE_EVENT_CB_BEGIN("on_empty_filament_confirm")
                 // modal_show_confirmation replaces the default close cb with
