@@ -43,8 +43,14 @@ prune_cache() {
 LOAD_BASE=0
 AUTO_DETECT_BASE=false
 CRASH_FILE=""
+BUNDLE_FILE=""
 ISSUE_NUMBER=""
 ISSUE_REPO=""
+# Index into ADDRS where stack-scan candidates begin (-1 = no scan marker).
+# Frames before this are reliable (PC/RA/fp-walk); frames at/after are noisy
+# stack-scanned return-address candidates emitted after a "bt_source:stack_scan"
+# line by the crash handler.
+PRIMARY_COUNT=-1
 
 # Linker/runtime boundary symbols that are NOT real functions.
 # Resolving to these means the address wasn't in any real function.
@@ -61,6 +67,7 @@ MEMORY_MAPS=()
 
 usage() {
     echo "Usage: $(basename "$0") [options] <version> <platform> <addr1> [addr2] ..."
+    echo "       $(basename "$0") --bundle <debug-bundle.json> [platform]"
     echo "       $(basename "$0") --crash-file <crash.txt> [platform]"
     echo "       $(basename "$0") --issue <number> [--repo owner/repo]"
     echo ""
@@ -68,6 +75,9 @@ usage() {
     echo ""
     echo "Options:"
     echo "  --base <hex>         ELF load base (ASLR offset) to subtract from addresses"
+    echo "  --bundle <path>      Parse a debug-bundle JSON: extracts the RAW recent crash"
+    echo "                       (crash_txt), warns if crash_report is a different/older crash,"
+    echo "                       and splits reliable frames from stack-scan candidates"
     echo "  --crash-file <path>  Parse crash.txt directly (extracts version, backtrace, load_base)"
     echo "  --issue <number>     Parse a GitHub crash report issue (extracts everything automatically)"
     echo "  --repo <owner/repo>  GitHub repo for --issue (default: auto-detect from git remote)"
@@ -111,6 +121,14 @@ while [[ $# -gt 0 ]]; do
             CRASH_FILE="$2"
             shift 2
             ;;
+        --bundle)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --bundle requires a debug-bundle JSON path argument" >&2
+                exit 1
+            fi
+            BUNDLE_FILE="$2"
+            shift 2
+            ;;
         --issue)
             if [[ $# -lt 2 ]]; then
                 echo "Error: --issue requires a GitHub issue number" >&2
@@ -135,6 +153,98 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Bundle mode: pull the raw recent crash (crash_txt) out of a debug-bundle JSON.
+#
+# A debug bundle can carry TWO different crashes:
+#   - crash_txt    : the RAW most-recent crash file (full register dump + the
+#                    fp-walk / stack-scan backtrace). This is what actually
+#                    detonated most recently and is what we resolve.
+#   - crash_report : a pretty-printed report that may describe an OLDER, already
+#                    triaged crash with a different signature. Resolving the
+#                    bundle's crash_report when crash_txt differs sends you
+#                    chasing a stale, possibly-fixed bug (this cost real time on
+#                    bundle YZQ47HQ6 — crash_report was a fixed shutdown SIGSEGV
+#                    while crash_txt was a live gcode-streaming SIGBUS).
+# This mode extracts crash_txt and loudly flags when crash_report disagrees.
+if [[ -n "$BUNDLE_FILE" ]]; then
+    if [[ ! -f "$BUNDLE_FILE" ]]; then
+        echo "Error: Bundle file not found: $BUNDLE_FILE" >&2
+        exit 1
+    fi
+    if ! command -v python3 &>/dev/null; then
+        echo "Error: python3 is required for --bundle mode" >&2
+        exit 1
+    fi
+    _bundle_tmp=$(mktemp "${TMPDIR:-/tmp}/helix-crashtxt.XXXXXX")
+    # Extract crash_txt to the temp file; emit a human summary + dual-crash
+    # warning to stderr. Exit non-zero if the bundle has no crash_txt.
+    if ! python3 - "$BUNDLE_FILE" "$_bundle_tmp" <<'PYEOF' >&2
+import json, sys, re
+bundle_path, out_path = sys.argv[1], sys.argv[2]
+with open(bundle_path) as f:
+    d = json.load(f)
+
+def field(name):
+    v = d.get(name)
+    return v if isinstance(v, str) else ("" if v is None else str(v))
+
+crash_txt = field("crash_txt")
+if not crash_txt.strip():
+    sys.stderr.write("Bundle has no crash_txt (raw crash file) — "
+                     "try --crash-file on the crash_report instead.\n")
+    sys.exit(2)
+
+with open(out_path, "w") as f:
+    f.write(crash_txt)
+
+def kv(text, key):
+    m = re.search(r'(?im)^\s*%s\s*[:=]\s*(.+?)\s*$' % re.escape(key), text)
+    return m.group(1).strip() if m else ""
+
+bv  = field("version")
+sig = kv(crash_txt, "name") or kv(crash_txt, "signal")
+ts  = kv(crash_txt, "timestamp")
+up  = kv(crash_txt, "uptime")
+sys.stderr.write("=== crash_txt (raw recent crash — resolving THIS) ===\n")
+sys.stderr.write("  signal=%s version=%s uptime=%ss timestamp=%s\n"
+                 % (sig or "?", kv(crash_txt, "version") or bv or "?", up or "?", ts or "?"))
+for k in ("reg_pc", "reg_ra", "fault_addr", "queue_prev"):
+    v = kv(crash_txt, k)
+    if v:
+        sys.stderr.write("  %s=%s\n" % (k, v))
+
+# Compare against the pretty-printed crash_report to catch the dual-crash trap.
+report = field("crash_report")
+if report.strip():
+    r_sig = kv(report, "Signal") or kv(report, "name")
+    r_ts  = kv(report, "Timestamp") or kv(report, "timestamp")
+    # Normalize "11 (SIGSEGV)" -> "SIGSEGV" for comparison.
+    def norm(s):
+        m = re.search(r'SIG[A-Z]+', s or "")
+        return m.group(0) if m else (s or "")
+    if (norm(r_sig) and norm(sig) and norm(r_sig) != norm(sig)) or (r_ts and ts and r_ts != ts):
+        sys.stderr.write("\n  ⚠️  crash_report describes a DIFFERENT crash than crash_txt:\n")
+        sys.stderr.write("        crash_report: signal=%s timestamp=%s\n" % (r_sig or "?", r_ts or "?"))
+        sys.stderr.write("        crash_txt:    signal=%s timestamp=%s\n" % (sig or "?", ts or "?"))
+        sys.stderr.write("      crash_report may be an older / already-fixed crash. Resolving crash_txt.\n")
+
+hist = d.get("crash_history")
+if isinstance(hist, list):
+    for h in hist:
+        if isinstance(h, dict) and h.get("github_issue"):
+            sys.stderr.write("  note: crash_history references issue #%s (%s)\n"
+                             % (h.get("github_issue"), h.get("fingerprint", "")))
+sys.stderr.write("\n")
+PYEOF
+    then
+        rm -f "$_bundle_tmp"
+        exit 1
+    fi
+    CRASH_FILE="$_bundle_tmp"
+    # shellcheck disable=SC2064
+    trap "rm -f '$_bundle_tmp'" EXIT
+fi
 
 # GitHub issue mode: fetch and parse a crash report issue
 if [[ -n "$ISSUE_NUMBER" ]]; then
@@ -268,14 +378,25 @@ elif [[ -n "$CRASH_FILE" ]]; then
 
     # Extract backtrace addresses
     # Supports raw format (bt:0x...) and pretty-printed (bare hex addresses
-    # under a "--- Backtrace ---" section)
+    # under a "--- Backtrace ---" section).
+    #
+    # The crash handler emits reliable frames first (ucontext PC/RA, then the
+    # fp-walk chain), then a "bt_source:stack_scan" marker, then noisy
+    # stack-scanned candidates (any stack word that lands in .text — a mix of
+    # real return addresses and stale ones). We record PRIMARY_COUNT at the
+    # marker so the output can separate trustworthy frames from candidates.
     ADDRS=()
     while IFS= read -r line; do
-        addr=$(echo "$line" | cut -d: -f2 | tr -d '[:space:]')
-        if [[ -n "$addr" ]]; then
-            ADDRS+=("$addr")
+        if [[ "$line" == bt_source:stack_scan* ]]; then
+            PRIMARY_COUNT=${#ADDRS[@]}
+            continue
         fi
-    done < <(grep "^bt:" "$CRASH_FILE" || true)
+        if [[ "$line" == bt:* ]]; then
+            addr="${line#bt:}"
+            addr="${addr//[[:space:]]/}"
+            [[ -n "$addr" ]] && ADDRS+=("$addr")
+        fi
+    done < "$CRASH_FILE"
 
     if [[ ${#ADDRS[@]} -eq 0 ]]; then
         # Try pretty-printed format: bare hex addresses after "--- Backtrace ---"
@@ -787,8 +908,47 @@ if (( LOAD_BASE > 0 )); then
 fi
 echo ""
 
+# When a stack-scan boundary was recorded, label the two sections. Frames
+# before PRIMARY_COUNT are the reliable PC/RA + fp-walk chain; frames at/after
+# are stack-scanned candidates where real return addresses are interleaved with
+# stale ones — read them as "the call spine is in here", not as a clean trace.
+_addr_idx=0
+if (( PRIMARY_COUNT >= 0 )); then
+    echo "── reliable frames (PC/RA + frame-pointer walk) ──"
+fi
+
+# Collect app-code frames (de-duplicated, in order) as a "call spine" summary.
+# On MIPS/ARM the reliable trace is short and the real chain is buried in the
+# stack-scan candidates among libstdc++/fmt/spdlog noise — this surfaces it.
+SPINE=()
+_spine_last=""
+# A frame is "app code" if it names our namespaces/entry points and is not the
+# crash handler itself. Tuned to the symbols this codebase actually emits.
+_is_app_frame() {
+    local s="$1"
+    case "$s" in
+        *crash_signal_handler*) return 1 ;;
+    esac
+    case "$s" in
+        *helix::*|*"Application::"*|*gcode_viewer*|*ui_*|*Modal*|*Panel*|*Printer*|*"main+0x"*|*_draw_cb*|*_cb\(*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 for addr in "$@"; do
-    resolve_address "$addr"
+    if (( PRIMARY_COUNT >= 0 && _addr_idx == PRIMARY_COUNT )); then
+        echo ""
+        echo "── stack-scan candidates (noisy: real return addresses interleaved with stale ones) ──"
+    fi
+    _addr_idx=$(( _addr_idx + 1 ))
+    _res=$(resolve_address "$addr")
+    echo "$_res"
+    # Strip "0x… (file: 0x…) → " prefix down to the symbol for spine matching.
+    _sym="${_res#*→ }"
+    if _is_app_frame "$_sym" && [[ "$_sym" != "$_spine_last" ]]; then
+        SPINE+=("$_sym")
+        _spine_last="$_sym"
+    fi
 
     # Supplement with addr2line source info when available
     if [[ -n "$ADDR2LINE" ]]; then
@@ -807,3 +967,12 @@ for addr in "$@"; do
         fi
     fi
 done
+
+# App-code call spine: the high-signal frames, de-duplicated in trace order.
+if [[ ${#SPINE[@]} -gt 0 ]]; then
+    echo ""
+    echo "── app-code call spine (filtered from above; crash site first) ──"
+    for s in "${SPINE[@]}"; do
+        echo "  $s"
+    done
+fi

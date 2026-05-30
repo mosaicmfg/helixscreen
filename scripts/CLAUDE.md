@@ -61,7 +61,7 @@ Build, asset generation, deployment, and developer tooling for HelixScreen.
 | `telemetry-update-printer-db.py` | Interactive updater: consumes profile analysis, walks operator through augmenting/creating printer_database.json entries and presets |
 | `telemetry-crashes.py` | Resolve ASLR crash addresses → function names, group by signature. `--anomalies` mode surfaces non-fatal `error_encountered` events (default code: `bg_tok_expired_check` for L081/cluster:pstat-async-delete watch); resolution uses the `runtime_anchor=` field embedded by helix_lvgl_anomaly (v0.99.60+). Pre-v0.99.60 bundles fall back to raw hex on PIE platforms. |
 | `telemetry-backfill.sh` | Backfill Analytics Engine from R2 (90-day retention limit) |
-| `resolve-backtrace.sh` | Resolve raw backtrace addresses using `.sym` files from R2 |
+| `resolve-backtrace.sh` | Resolve raw backtrace addresses using `.sym` files from R2. `--bundle <debug-bundle.json>` auto-extracts the raw recent crash (`crash_txt`), **warns when the bundle's `crash_report` is a different/older crash** (the dual-crash trap), splits reliable PC/RA+fp-walk frames from noisy stack-scan candidates, and prints a filtered **app-code call spine**. Also `--crash-file <crash.txt>` and `--issue <N>` |
 | `debug-bundle.sh` | Fetch and display debug bundles from `crash.helixscreen.org` |
 | `freeze-drops.sh` | Aggregate L081 Mechanism D `DROPPED (frozen)` events across device logs / debug bundles / files; cross-references each tag to source location and notes whether it's already using `defer_critical`. Use proactively to catch first-fire-callback regressions before users hit them: `./scripts/freeze-drops.sh --ssh root@192.168.1.74 --ssh root@192.168.30.103` |
 
