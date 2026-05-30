@@ -1,0 +1,47 @@
+diff --git a/src/layouts/grid/lv_grid.c b/src/layouts/grid/lv_grid.c
+index e4115ca0b..3a3ea0c91 100644
+--- a/src/layouts/grid/lv_grid.c
++++ b/src/layouts/grid/lv_grid.c
+@@ -14,6 +14,11 @@
+ #include "../lv_layout.h"
+ #include "../../core/lv_obj_private.h"
+ #include "../../core/lv_global.h"
++
++/* Telemetry hook provided by helix_lvgl_anomaly.cpp — reports LVGL anomalies
++ * with backtrace + device context for remote crash diagnostics. */
++extern void helix_lvgl_anomaly(const char * code, const char * context);
++
+ /*********************
+  *      DEFINES
+  *********************/
+@@ -190,6 +195,17 @@ static void grid_update(lv_obj_t * cont, void * user_data)
+     LV_LOG_INFO("update %p container", (void *)cont);
+     LV_UNUSED(user_data);
+ 
++    /* Guard against a freed grid container reaching this callback when a
++     * relayout races teardown (modal close / panel rebuild during an AMS
++     * update). cont->spec_attr is then freed garbage and the child loop below
++     * reads a wild pointer -> SIGSEGV (#973). lv_obj_is_valid() compares the
++     * pointer against live objects without dereferencing it, so it is safe to
++     * call on a dangling pointer. */
++    if(cont == NULL || !lv_obj_is_valid(cont)) {
++        helix_lvgl_anomaly("grid_update_invalid_cont", "grid_update: container freed/invalid");
++        return;
++    }
++
+     lv_grid_calc_t c;
+     lv_result_t res = calc(cont, &c);
+     if(res != LV_RESULT_OK) return;
+@@ -207,6 +223,12 @@ static void grid_update(lv_obj_t * cont, void * user_data)
+     uint32_t i;
+     for(i = 0; i < cont->spec_attr->child_cnt; i++) {
+         lv_obj_t * item = cont->spec_attr->children[i];
++        /* A child freed mid-relayout (async-deleted during teardown) can leave a
++         * dangling entry here; item_repos() would dereference it -> SIGSEGV (#973). */
++        if(item == NULL || !lv_obj_is_valid(item)) {
++            helix_lvgl_anomaly("grid_update_invalid_item", "grid_update: child freed/invalid");
++            continue;
++        }
+         item_repos(item, &c, &hint);
+     }
+     calc_free(&c);

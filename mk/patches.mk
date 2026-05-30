@@ -56,6 +56,7 @@ LVGL_PATCHED_FILES := \
 	src/core/lv_obj_style.c \
 	src/draw/sw/lv_draw_sw.c \
 	src/layouts/flex/lv_flex.c \
+	src/layouts/grid/lv_grid.c \
 	lv_conf_template.h
 
 # Files modified by libhv patches
@@ -385,6 +386,13 @@ $(PATCHES_STAMP): $(PATCH_FILES) $(LVGL_HEAD) $(LIBHV_HEAD)
 		echo "$(GREEN)✓ obj_pos NULL guards patch applied$(RESET)"; \
 	else \
 		echo "$(GREEN)✓ LVGL obj_pos NULL guards patch already applied$(RESET)"; \
+	fi
+	$(Q)if git -C $(LVGL_DIR) apply --check ../../patches/lvgl_grid_update_guard.patch 2>/dev/null; then \
+		echo "$(YELLOW)→ Applying LVGL grid_update freed-container guard patch (#973)...$(RESET)"; \
+		git -C $(LVGL_DIR) apply ../../patches/lvgl_grid_update_guard.patch && \
+		echo "$(GREEN)✓ grid_update guard patch applied$(RESET)"; \
+	else \
+		echo "$(GREEN)✓ LVGL grid_update guard patch already applied$(RESET)"; \
 	fi
 	$(Q)if grep -q 'LV_ASSERT_MALLOC(draw_buf)' $(LVGL_DIR)/src/draw/lv_draw_buf.c 2>/dev/null; then \
 		echo "$(YELLOW)→ Applying LVGL draw_buf OOM guard patch...$(RESET)"; \
