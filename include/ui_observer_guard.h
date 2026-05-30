@@ -52,14 +52,16 @@ class ObserverGuard {
     ObserverGuard() = default;
 
     ObserverGuard(lv_subject_t* subject, lv_observer_cb_t cb, void* user_data)
-        : observer_(lv_subject_add_observer(subject, cb, user_data)) {}
+        : observer_(lv_subject_add_observer(subject, cb, user_data)),
+          created_epoch_(s_invalidation_epoch.load(std::memory_order_acquire)) {}
 
     /// Construct with a cleanup callback for the user_data context.
     /// The cleanup runs in reset() to free the context and expire weak tokens.
     ObserverGuard(lv_subject_t* subject, lv_observer_cb_t cb, void* user_data,
                   std::function<void()> cleanup)
-        : observer_(lv_subject_add_observer(subject, cb, user_data)), cleanup_(std::move(cleanup)) {
-    }
+        : observer_(lv_subject_add_observer(subject, cb, user_data)),
+          created_epoch_(s_invalidation_epoch.load(std::memory_order_acquire)),
+          cleanup_(std::move(cleanup)) {}
 
     ~ObserverGuard() {
         reset();
@@ -69,7 +71,7 @@ class ObserverGuard {
         : observer_(std::exchange(other.observer_, nullptr)),
           alive_token_(std::move(other.alive_token_)),
           has_alive_token_(std::exchange(other.has_alive_token_, false)),
-          cleanup_(std::move(other.cleanup_)) {}
+          created_epoch_(other.created_epoch_), cleanup_(std::move(other.cleanup_)) {}
 
     ObserverGuard& operator=(ObserverGuard&& other) noexcept {
         if (this != &other) {
@@ -77,6 +79,7 @@ class ObserverGuard {
             observer_ = std::exchange(other.observer_, nullptr);
             alive_token_ = std::move(other.alive_token_);
             has_alive_token_ = std::exchange(other.has_alive_token_, false);
+            created_epoch_ = other.created_epoch_;
             cleanup_ = std::move(other.cleanup_);
         }
         return *this;
@@ -88,19 +91,34 @@ class ObserverGuard {
     /**
      * @brief Signal that all subjects have been torn down (soft restart).
      *
-     * After this call, all ObserverGuard::reset() calls will release instead
-     * of calling lv_observer_remove(), because the observers have already been
-     * freed by lv_subject_deinit(). Call invalidate_all() AFTER
-     * StaticSubjectRegistry::deinit_all() and BEFORE any re-initialization.
-     * Call revalidate_all() at the END of init_printer_state() when all new
-     * observers are attached to live subjects.
+     * Bumps a monotonic invalidation epoch. Any ObserverGuard created BEFORE
+     * this call had its subject freed by StaticSubjectRegistry::deinit_all()
+     * (LVGL already removed+freed the observer), so its reset() will skip
+     * lv_observer_remove() to avoid touching freed memory. Observers created
+     * AFTER this call — e.g. widgets built during init_printer_state()'s
+     * finalize_setup() before revalidate_all() — are attached to live
+     * subjects and are removed normally on reset().
+     *
+     * Call invalidate_all() AFTER StaticSubjectRegistry::deinit_all() and
+     * BEFORE any re-initialization.
+     *
+     * The per-creation epoch is why the old global boolean was insufficient:
+     * a boolean suppressed removal for window-created observers too, orphaning
+     * live observers on live subjects → use-after-free when later notified
+     * (debug bundles 449TVQ82 / X3RA4252, LedWidget on the static LED subject).
      */
     static void invalidate_all() {
-        s_subjects_valid.store(false, std::memory_order_release);
+        s_invalidation_epoch.fetch_add(1, std::memory_order_release);
     }
-    static void revalidate_all() {
-        s_subjects_valid.store(true, std::memory_order_release);
-    }
+    /**
+     * @brief Marks the end of a reinit window. No-op in the epoch model.
+     *
+     * Removal coherence is decided per-observer by created_epoch_ vs the
+     * current invalidation epoch, so no global "valid again" flip is needed.
+     * Retained for call-site compatibility (Application::init_printer_state(),
+     * including its early-return error paths).
+     */
+    static void revalidate_all() {}
 
     void reset() {
         if (observer_) {
@@ -120,11 +138,21 @@ class ObserverGuard {
                 auto locked = alive_token_.lock();
                 subject_dead = !locked || !*locked;
             }
-            if (!subject_dead && s_subjects_valid.load(std::memory_order_acquire) &&
-                lv_is_initialized()) {
+            // An observer created before the most recent invalidate_all() had
+            // its subject freed by StaticSubjectRegistry::deinit_all(); LVGL
+            // already removed+freed the observer, so lv_observer_remove() would
+            // touch freed memory. An observer created during/after that window
+            // (e.g. a widget built mid-reinit) is on a LIVE subject and must be
+            // removed normally — skipping it orphans a live observer node whose
+            // context we are about to free → UAF on the next notify (#449TVQ82,
+            // #X3RA4252). created_epoch_ distinguishes the two cases; the old
+            // global boolean could not.
+            bool freed_by_deinit =
+                created_epoch_ < s_invalidation_epoch.load(std::memory_order_acquire);
+            if (!subject_dead && !freed_by_deinit && lv_is_initialized()) {
                 lv_observer_remove(observer_);
             }
-            // If LVGL is already torn down or subjects invalidated, just release
+            // If LVGL is already torn down or the subject was freed, just release
             observer_ = nullptr;
             alive_token_.reset();
             has_alive_token_ = false;
@@ -172,7 +200,12 @@ class ObserverGuard {
     }
 
   private:
-    static inline std::atomic<bool> s_subjects_valid{true};
+    /// Monotonic counter bumped by invalidate_all() each teardown. Observers
+    /// compare their created_epoch_ against it to decide whether their subject
+    /// was already freed by deinit_all() (skip removal) or is still live
+    /// (remove normally). Replaces the old global s_subjects_valid boolean,
+    /// which could not tell window-created observers from pre-teardown ones.
+    static inline std::atomic<uint64_t> s_invalidation_epoch{0};
 
     lv_observer_t* observer_ = nullptr;
     std::weak_ptr<bool> alive_token_; ///< Tracks dynamic subject lifetime
@@ -180,6 +213,10 @@ class ObserverGuard {
     /// default-constructed weak_ptr reports expired() == true, which would cause
     /// static-subject guards to falsely skip lv_observer_remove() and leak observers.
     bool has_alive_token_ = false;
+    /// Invalidation epoch captured when this guard's observer was registered.
+    /// If < s_invalidation_epoch at reset() time, the subject was deinited by a
+    /// later teardown and the observer is already freed — skip removal.
+    uint64_t created_epoch_ = 0;
     /// Cleanup callback to free the observer context (LambdaObserverContext).
     /// When called, destroys the shared_ptr<bool> alive token, expiring weak_ptr
     /// copies held by deferred lambdas so they skip execution on destroyed widgets.

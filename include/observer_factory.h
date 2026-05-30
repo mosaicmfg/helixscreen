@@ -344,6 +344,19 @@ ObserverGuard observe_int_sync(lv_subject_t* subject, Panel* panel, Handler&& ha
         [](lv_observer_t* obs, lv_subject_t* subj) {
             auto* c = static_cast<detail::LambdaObserverContext<Panel, DecayedHandler>*>(
                 lv_observer_get_user_data(obs));
+            // LOAD-BEARING INVARIANT: this synchronous body has NO defense
+            // against a freed `c`. The `if (c && c->panel)` check is not one —
+            // freed-but-not-yet-reused heap still reads a plausible non-null
+            // panel, so we fall through and copy c->handler (a shared_ptr
+            // refcount bump) on freed memory → SIGSEGV in __aarch64_ldadd4 (the
+            // crash in bundles 449TVQ82/X3RA4252). The weak_alive/lifetime
+            // guards below protect only the DEFERRED lambda, not this copy.
+            // Safety therefore depends entirely on ObserverGuard::reset()
+            // removing this observer from the subject BEFORE freeing `c` (its
+            // `delete ctx` cleanup). reset() guarantees that ordering for any
+            // observer on a live subject; the per-creation invalidation epoch
+            // (ui_observer_guard.h) ensures an observer created during a
+            // printer-state reinit window is still removed rather than orphaned.
             if (c && c->panel) {
                 int value = lv_subject_get_int(subj);
                 // Copy handler and panel pointer so the deferred lambda is

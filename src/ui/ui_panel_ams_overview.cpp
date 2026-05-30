@@ -505,9 +505,9 @@ void AmsOverviewPanel::refresh_system_path(const AmsSystemInfo& info, int curren
     if (bypass_widgets_.valid()) {
         bypass_spool_set_has_spool(bypass_widgets_, ext_spool.has_value());
         bypass_spool_set_color(bypass_widgets_, bypass_color);
-        bypass_spool_set_material(
-            bypass_widgets_,
-            (ext_spool && !ext_spool->material.empty()) ? ext_spool->material.c_str() : "");
+        bypass_spool_set_material(bypass_widgets_, (ext_spool && !ext_spool->material.empty())
+                                                       ? ext_spool->material.c_str()
+                                                       : "");
         update_bypass_widgets_position();
     }
 
@@ -1232,9 +1232,9 @@ void AmsOverviewPanel::refresh_bypass_display() {
         } else {
             bypass_spool_set_color(bypass_widgets_, 0x888888);
         }
-        bypass_spool_set_material(
-            bypass_widgets_,
-            (ext_spool && !ext_spool->material.empty()) ? ext_spool->material.c_str() : "");
+        bypass_spool_set_material(bypass_widgets_, (ext_spool && !ext_spool->material.empty())
+                                                       ? ext_spool->material.c_str()
+                                                       : "");
         update_bypass_widgets_position();
     }
 
@@ -1328,6 +1328,11 @@ void navigate_to_ams_panel() {
         auto& overview = get_global_ams_overview_panel();
         lv_obj_t* panel = overview.get_panel();
         if (panel) {
+            // Re-register before push: switch_to_panel_impl() clears
+            // overlay_instances_ on navbar switches (keeping only the
+            // persistent map), so a cached panel re-opened after a navbar tap
+            // loses its lifecycle registration. Idempotent (keyed by widget).
+            NavigationManager::instance().register_overlay_instance(panel, &overview);
             NavigationManager::instance().push_overlay(panel);
         }
     } else {
@@ -1336,6 +1341,9 @@ void navigate_to_ams_panel() {
         auto& detail = get_global_ams_panel();
         lv_obj_t* panel = detail.get_panel();
         if (panel) {
+            // Re-register before push (see multi-unit branch above): cached
+            // panel re-opened after a navbar switch loses its registration.
+            NavigationManager::instance().register_overlay_instance(panel, &detail);
             NavigationManager::instance().push_overlay(panel);
         }
     }
