@@ -151,6 +151,11 @@ The installer auto-detects your platform, downloads the correct binary, sets up 
 curl -sSL https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh | sh -s -- --update
 ```
 
+To install or roll back to a specific release (e.g. a last-known-good version), pass `--version` with the tag:
+```bash
+curl -sSL https://raw.githubusercontent.com/prestonbrown/helixscreen/main/scripts/install.sh | sh -s -- --version v0.99.70
+```
+
 Also available through [KIAUH](https://github.com/dw-0/kiauh) as an extension.
 
 **Flashforge AD5M/Pro:** We provide a [ready-made firmware image](https://github.com/prestonbrown/ff5m) (Forge-X fork with HelixScreen pre-configured) — just flash from a USB drive. Or install manually on an existing Forge-X/Klipper Mod setup.
