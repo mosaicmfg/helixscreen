@@ -314,6 +314,7 @@ void TelemetryManager::init(const std::string& config_dir) {
     enabled_.store(false);
     shutting_down_.store(false);
     had_update_restart_ = false;
+    crash_event_queued_ = false;
     init_time_ = std::chrono::steady_clock::now();
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -843,8 +844,10 @@ void TelemetryManager::remove_sent_events(size_t count) {
                   queue_.size());
 }
 
-void TelemetryManager::try_send() {
-    if (!enabled_.load() || !initialized_.load() || shutting_down_.load()) {
+void TelemetryManager::try_send(bool force) {
+    // `force` (crash-bundle consent path) bypasses the opt-in gate and the
+    // send-interval backoff, but never the initialized/shutting-down guards.
+    if ((!enabled_.load() && !force) || !initialized_.load() || shutting_down_.load()) {
         return;
     }
 
@@ -863,7 +866,8 @@ void TelemetryManager::try_send() {
         interval = max_interval;
     }
 
-    if (last_send_time_.time_since_epoch().count() > 0 && now - last_send_time_ < interval) {
+    if (!force && last_send_time_.time_since_epoch().count() > 0 &&
+        now - last_send_time_ < interval) {
         spdlog::debug("[TelemetryManager] try_send: too soon (backoff={}x), skipping", backoff);
         return;
     }
@@ -1190,6 +1194,38 @@ void TelemetryManager::check_previous_crash() {
         return;
     }
 
+    // Only enqueue if telemetry is enabled (respect user opt-in)
+    if (enabled_.load()) {
+        enqueue_event(build_crash_event(crash_data));
+        save_queue();
+        crash_event_queued_ = true;
+        spdlog::info("[TelemetryManager] Enqueued crash event (signal={}, name={})",
+                     crash_data.value("signal", 0), crash_data.value("signal_name", "unknown"));
+
+        // Record fingerprint so we don't re-send this crash on subsequent boots.
+        // CrashReporter also records when its own send succeeds, but that path may
+        // not run (user dismisses modal, network down, etc.).
+        helix::CrashHistoryEntry hist_entry;
+        hist_entry.timestamp = get_timestamp();
+        hist_entry.signal_name = crash_data.value("signal_name", "");
+        hist_entry.signal = crash_data.value("signal", 0);
+        hist_entry.app_version = crash_data.value("app_version", "");
+        hist_entry.uptime_sec = crash_data.value("uptime_sec", 0);
+        hist_entry.fault_addr = crash_data.value("fault_addr", "");
+        hist_entry.fault_code_name = crash_data.value("fault_code_name", "");
+        hist_entry.abort_msg = crash_data.value("abort_msg", "");
+        hist_entry.sent_via = "telemetry";
+        hist_entry.fingerprint = fp;
+        helix::CrashHistory::instance().add_entry(hist_entry);
+    } else {
+        spdlog::debug("[TelemetryManager] Crash event discarded (telemetry disabled)");
+    }
+
+    // Note: crash file is NOT removed here — CrashReporter owns the lifecycle
+    // and removes it after the user interacts with the crash report modal.
+}
+
+nlohmann::json TelemetryManager::build_crash_event(const nlohmann::json& crash_data) const {
     // Build a crash event following the telemetry schema
     json event;
     event["schema_version"] = SCHEMA_VERSION;
@@ -1237,34 +1273,59 @@ void TelemetryManager::check_previous_crash() {
     // Add platform (not in crash file — determined at runtime)
     event["app_platform"] = UpdateChecker::get_platform_key();
 
-    // Only enqueue if telemetry is enabled (respect user opt-in)
-    if (enabled_.load()) {
-        enqueue_event(std::move(event));
-        save_queue();
-        spdlog::info("[TelemetryManager] Enqueued crash event (signal={}, name={})",
-                     crash_data.value("signal", 0), crash_data.value("signal_name", "unknown"));
+    return event;
+}
 
-        // Record fingerprint so we don't re-send this crash on subsequent boots.
-        // CrashReporter also records when its own send succeeds, but that path may
-        // not run (user dismisses modal, network down, etc.).
-        helix::CrashHistoryEntry hist_entry;
-        hist_entry.timestamp = get_timestamp();
-        hist_entry.signal_name = crash_data.value("signal_name", "");
-        hist_entry.signal = crash_data.value("signal", 0);
-        hist_entry.app_version = crash_data.value("app_version", "");
-        hist_entry.uptime_sec = crash_data.value("uptime_sec", 0);
-        hist_entry.fault_addr = crash_data.value("fault_addr", "");
-        hist_entry.fault_code_name = crash_data.value("fault_code_name", "");
-        hist_entry.abort_msg = crash_data.value("abort_msg", "");
-        hist_entry.sent_via = "telemetry";
-        hist_entry.fingerprint = fp;
-        helix::CrashHistory::instance().add_entry(hist_entry);
-    } else {
-        spdlog::debug("[TelemetryManager] Crash event discarded (telemetry disabled)");
+bool TelemetryManager::enqueue_crash_event_unconditional() {
+    if (!initialized_.load() || shutting_down_.load()) {
+        return false;
     }
 
-    // Note: crash file is NOT removed here — CrashReporter owns the lifecycle
-    // and removes it after the user interacts with the crash report modal.
+    // The opt-in boot path (or a prior consent) already captured this crash;
+    // don't enqueue a second copy.
+    if (crash_event_queued_) {
+        spdlog::debug(
+            "[TelemetryManager] Crash already queued this session, skipping consent enqueue");
+        return false;
+    }
+
+    std::string crash_path = config_dir_ + "/crash.txt";
+    if (!crash_handler::has_crash_file(crash_path)) {
+        return false;
+    }
+
+    // A crash alongside update_success.json is the expected post-update restart
+    // (old binary dying after the install.sh swap), not a real crash.
+    std::string update_flag = config_dir_ + "/update_success.json";
+    std::error_code ec;
+    if (fs::exists(update_flag, ec) && !ec) {
+        spdlog::debug("[TelemetryManager] Consent crash is post-update restart, suppressing");
+        return false;
+    }
+
+    auto crash_data = crash_handler::read_crash_file(crash_path);
+    if (crash_data.is_null()) {
+        spdlog::warn("[TelemetryManager] Consent crash: unparseable crash file at {}", crash_path);
+        return false;
+    }
+
+    // The user explicitly consented to share this crash by sending the bundle,
+    // so emit the telemetry crash event regardless of the opt-in setting.
+    //
+    // Deliberately NO CrashHistory fingerprint dedup here: the caller reaches
+    // this only after CrashReporter::try_auto_send() succeeded, which already
+    // recorded this crash's fingerprint. A has_fingerprint() check would
+    // therefore ALWAYS be true and silently suppress every consent event.
+    // Duplicate boot-vs-consent enqueues are prevented by crash_event_queued_
+    // above, and the modal is only shown for fresh, non-duplicate crashes
+    // (see Application crash-dialog gating on had_update_restart()/is_duplicate()).
+    enqueue_event(build_crash_event(crash_data));
+    save_queue();
+    crash_event_queued_ = true;
+    spdlog::info("[TelemetryManager] Enqueued crash event via bundle consent "
+                 "(opt-in bypassed, signal={}, name={})",
+                 crash_data.value("signal", 0), crash_data.value("signal_name", "unknown"));
+    return true;
 }
 
 // =============================================================================

@@ -10,6 +10,7 @@
 #include "lvgl/src/others/translation/lv_translation.h"
 #include "system/crash_reporter.h"
 #include "system/debug_bundle_collector.h"
+#include "system/telemetry_manager.h"
 
 #include <spdlog/spdlog.h>
 
@@ -250,6 +251,14 @@ void CrashReportModal::send_with_bundle(const std::string& share_code) {
 
     if (cr.try_auto_send(report)) {
         spdlog::info("[CrashReportModal] Crash report sent via worker");
+        // The user consented to share this crash by sending the report, so
+        // honor that consent for telemetry too: emit a lightweight crash event
+        // even when the telemetry opt-in is off, keeping fleet crash rates
+        // visible. Must run before consume_crash_file() rotates crash.txt away.
+        auto& tm = TelemetryManager::instance();
+        if (tm.enqueue_crash_event_unconditional()) {
+            tm.try_send(/*force=*/true);
+        }
         cr.save_to_file(report);
         cr.consume_crash_file();
         hide();

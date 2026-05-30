@@ -524,6 +524,26 @@ class TelemetryManager {
         return had_update_restart_;
     }
 
+    /**
+     * @brief Enqueue and persist a crash event regardless of the telemetry
+     *        opt-in setting.
+     *
+     * Called when the user explicitly consents to send a crash *bundle* (the
+     * crash report modal's "Send" action). That consent also covers a
+     * lightweight telemetry crash event, so this bypasses the enabled_ gate
+     * that check_previous_crash() honors. Reads crash.txt from the config dir,
+     * builds the crash event, enqueues and persists it. The caller transmits
+     * with try_send(true).
+     *
+     * No-op (returns false) if a crash event was already enqueued this session
+     * (opt-in boot path or a prior consent), if no parseable crash file exists,
+     * or if the crash is the expected post-update restart (update_success.json
+     * present).
+     *
+     * @return true if a crash event was enqueued, false otherwise.
+     */
+    bool enqueue_crash_event_unconditional();
+
     // =========================================================================
     // QUEUE MANAGEMENT
     // =========================================================================
@@ -584,8 +604,12 @@ class TelemetryManager {
      *
      * No-op if telemetry is disabled, queue is empty, or a send is
      * already in progress.
+     *
+     * @param force When true, bypass the opt-in (enabled_) gate and the
+     *        send-interval backoff. Used by the crash-bundle consent path,
+     *        where the user has explicitly consented to transmit this crash.
      */
-    void try_send();
+    void try_send(bool force = false);
 
     /**
      * @brief Build a batch of events for transmission (public for testing)
@@ -760,6 +784,17 @@ class TelemetryManager {
      * @param batch JSON array of events to transmit
      */
     void do_send(const nlohmann::json& batch);
+
+    /**
+     * @brief Build a "crash" telemetry event from parsed crash-file data.
+     *
+     * Shared by check_previous_crash() (opt-in boot path) and
+     * enqueue_crash_event_unconditional() (bundle-consent path).
+     *
+     * @param crash_data JSON parsed from crash.txt (read_crash_file() output)
+     * @return JSON crash event following the telemetry schema
+     */
+    nlohmann::json build_crash_event(const nlohmann::json& crash_data) const;
 
     /**
      * @brief Add an event to the queue (mutex-protected)
@@ -1015,6 +1050,11 @@ class TelemetryManager {
 
     /// Set to true when crash.txt is suppressed due to update_success.json being present
     bool had_update_restart_ = false;
+
+    /// True once a crash event for this session has been enqueued — via the
+    /// opt-in boot path (check_previous_crash) or bundle consent
+    /// (enqueue_crash_event_unconditional). Prevents a duplicate crash event.
+    bool crash_event_queued_ = false;
 
     // =========================================================================
     // TRANSMISSION STATE (Phase 3)

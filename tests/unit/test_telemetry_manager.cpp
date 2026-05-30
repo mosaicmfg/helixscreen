@@ -1454,6 +1454,76 @@ TEST_CASE_METHOD(TelemetryTestFixture,
 }
 
 // ============================================================================
+// Bundle-Consent Crash Reporting [telemetry][crash][consent]
+//
+// When a user explicitly consents to send a crash *bundle* (the crash report
+// modal's "Send" action), that consent also covers a lightweight telemetry
+// crash event — even if the telemetry opt-in is OFF. This keeps fleet-wide
+// crash rates visible. enqueue_crash_event_unconditional() implements the
+// opt-in bypass; the modal calls it after a successful bundle upload.
+// ============================================================================
+
+TEST_CASE_METHOD(TelemetryTestFixture,
+                 "Bundle consent: crash event enqueued even when telemetry disabled",
+                 "[telemetry][crash][consent]") {
+    auto& tm = TelemetryManager::instance();
+    tm.set_enabled(false); // opt-in OFF
+
+    write_file("crash.txt", "signal:11\nname:SIGSEGV\nversion:0.14.0\n");
+
+    // Baseline: the normal opt-in path discards the crash when disabled.
+    tm.check_previous_crash();
+    REQUIRE(tm.queue_size() == 0);
+
+    // Bundle consent bypasses the opt-in gate and enqueues the crash event.
+    REQUIRE(tm.enqueue_crash_event_unconditional());
+    REQUIRE(tm.queue_size() == 1);
+    auto snapshot = tm.get_queue_snapshot();
+    REQUIRE(snapshot[0]["event"] == "crash");
+    REQUIRE(snapshot[0]["signal_name"] == "SIGSEGV");
+}
+
+TEST_CASE_METHOD(TelemetryTestFixture,
+                 "Bundle consent: no double-enqueue when telemetry already captured the crash",
+                 "[telemetry][crash][consent]") {
+    auto& tm = TelemetryManager::instance();
+    tm.set_enabled(true); // opt-in ON — boot path already enqueues
+
+    write_file("crash.txt", "signal:11\nname:SIGSEGV\nversion:0.14.0\n");
+
+    tm.check_previous_crash();
+    REQUIRE(tm.queue_size() == 1);
+
+    // Consent enqueue must not add a second copy of the same crash.
+    REQUIRE_FALSE(tm.enqueue_crash_event_unconditional());
+    REQUIRE(tm.queue_size() == 1);
+}
+
+TEST_CASE_METHOD(TelemetryTestFixture, "Bundle consent: no event when no crash file is present",
+                 "[telemetry][crash][consent]") {
+    auto& tm = TelemetryManager::instance();
+    tm.set_enabled(false);
+
+    // No crash.txt written.
+    REQUIRE_FALSE(tm.enqueue_crash_event_unconditional());
+    REQUIRE(tm.queue_size() == 0);
+}
+
+TEST_CASE_METHOD(TelemetryTestFixture, "Bundle consent: suppressed for post-update restart crash",
+                 "[telemetry][crash][consent]") {
+    auto& tm = TelemetryManager::instance();
+    tm.set_enabled(false);
+
+    // A crash alongside update_success.json is the expected post-update restart,
+    // not a real crash — it must not be reported even with consent.
+    write_file("update_success.json", "{\"version\":\"0.14.0\"}");
+    write_file("crash.txt", "signal:6\nname:SIGABRT\nversion:0.13.4\n");
+
+    REQUIRE_FALSE(tm.enqueue_crash_event_unconditional());
+    REQUIRE(tm.queue_size() == 0);
+}
+
+// ============================================================================
 // Memory Snapshot Event [telemetry][memory]
 // ============================================================================
 
@@ -1857,14 +1927,14 @@ TEST_CASE_METHOD(TelemetryTestFixture, "Frame time: idle frames below threshold 
     tm.set_enabled(true);
 
     tm.notify_panel_changed("status");
-    tm.record_frame_time(100);   // 0.1ms - idle, should be filtered
-    tm.record_frame_time(300);   // 0.3ms - idle, should be filtered
-    tm.record_frame_time(8000);  // 8ms - real render, should be recorded
+    tm.record_frame_time(100);  // 0.1ms - idle, should be filtered
+    tm.record_frame_time(300);  // 0.3ms - idle, should be filtered
+    tm.record_frame_time(8000); // 8ms - real render, should be recorded
 
     tm.record_performance_snapshot();
     auto snapshot = tm.get_queue_snapshot();
     auto event = snapshot[0];
-    REQUIRE(event["total_frame_count"] == 1);  // Only the 8ms frame
+    REQUIRE(event["total_frame_count"] == 1); // Only the 8ms frame
 }
 
 TEST_CASE_METHOD(TelemetryTestFixture, "Frame time: frames at idle threshold boundary are recorded",
@@ -1873,14 +1943,14 @@ TEST_CASE_METHOD(TelemetryTestFixture, "Frame time: frames at idle threshold bou
     tm.set_enabled(true);
 
     tm.notify_panel_changed("status");
-    tm.record_frame_time(499);   // Just below 500us threshold - filtered
-    tm.record_frame_time(500);   // Exactly at threshold - recorded
-    tm.record_frame_time(501);   // Just above threshold - recorded
+    tm.record_frame_time(499); // Just below 500us threshold - filtered
+    tm.record_frame_time(500); // Exactly at threshold - recorded
+    tm.record_frame_time(501); // Just above threshold - recorded
 
     tm.record_performance_snapshot();
     auto snapshot = tm.get_queue_snapshot();
     auto event = snapshot[0];
-    REQUIRE(event["total_frame_count"] == 2);  // 500 and 501 only
+    REQUIRE(event["total_frame_count"] == 2); // 500 and 501 only
 }
 
 TEST_CASE_METHOD(TelemetryTestFixture,
