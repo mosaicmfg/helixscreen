@@ -488,7 +488,12 @@ void* ui_split_button_create(lv_xml_parser_state_t* state, const char** attrs) {
 
     // Compute label width from available space after layout resolves.
     // Must defer because flex_grow sizes aren't final during create.
-    lv_async_call(
+    // Widget-safe async_call (lv_obj_is_valid guard): during rapid panel
+    // teardown the container can be freed before this deferral fires, and a
+    // raw lv_async_call would then dereference freed memory via get_data()
+    // (#980 SIGSEGV). Same guard the style-change deferral above uses.
+    helix::ui::async_call(
+        sb,
         [](void* user_data) {
             auto* sb = static_cast<lv_obj_t*>(user_data);
             auto* d = get_data(sb);
