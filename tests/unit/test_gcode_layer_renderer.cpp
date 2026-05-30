@@ -1,12 +1,16 @@
 // Copyright (C) 2025-2026 356C LLC
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "../lvgl_test_fixture.h"
 #include "gcode_layer_renderer.h"
 #include "gcode_parser.h"
+#include "system/crash_handler.h"
 
 #include <optional>
 #include <string>
+#include <unistd.h>
 #include <unordered_set>
+#include <vector>
 
 #include "../catch_amalgamated.hpp"
 
@@ -326,4 +330,84 @@ TEST_CASE("set_highlighted_objects with no gcode does not crash", "[layer_render
 
     std::unordered_set<std::string> highlighted = {"cube1"};
     REQUIRE_NOTHROW(renderer.set_highlighted_objects(highlighted));
+}
+
+// =============================================================================
+// Crash-diagnostics breadcrumb
+// =============================================================================
+
+namespace {
+// Capture crash_handler breadcrumb ring as newline-split lines, mirroring the
+// pipe+dump_to_fd helper in test_crash_handler.cpp.
+std::vector<std::string> capture_breadcrumb_lines() {
+    int fds[2];
+    REQUIRE(::pipe(fds) == 0);
+    crash_handler::breadcrumb::dump_to_fd(fds[1]);
+    ::close(fds[1]);
+    std::string all;
+    char chunk[4096];
+    ssize_t n;
+    while ((n = ::read(fds[0], chunk, sizeof(chunk))) > 0) {
+        all.append(chunk, static_cast<size_t>(n));
+    }
+    ::close(fds[0]);
+    std::vector<std::string> lines;
+    size_t pos = 0, nl;
+    while ((nl = all.find('\n', pos)) != std::string::npos) {
+        lines.push_back(all.substr(pos, nl - pos));
+        pos = nl + 1;
+    }
+    return lines;
+}
+} // namespace
+
+// Verifies the breadcrumb added to GCodeLayerRenderer::render_layers_to_cache
+// actually fires on the real render path. A SIGBUS was seen inside that path on
+// AD5X (bundle YZQ47HQ6); the crumb gives the crash handler the gcode subsystem
+// + target layer even when the stack is too corrupt to scan. render() reaches
+// render_layers_to_cache only in FRONT view after warmup, so we drive several
+// frames against an offscreen canvas layer with ghost mode off (deterministic,
+// no background thread).
+TEST_CASE_METHOD(LVGLTestFixture, "render_layers_to_cache emits gcode breadcrumb",
+                 "[layer_renderer][crash][breadcrumb]") {
+    auto gcode = make_test_gcode();
+
+    GCodeLayerRenderer renderer;
+    renderer.set_gcode(&gcode);
+    renderer.set_view_mode(GCodeLayerRenderer::ViewMode::FRONT);
+    renderer.set_ghost_mode(false); // deterministic: no background ghost thread
+    renderer.set_canvas_size(200, 200);
+    renderer.set_current_layer(0);
+
+    // Offscreen canvas provides a real lv_layer_t for render() to blit into.
+    lv_obj_t* canvas = lv_canvas_create(test_screen());
+    REQUIRE(canvas != nullptr);
+    static uint8_t canvas_buf[200 * 200 * 4];
+    lv_canvas_set_buffer(canvas, canvas_buf, 200, 200, LV_COLOR_FORMAT_ARGB8888);
+    lv_area_t clip = {0, 0, 199, 199};
+
+    // The first WARMUP_FRAMES (2) render() calls skip heavy caching; loop past
+    // them so the solid-cache path (render_layers_to_cache) runs at least once.
+    for (int i = 0; i < 5; ++i) {
+        lv_layer_t layer;
+        lv_canvas_init_layer(canvas, &layer);
+        renderer.render(&layer, &clip);
+        lv_canvas_finish_layer(canvas, &layer);
+    }
+
+    auto crumbs = capture_breadcrumb_lines();
+    bool found = false;
+    for (const auto& line : crumbs) {
+        if (line.find("gcode render_cache") != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        INFO("breadcrumb ring contents:");
+        for (const auto& line : crumbs) {
+            INFO(line);
+        }
+    }
+    REQUIRE(found);
 }
