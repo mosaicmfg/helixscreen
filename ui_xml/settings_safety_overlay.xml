@@ -49,6 +49,16 @@
                           description_tag="Show a confirmation dialog when tapping a macro"
                           subject="settings_macro_confirm" callback="on_macro_confirm_changed"/>
       <!-- ================================================================== -->
+      <!-- ALLOW COLD EXTRUDE -->
+      <!-- ================================================================== -->
+      <setting_toggle_row name="row_allow_cold_extrude"
+                          label="Allow cold load/unload"
+                          label_tag="Allow cold load/unload"
+                          icon="cooldown"
+                          description="Run filament load/unload even when the nozzle is cold (for macros that heat the nozzle themselves)"
+                          description_tag="Run filament load/unload even when the nozzle is cold (for macros that heat the nozzle themselves)"
+                          subject="settings_allow_cold_extrude" callback="on_allow_cold_extrude_changed"/>
+      <!-- ================================================================== -->
       <!-- PRINT COMPLETION ALERT -->
       <!-- ================================================================== -->
       <setting_dropdown_row name="row_completion_alert"

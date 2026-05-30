@@ -20,6 +20,7 @@ TEST_CASE_METHOD(LVGLTestFixture, "SafetySettingsManager default values after in
     Config::get_instance()->set<bool>("/safety/estop_require_confirmation", true);
     Config::get_instance()->set<bool>("/safety/cancel_escalation_enabled", false);
     Config::get_instance()->set<int>("/safety/cancel_escalation_timeout_seconds", 30);
+    Config::get_instance()->set<bool>("/safety/allow_cold_extrude", false);
     SafetySettingsManager::instance().deinit_subjects();
     SafetySettingsManager::instance().init_subjects();
 
@@ -33,6 +34,12 @@ TEST_CASE_METHOD(LVGLTestFixture, "SafetySettingsManager default values after in
 
     SECTION("cancel_escalation_timeout defaults to 30s") {
         REQUIRE(SafetySettingsManager::instance().get_cancel_escalation_timeout_seconds() == 30);
+    }
+
+    SECTION("allow_cold_extrude defaults to false") {
+        // Gating filament load/unload on min_extrude_temp is the safe default;
+        // bypassing it is opt-in for users whose macros heat the nozzle (#978).
+        REQUIRE(SafetySettingsManager::instance().get_allow_cold_extrude() == false);
     }
 
     SafetySettingsManager::instance().deinit_subjects();
@@ -71,6 +78,14 @@ TEST_CASE_METHOD(LVGLTestFixture, "SafetySettingsManager set/get round trips",
 
         SafetySettingsManager::instance().set_cancel_escalation_timeout_seconds(120);
         REQUIRE(SafetySettingsManager::instance().get_cancel_escalation_timeout_seconds() == 120);
+    }
+
+    SECTION("allow_cold_extrude set/get") {
+        SafetySettingsManager::instance().set_allow_cold_extrude(true);
+        REQUIRE(SafetySettingsManager::instance().get_allow_cold_extrude() == true);
+
+        SafetySettingsManager::instance().set_allow_cold_extrude(false);
+        REQUIRE(SafetySettingsManager::instance().get_allow_cold_extrude() == false);
     }
 
     SECTION("cancel_escalation_timeout snaps to bucket by threshold") {
@@ -121,6 +136,16 @@ TEST_CASE_METHOD(LVGLTestFixture, "SafetySettingsManager subject values match ge
         // 60s -> index 2
         REQUIRE(lv_subject_get_int(
                     SafetySettingsManager::instance().subject_cancel_escalation_timeout()) == 2);
+    }
+
+    SECTION("allow_cold_extrude subject reflects setter") {
+        SafetySettingsManager::instance().set_allow_cold_extrude(true);
+        REQUIRE(lv_subject_get_int(
+                    SafetySettingsManager::instance().subject_allow_cold_extrude()) == 1);
+
+        SafetySettingsManager::instance().set_allow_cold_extrude(false);
+        REQUIRE(lv_subject_get_int(
+                    SafetySettingsManager::instance().subject_allow_cold_extrude()) == 0);
     }
 
     SafetySettingsManager::instance().deinit_subjects();

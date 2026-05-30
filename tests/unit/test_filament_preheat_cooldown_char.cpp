@@ -159,6 +159,43 @@ TEST_CASE("Manual-preheat load does NOT schedule cooldown", "[filament][preheat]
     REQUIRE_FALSE(sm.cooldown_scheduled);
 }
 
+// ============================================================================
+// Cold-extrude override (#978)
+// ============================================================================
+
+namespace {
+// Mirrors FilamentPanel::is_extrusion_allowed() with the SafetySettingsManager
+// "allow cold extrude" override applied. The real method ORs the persisted
+// setting in front of the physical min-extrude-temp gate so users whose
+// load/unload macros heat the nozzle themselves can run them on a cold hotend.
+bool extrusion_allowed(int nozzle_current, int min_extrude_temp, bool allow_cold_extrude) {
+    if (allow_cold_extrude) {
+        return true;
+    }
+    return nozzle_current >= min_extrude_temp;
+}
+} // namespace
+
+TEST_CASE("Cold-extrude override unlocks load/unload below min_extrude_temp",
+          "[filament][preheat][char]") {
+    SECTION("override OFF, cold nozzle — gated (default safe behavior)") {
+        REQUIRE_FALSE(extrusion_allowed(/*current=*/25, /*min=*/170, /*allow_cold=*/false));
+    }
+
+    SECTION("override ON, cold nozzle — allowed (macro handles heating)") {
+        REQUIRE(extrusion_allowed(/*current=*/25, /*min=*/170, /*allow_cold=*/true));
+    }
+
+    SECTION("override ON, mid-cold-pull temperature — allowed") {
+        // Reporter's case: unload begins ~100°C to force a cold pull.
+        REQUIRE(extrusion_allowed(/*current=*/100, /*min=*/170, /*allow_cold=*/true));
+    }
+
+    SECTION("override OFF, hot nozzle — allowed as before") {
+        REQUIRE(extrusion_allowed(/*current=*/220, /*min=*/170, /*allow_cold=*/false));
+    }
+}
+
 TEST_CASE("High manual setpoint + cold nozzle — preheat doesn't lower, no cooldown",
           "[filament][preheat][char]") {
     // Edge case: user commanded target=240 but the nozzle hasn't warmed up

@@ -16,6 +16,7 @@ namespace helix {
  * - cancel_escalation_enabled (0/1)
  * - cancel_escalation_timeout (dropdown index 0-3 -> 15/30/60/120s)
  * - macro_require_confirmation (0/1)
+ * - allow_cold_extrude (0/1)
  *
  * Thread safety: Single-threaded, main LVGL thread only.
  */
@@ -61,6 +62,13 @@ class SafetySettingsManager {
     /** @brief Set whether macro runs require a confirmation modal (updates subject + persists) */
     void set_macro_require_confirmation(bool require);
 
+    /** @brief Get whether filament load/unload may run below min_extrude_temp (#978) */
+    bool get_allow_cold_extrude() const;
+
+    /** @brief Set whether filament load/unload may run on a cold hotend (updates subject +
+     * persists) */
+    void set_allow_cold_extrude(bool allow);
+
     // =========================================================================
     // SUBJECT ACCESSORS (for XML binding)
     // =========================================================================
@@ -85,6 +93,11 @@ class SafetySettingsManager {
         return &macro_require_confirmation_subject_;
     }
 
+    /** @brief Allow-cold-extrude subject (integer: 0=gate on temp, 1=always allow) */
+    lv_subject_t* subject_allow_cold_extrude() {
+        return &allow_cold_extrude_subject_;
+    }
+
   private:
     SafetySettingsManager();
     ~SafetySettingsManager() = default;
@@ -95,6 +108,7 @@ class SafetySettingsManager {
     lv_subject_t cancel_escalation_enabled_subject_;
     lv_subject_t cancel_escalation_timeout_subject_;
     lv_subject_t macro_require_confirmation_subject_;
+    lv_subject_t allow_cold_extrude_subject_;
 
     bool subjects_initialized_ = false;
 };

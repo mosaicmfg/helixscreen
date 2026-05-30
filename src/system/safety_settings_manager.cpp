@@ -63,6 +63,11 @@ void SafetySettingsManager::init_subjects() {
     UI_MANAGED_SUBJECT_INT(macro_require_confirmation_subject_, macro_confirm ? 1 : 0,
                            "settings_macro_confirm", subjects_);
 
+    // Allow cold extrude (default: false = gate filament load/unload on min_extrude_temp)
+    bool allow_cold_extrude = config->get<bool>("/safety/allow_cold_extrude", false);
+    UI_MANAGED_SUBJECT_INT(allow_cold_extrude_subject_, allow_cold_extrude ? 1 : 0,
+                           "settings_allow_cold_extrude", subjects_);
+
     subjects_initialized_ = true;
 
     // Self-register cleanup with StaticSubjectRegistry
@@ -169,4 +174,21 @@ void SafetySettingsManager::set_macro_require_confirmation(bool require) {
 
     spdlog::debug("[SafetySettingsManager] Macro run confirmation {} and saved",
                   require ? "enabled" : "disabled");
+}
+
+bool SafetySettingsManager::get_allow_cold_extrude() const {
+    return lv_subject_get_int(const_cast<lv_subject_t*>(&allow_cold_extrude_subject_)) != 0;
+}
+
+void SafetySettingsManager::set_allow_cold_extrude(bool allow) {
+    spdlog::info("[SafetySettingsManager] set_allow_cold_extrude({})", allow);
+
+    lv_subject_set_int(&allow_cold_extrude_subject_, allow ? 1 : 0);
+
+    Config* config = Config::get_instance();
+    config->set<bool>("/safety/allow_cold_extrude", allow);
+    config->save();
+
+    spdlog::debug("[SafetySettingsManager] Allow cold extrude {} and saved",
+                  allow ? "enabled" : "disabled");
 }

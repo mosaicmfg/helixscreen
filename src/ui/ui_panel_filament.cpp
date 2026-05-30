@@ -32,6 +32,7 @@
 #include "observer_factory.h"
 #include "post_op_cooldown_manager.h"
 #include "printer_state.h"
+#include "safety_settings_manager.h"
 #include "settings_manager.h"
 #include "standard_macros.h"
 #include "static_panel_registry.h"
@@ -375,13 +376,11 @@ void FilamentPanel::setup(lv_obj_t* panel, lv_obj_t* parent_screen) {
     // sizing is owned by apply_left_column_sizing() (called from
     // update_multi_filament_card_visibility). At MICRO/TINY with no AMS the
     // spool card has almost no content, so the graph becomes the flex filler.
-    ams_type_observer_ = observe_int_sync<FilamentPanel>(
-        AmsState::instance().get_ams_type_subject(),
-        this,
-        [](FilamentPanel* self, int /*ams_type*/) {
-            self->update_multi_filament_card_visibility();
-        });
-
+    ams_type_observer_ =
+        observe_int_sync<FilamentPanel>(AmsState::instance().get_ams_type_subject(), this,
+                                        [](FilamentPanel* self, int /*ams_type*/) {
+                                            self->update_multi_filament_card_visibility();
+                                        });
 
     // End operation guard when AMS action returns to idle (load/unload complete)
     ams_action_observer_ = observe_int_sync<FilamentPanel>(
@@ -521,7 +520,9 @@ void FilamentPanel::update_warning_text() {
 }
 
 void FilamentPanel::update_safety_state() {
-    bool allowed = helix::ui::temperature::is_extrusion_safe(nozzle_current_, min_extrude_temp_);
+    // Route through is_extrusion_allowed() so the cold-extrude override (#978)
+    // both enables the buttons and hides the "heat first" warning.
+    bool allowed = is_extrusion_allowed();
 
     // Hide the safety warning (and enable buttons) if we have a known spool material,
     // since the load/unload handlers will auto-preheat to the correct temperature.
@@ -1802,6 +1803,12 @@ void FilamentPanel::set_material(int material_id) {
 }
 
 bool FilamentPanel::is_extrusion_allowed() const {
+    // Opt-in override (#978): users whose load/unload macros heat the nozzle
+    // themselves — or perform a deliberate cold pull — can bypass the
+    // min_extrude_temp gate so the buttons stay active on a cold hotend.
+    if (helix::SafetySettingsManager::instance().get_allow_cold_extrude()) {
+        return true;
+    }
     return helix::ui::temperature::is_extrusion_safe(nozzle_current_, min_extrude_temp_);
 }
 
