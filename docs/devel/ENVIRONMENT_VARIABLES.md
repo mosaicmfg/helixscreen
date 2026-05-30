@@ -153,6 +153,24 @@ HELIX_MOUSE_DEVICE=/dev/input/event4 ./build/bin/helix-screen
 
 **Mouse cursor:** When a mouse is detected (manually or via auto-detection), a 12px white circular cursor is displayed. The mouse works alongside the touchscreen — both are active simultaneously.
 
+### `HELIX_ALSA_DEVICE`
+
+Override the ALSA PCM device used for UI sounds. The stock `default` resolves to `hw:0`, which fails on boards whose only audio output enumerates at a higher card index — leaving ALSA unable to open any PCM device.
+
+| Property | Value |
+|----------|-------|
+| **Values** | ALSA PCM name (e.g., `plughw:CARD=vc4hdmi0,DEV=0`, `default`) |
+| **Default** | `default` |
+| **Precedence** | `HELIX_ALSA_DEVICE` env > `/sound/output_device` setting > `default` |
+| **File** | `src/system/alsa_device_enum.cpp` (`resolve_alsa_device`) |
+
+```bash
+# Route UI sounds to an HDMI screen's built-in speaker
+HELIX_ALSA_DEVICE=plughw:CARD=vc4hdmi0,DEV=0 ./build/bin/helix-screen
+```
+
+**Common case — BTT HDMI5 (and similar HDMI-audio screens):** the screen's built-in speaker rides HDMI audio. On a Pi CM4 the only cards are `vc4hdmi0`/`vc4hdmi1`, which enumerate as cards **1 and 2** — there is no card 0, so `default` fails (`snd_pcm_dmix_open: unable to open slave`). Identify the right card with `aplay -l`, confirm it plays with `aplay -D plughw:CARD=vc4hdmi0,DEV=0 <wav>`, then set this variable (or write an `/etc/asound.conf` that remaps `default`). The service also needs the `audio` supplementary group — see `config/helixscreen.service`.
+
 **Combo devices:** USB devices that combine keyboard and trackpad (e.g., Logitech K400) present as a single evdev node. The same device path can be used by both mouse and keyboard input — LVGL filters events by type internally.
 
 ### `HELIX_KEYBOARD_DEVICE`

@@ -137,8 +137,12 @@ RuntimeDirectoryMode=0700
 PrivateTmp=true
 NoNewPrivileges=true
 
-# Allow framebuffer/DRM access
-SupplementaryGroups=video input render tty
+# Allow framebuffer/DRM access plus audio (UI sounds via ALSA).
+# SupplementaryGroups REPLACES the service's group set rather than appending
+# to the user's login groups, so 'audio' must be listed explicitly even when
+# the user (e.g. 'pi'/'raspberry') already belongs to it — otherwise the
+# service cannot open /dev/snd and ALSA fails to find any PCM device.
+SupplementaryGroups=video input render tty audio
 
 # CAP_SYS_TTY_CONFIG: KDSETMODE KD_GRAPHICS prevents kernel messages from
 # bleeding through LVGL's partial framebuffer repaints.

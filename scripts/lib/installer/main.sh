@@ -359,6 +359,12 @@ main() {
     # Fix known Klipper config issues (AD5M screw_thread, etc.)
     fix_ad5m_klipper_config || true
 
+    # Configure ALSA "default" when the board has no card 0 (e.g. Pi + HDMI-audio
+    # screens like the BTT HDMI5, whose only outputs are vc4hdmi0/vc4hdmi1 at
+    # indices 1/2). Safe no-op when "default" already works or /etc/asound.conf
+    # already exists.
+    configure_alsa_default || true
+
     # Start service
     start_service "$platform"
     cleanup_old_install
