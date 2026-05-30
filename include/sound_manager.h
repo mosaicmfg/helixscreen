@@ -107,6 +107,15 @@ class SoundManager {
     /// Scan config/sounds/ for available .json theme files
     std::vector<std::string> get_available_themes() const;
 
+    /// Switch the live ALSA output device. Persists, tears down and rebuilds the
+    /// ALSA backend, reloads theme/sequencer, plays a test beep. Returns true if
+    /// the requested device opened; false if not ALSA, if HELIX_ALSA_DEVICE is
+    /// set (env lock), or if it fell back to "default".
+    bool set_output_device(const std::string& pcm);
+
+    /// True when the active backend is the runtime-selectable ALSA backend.
+    [[nodiscard]] bool has_alsa_backend() const;
+
     /// Get sorted list of sound names in the current theme
     std::vector<std::string> get_sound_names() const;
 

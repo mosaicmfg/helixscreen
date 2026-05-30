@@ -31,6 +31,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <dirent.h>
 #include <string>
 
@@ -154,6 +155,55 @@ void SoundManager::finalize_backend_setup() {
 
     initialized_ = true;
     spdlog::info("[SoundManager] Backend ready, theme '{}'", theme_name_);
+}
+
+bool SoundManager::has_alsa_backend() const {
+    return backend_ && backend_->supports_device_selection();
+}
+
+bool SoundManager::set_output_device(const std::string& pcm) {
+#ifdef HELIX_HAS_ALSA
+    // Env override locks the picker (HELIX_ALSA_DEVICE wins, mirrors HELIX_DRM_DEVICE).
+    if (const char* e = std::getenv("HELIX_ALSA_DEVICE"); e && e[0] != '\0') {
+        spdlog::info("[SoundManager] set_output_device ignored: HELIX_ALSA_DEVICE override active");
+        return false;
+    }
+    if (!has_alsa_backend()) {
+        spdlog::debug("[SoundManager] set_output_device: active backend is not ALSA");
+        return false;
+    }
+
+    // Tear down sequencer (joins its thread) and the current backend.
+    if (sequencer_) {
+        sequencer_->shutdown();
+        sequencer_.reset();
+    }
+    backend_.reset();
+
+    // Open the requested device; fall back to "default" on failure.
+    auto alsa = std::make_shared<ALSASoundBackend>();
+    std::string effective = pcm;
+    bool ok = alsa->initialize(pcm);
+    if (!ok) {
+        spdlog::warn("[SoundManager] ALSA device '{}' failed; reverting to 'default'", pcm);
+        effective = "default";
+        ok = alsa->initialize("default");
+    }
+    if (!ok) {
+        spdlog::error("[SoundManager] Audio reinit failed; no backend installed");
+        initialized_ = true; // keep the M300 gate reachable
+        return false;
+    }
+
+    backend_ = alsa;
+    AudioSettingsManager::instance().set_output_device(effective); // persist what opened
+    finalize_backend_setup();                                      // recreate sequencer + theme
+    play("test_beep");
+    return effective == pcm;
+#else
+    (void)pcm;
+    return false;
+#endif
 }
 
 void SoundManager::shutdown() {

@@ -55,3 +55,11 @@ TEST_CASE("resolve_alsa_device precedence: env > settings > default", "[sound][a
     CHECK(resolve_alsa_device("", nullptr) == "default");
     CHECK(resolve_alsa_device("", "") == "default");
 }
+
+#include "sound_manager.h"
+
+TEST_CASE("set_output_device is a no-op without an ALSA backend", "[sound][alsa-device]") {
+    // In the test build (no HELIX_HAS_ALSA, no backend), this must safely return false.
+    CHECK_FALSE(helix::SoundManager::instance().set_output_device("plughw:CARD=x,DEV=0"));
+    CHECK_FALSE(helix::SoundManager::instance().has_alsa_backend());
+}
