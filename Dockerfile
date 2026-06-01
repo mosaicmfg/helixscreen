@@ -36,6 +36,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsdl2-dev \
     libssl-dev \
     libasound2-dev \
+    libnl-3-dev \
+    libnl-genl-3-dev \
+    libusb-1.0-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -56,6 +59,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
     novnc \
+    libnl-3-200 \
+    libnl-genl-3-200 \
+    libusb-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/build/bin/helix-screen /usr/local/bin/
