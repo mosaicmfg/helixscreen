@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2-dev \
     libnl-3-dev \
     libnl-genl-3-dev \
-    libusb-1.0-dev \
+    libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
