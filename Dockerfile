@@ -45,6 +45,9 @@ WORKDIR /build
 
 COPY . .
 
+RUN git -C lib/lvgl init && git -C lib/lvgl add -A && \
+    git -C lib/libhv init && git -C lib/libhv add -A
+
 RUN make PLATFORM_TARGET=native SKIP_OPTIONAL_DEPS=1 -j$(nproc)
 
 FROM debian:bookworm-slim
